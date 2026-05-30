@@ -1,0 +1,1104 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActionIcon, Alert, Avatar, Badge, Box, Button, CopyButton,
+  Divider, Group, Loader, Modal, Pagination, Paper, PasswordInput, Progress,
+  Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Title, Tooltip,
+} from '@mantine/core';
+import {
+  LuSearch, LuMail, LuBuilding2, LuFolder, LuBookOpen, LuShield,
+  LuUsers, LuUserCheck, LuTrendingUp, LuUserPlus, LuKey,
+  LuRefreshCw, LuCopy, LuCheck, LuLink,
+} from 'react-icons/lu';
+import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
+import { createUser, assignToSupervisor as assignSupervisor } from '../../../Redux/slices/usersSlice';
+import type { StoredUser } from '../../../Redux/slices/usersSlice';
+import type { AppRole } from '../../../Redux/slices/authSlice';
+import { supabase } from '../../../supabase/client';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+interface DisplayResearcher {
+  id: string;
+  name: string;
+  email: string;
+  department: string;
+  role: string;
+  projects: number;
+  publications: number;
+  integrity: number;
+  lastActive: string;
+  color: string;
+  specializations: string[];
+  bio: string;
+  recentProjects: { title: string; status: string }[];
+  isRedux: boolean;
+  supervisorId?: string;
+  matricNo?: string;
+  degreeLevel?: string;
+  projectTitle?: string;
+}
+
+// ── Mock data ──────────────────────────────────────────────────────────────────
+
+const RESEARCHERS: DisplayResearcher[] = [
+  {
+    id: '1', name: 'Dr. Fatima Hassan', email: 'f.hassan@greenfield.edu',
+    department: 'Computer Science', role: 'Researcher',
+    projects: 2, publications: 5, integrity: 84, lastActive: '2 hours ago',
+    color: 'indigo', isRedux: false,
+    specializations: ['Machine Learning', 'Computer Vision', 'Agricultural AI'],
+    bio: 'Researcher specialising in AI-driven solutions for agricultural challenges and early disease detection using deep learning techniques.',
+    recentProjects: [
+      { title: 'AI-Based Early Detection of Crop Diseases Using Computer Vision', status: 'In-Progress' },
+      { title: 'Neural Machine Translation for Low-Resource African Languages', status: 'In-Progress' },
+    ],
+  },
+  {
+    id: '2', name: 'Dr. Sarah Chen', email: 's.chen@greenfield.edu',
+    department: 'Environmental Science', role: 'Researcher',
+    projects: 1, publications: 8, integrity: 92, lastActive: '4 hours ago',
+    color: 'teal', isRedux: false,
+    specializations: ['Environmental Toxicology', 'Water Quality', 'Ecosystem Science'],
+    bio: 'Environmental scientist focused on microplastic pollution and its impact on freshwater biodiversity and ecosystem health.',
+    recentProjects: [{ title: 'Microplastic Contamination in Freshwater Ecosystems', status: 'Review' }],
+  },
+  {
+    id: '3', name: 'Dr. Kwame Asante', email: 'k.asante@greenfield.edu',
+    department: 'Medicine', role: 'Postgraduate Student',
+    projects: 1, publications: 2, integrity: 68, lastActive: '1 day ago',
+    color: 'red', isRedux: false,
+    specializations: ['Gene Therapy', 'Haematology', 'CRISPR Technology'],
+    bio: 'PhD candidate exploring gene editing applications in treating sickle cell disease, with a focus on clinical translational outcomes.',
+    recentProjects: [{ title: 'CRISPR-Cas9 Gene Editing for Sickle Cell Disease Therapy', status: 'In-Progress' }],
+  },
+  {
+    id: '4', name: 'Prof. Elena Vasquez', email: 'e.vasquez@greenfield.edu',
+    department: 'Chemistry', role: 'Supervisor',
+    projects: 3, publications: 22, integrity: 95, lastActive: '2 days ago',
+    color: 'grape', isRedux: false,
+    specializations: ['Quantum Chemistry', 'Drug Discovery', 'Computational Modelling'],
+    bio: 'Professor of Chemistry with 20+ years of research in quantum computational approaches and molecular simulation for pharmaceutical applications.',
+    recentProjects: [{ title: 'Quantum Computing Approaches to Drug Discovery', status: 'Draft' }],
+  },
+  {
+    id: '5', name: 'Dr. Amina Yusuf', email: 'a.yusuf@greenfield.edu',
+    department: 'Social Sciences', role: 'Researcher',
+    projects: 2, publications: 6, integrity: 89, lastActive: '3 days ago',
+    color: 'orange', isRedux: false,
+    specializations: ['Public Health Communication', 'Media Studies', 'Misinformation Research'],
+    bio: 'Researcher examining the role of social media in the spread of health misinformation and its measurable impact on public health outcomes.',
+    recentProjects: [{ title: 'Social Media Misinformation and Public Health Outcomes', status: 'Submitted' }],
+  },
+  {
+    id: '6', name: 'Dr. Michael Obi', email: 'm.obi@greenfield.edu',
+    department: 'Engineering', role: 'Researcher',
+    projects: 1, publications: 4, integrity: 81, lastActive: '5 hours ago',
+    color: 'cyan', isRedux: false,
+    specializations: ['Smart Grids', 'Renewable Energy', 'Power Systems'],
+    bio: 'Engineer researching smart grid infrastructure improvements to optimise renewable energy integration at a national scale.',
+    recentProjects: [{ title: 'Renewable Energy Integration in Smart Grid Systems', status: 'In-Progress' }],
+  },
+  {
+    id: '7', name: 'Dr. Grace Ndegwa', email: 'g.ndegwa@greenfield.edu',
+    department: 'Medicine', role: 'Researcher',
+    projects: 2, publications: 9, integrity: 91, lastActive: '1 week ago',
+    color: 'green', isRedux: false,
+    specializations: ['Infectious Disease', 'Hospital Epidemiology', 'Antibiotic Resistance'],
+    bio: 'Medical researcher focusing on antibiotic resistance patterns in hospital settings and evidence-based infection control protocols.',
+    recentProjects: [{ title: 'Antibiotic Resistance Patterns in Hospital-Acquired Infections', status: 'Exported' }],
+  },
+  {
+    id: '8', name: 'Dr. Ibrahim Musa', email: 'i.musa@greenfield.edu',
+    department: 'Computer Science', role: 'Postgraduate Student',
+    projects: 1, publications: 1, integrity: 73, lastActive: '6 hours ago',
+    color: 'blue', isRedux: false,
+    specializations: ['Natural Language Processing', 'Low-Resource NLP', 'African Languages'],
+    bio: 'PhD student developing machine translation systems tailored to low-resource African languages, bridging the AI language gap.',
+    recentProjects: [{ title: 'Neural Machine Translation for Low-Resource African Languages', status: 'In-Progress' }],
+  },
+];
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+const MANTINE_COLORS = ['blue', 'teal', 'green', 'grape', 'orange', 'cyan', 'indigo', 'red', 'pink', 'yellow'];
+
+function nameToColor(name: string) {
+  let h = 0;
+  for (const c of name) h = (h << 5) - h + c.charCodeAt(0);
+  return MANTINE_COLORS[Math.abs(h) % MANTINE_COLORS.length];
+}
+
+function storedToDisplay(u: StoredUser): DisplayResearcher {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    department: u.department ?? 'Unassigned',
+    role: u.role,
+    projects: 0,
+    publications: 0,
+    integrity: 0,
+    lastActive: 'Just created',
+    color: nameToColor(u.name),
+    specializations: [],
+    bio: `${u.role} registered via the admin portal.`,
+    recentProjects: u.projectTitle ? [{ title: u.projectTitle, status: 'Draft' }] : [],
+    isRedux: true,
+    supervisorId: u.supervisorId,
+    matricNo: u.matricNo,
+    degreeLevel: u.degreeLevel,
+    projectTitle: u.projectTitle,
+  };
+}
+
+function getInitials(name: string) {
+  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3);
+}
+
+function integrityColor(n: number) {
+  if (n >= 85) return '#2f9e44';
+  if (n >= 70) return '#f59f00';
+  return '#fa5252';
+}
+
+function genPassword(len = 12): string {
+  const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$';
+  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function pwStrength(pw: string): { score: number; label: string; color: string } {
+  let s = 0;
+  if (pw.length >= 8)              s++;
+  if (pw.length >= 12)             s++;
+  if (/[A-Z]/.test(pw))            s++;
+  if (/[0-9]/.test(pw))            s++;
+  if (/[^a-zA-Z0-9]/.test(pw))    s++;
+  const lvl = [
+    { score: 0, label: '',          color: 'gray'   },
+    { score: 1, label: 'Very Weak', color: 'red'    },
+    { score: 2, label: 'Weak',      color: 'orange' },
+    { score: 3, label: 'Fair',      color: 'yellow' },
+    { score: 4, label: 'Good',      color: 'teal'   },
+    { score: 5, label: 'Strong',    color: 'green'  },
+  ];
+  return lvl[Math.min(s, 5)];
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  Draft: 'gray', 'In-Progress': 'blue', Review: 'yellow', Submitted: 'green', Exported: 'teal',
+};
+
+const ROLE_COLOR: Record<string, string> = {
+  Researcher: 'blue', 'Postgraduate Student': 'violet', Supervisor: 'green',
+  Student: 'orange', "Master's Student": 'cyan', 'Undergraduate Student': 'pink',
+  'Head of Department': 'teal',
+};
+
+// const STUDENT_ROLES: AppRole[] = [
+//   'Student', 'Researcher', "Master's Student", 'Undergraduate Student',
+// ];
+
+const ADD_ROLE_OPTIONS: { value: AppRole; label: string }[] = [
+  { value: 'Supervisor',           label: 'Supervisor' },
+  { value: 'Researcher',           label: 'Researcher (PhD)' },
+  { value: "Master's Student",     label: "Master's Student" },
+  { value: 'Undergraduate Student', label: 'Undergraduate Student' },
+  { value: 'Head of Department',   label: 'Head of Department' },
+  { value: 'Student',              label: 'Student' },
+];
+
+const DEGREE_OPTIONS = [
+  { value: 'PhD',          label: 'PhD' },
+  { value: "Master's",     label: "Master's" },
+  { value: 'Undergraduate', label: 'Undergraduate' },
+];
+
+// ── Empty form ──────────────────────────────────────────────────────────────────
+
+const EMPTY_FORM = {
+  name: '', email: '', password: '', role: 'Researcher' as AppRole,
+  department: '', matricNo: '', degreeLevel: '', projectTitle: '', supervisorId: '',
+};
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
+// ── Role buckets ──────────────────────────────────────────────────────────────
+
+const SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Dean', 'Head of Department'];
+const STUDENT_ROLES    = ['Student', 'PhD Student', "Master's Student", 'Undergraduate Student', 'Researcher'];
+
+interface SupabaseUser {
+  id:            string;
+  name:          string;
+  email:         string;
+  role:          string;
+  specialty?:    string;
+  phone?:        string;
+  matric_no?:    string;
+  project_title?: string;
+  created_at:    string;
+}
+
+export default function AdminResearchers() {
+  const dispatch = useAppDispatch();
+  const reduxUsers    = useAppSelector(s => s.users.list);
+  const authUser      = useAppSelector(s => s.auth.user);
+  const institutionId = authUser?.institutionId ?? '';
+
+  // ── Supabase users split into supervisors and students ───────────────────
+  const [sbSupervisors, setSbSupervisors] = useState<SupabaseUser[]>([]);
+  const [sbStudents,    setSbStudents]    = useState<SupabaseUser[]>([]);
+  const [sbLoading,     setSbLoading]     = useState(false);
+  const [activeTab,     setActiveTab]     = useState<string>('supervisors');
+
+  const loadFromSupabase = async () => {
+    if (!institutionId) return;
+    setSbLoading(true);
+    try {
+      const { data } = await supabase
+        .from('users')
+        .select('id, name, email, role, specialty, phone, matric_no, project_title, created_at')
+        .eq('institution_id', institutionId)
+        .neq('role', 'Director of Research')
+        .order('created_at');
+      const all = (data ?? []) as SupabaseUser[];
+      setSbSupervisors(all.filter(u => SUPERVISOR_ROLES.includes(u.role)));
+      setSbStudents(all.filter(u => STUDENT_ROLES.includes(u.role)));
+    } finally {
+      setSbLoading(false);
+    }
+  };
+
+  useEffect(() => { loadFromSupabase(); }, [institutionId]);
+
+  const [search, setSearch]         = useState('');
+  const [selected, setSelected]     = useState<DisplayResearcher | null>(null);
+  const [page, setPage]             = useState(1);
+
+  // Add User modal
+  const [addOpen, setAddOpen]       = useState(false);
+  const [form, setForm]             = useState({ ...EMPTY_FORM });
+  const [showPassword, setShowPassword] = useState(false);
+  const [created, setCreated]       = useState<{ email: string; password: string } | null>(null);
+
+  // Supervisor assignment inside detail modal
+  const [assignSupId, setAssignSupId] = useState('');
+  const [assignSaved, setAssignSaved] = useState(false);
+
+  const PER_PAGE = 6;
+
+  // Merge mock + Redux users
+  const allResearchers = useMemo<DisplayResearcher[]>(() => [
+    ...RESEARCHERS,
+    ...reduxUsers.map(storedToDisplay),
+  ], [reduxUsers]);
+
+  const allDepartments = useMemo(
+    () => [...new Set(allResearchers.map(r => r.department).filter(Boolean))],
+    [allResearchers],
+  );
+
+  // Only Redux-created supervisors — their IDs match what's stored in usersSlice,
+  // so student.supervisorId will correctly match supervisor.user.id at login time.
+  const allSupervisors = useMemo(
+    () => allResearchers.filter(r => r.role === 'Supervisor' && r.isRedux),
+    [allResearchers],
+  );
+
+  const filtered = useMemo(() => {
+    setPage(1);
+    const q = search.toLowerCase();
+    return !q ? allResearchers : allResearchers.filter(r =>
+      r.name.toLowerCase().includes(q) ||
+      r.email.toLowerCase().includes(q) ||
+      r.department.toLowerCase().includes(q),
+    );
+  }, [search, allResearchers]);
+
+  const paginated  = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const totalPages = Math.ceil(filtered.length / PER_PAGE);
+
+  // ── Add User handlers ──────────────────────────────────────────────────────
+
+  function openAdd() {
+    setForm({ ...EMPTY_FORM, password: genPassword() });
+    setCreated(null);
+    setAddOpen(true);
+  }
+
+  function handleCreate() {
+    if (!form.name.trim() || !form.email.trim() || !form.password.trim()) return;
+    dispatch(createUser({
+      name:        form.name.trim(),
+      email:       form.email.trim().toLowerCase(),
+      password:    form.password,
+      role:        form.role,
+      department:  form.department || undefined,
+      matricNo:    form.matricNo   || undefined,
+      degreeLevel: form.degreeLevel || undefined,
+      projectTitle: form.projectTitle || undefined,
+      supervisorId: form.supervisorId || undefined,
+    }));
+    setCreated({ email: form.email.trim().toLowerCase(), password: form.password });
+  }
+
+  function closeAdd() {
+    setAddOpen(false);
+    setCreated(null);
+    setForm({ ...EMPTY_FORM });
+  }
+
+  // ── Supervisor assignment handler ─────────────────────────────────────────
+
+  function handleAssign() {
+    if (!selected || !assignSupId) return;
+    dispatch(assignSupervisor({ studentId: selected.id, supervisorId: assignSupId }));
+    setAssignSaved(true);
+    setTimeout(() => setAssignSaved(false), 2500);
+  }
+
+  function openDetail(r: DisplayResearcher) {
+    setSelected(r);
+    setAssignSupId(r.supervisorId ?? '');
+    setAssignSaved(false);
+  }
+
+  const isStudentRole = STUDENT_ROLES.includes(form.role as AppRole);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <Box p="xl">
+
+      {/* ── Title + Add button ── */}
+      <Group justify="space-between" mb="xl" wrap="nowrap">
+        <Box>
+          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Researchers</Title>
+          <Text size="sm" c="dimmed">
+            {allResearchers.length} researchers across {allDepartments.length} departments
+          </Text>
+        </Box>
+        <Button leftSection={<LuUserPlus size={16} />} radius="md" onClick={openAdd}>
+          Add User
+        </Button>
+      </Group>
+
+      {/* ── Summary cards ── */}
+      <SimpleGrid cols={{ base: 2, md: 4 }} mb="xl">
+        {[
+          { label: 'Total Researchers', value: allResearchers.length,                                                                      icon: LuUsers,     color: '#228be6' },
+          { label: 'Departments',       value: allDepartments.length,                                                                      icon: LuBuilding2, color: '#7950f2' },
+          { label: 'Supervisors',       value: allResearchers.filter(r => r.role === 'Supervisor').length,                                  icon: LuUserCheck, color: '#2f9e44' },
+          { label: 'Avg. Integrity',    value: allResearchers.filter(r => r.integrity > 0).length
+              ? Math.round(allResearchers.filter(r => r.integrity > 0).reduce((s, r) => s + r.integrity, 0) /
+                  allResearchers.filter(r => r.integrity > 0).length)
+              : 0,                                                                                                                           icon: LuTrendingUp, color: '#f59f00' },
+        ].map(({ label, value, icon: Icon, color }) => (
+          <Paper key={label} withBorder p="md" radius="md" bg="white">
+            <Group gap="sm" mb={4}>
+              <Icon size={20} color={color} />
+              <Text fw={800} size="xl">{value}</Text>
+            </Group>
+            <Text size="sm" c="dimmed">{label}</Text>
+          </Paper>
+        ))}
+      </SimpleGrid>
+
+      {/* ── Search ── */}
+      <TextInput
+        placeholder="Search by name, department, or email..."
+        leftSection={<LuSearch size={16} />}
+        value={search}
+        onChange={e => setSearch(e.currentTarget.value)}
+        mb="md"
+        size="md"
+      />
+
+      {/* ── Table ── */}
+      <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+        <Table highlightOnHover verticalSpacing="md">
+          <Table.Thead>
+            <Table.Tr style={{ background: '#f8f9fa' }}>
+              {['Researcher', 'Department', 'Role', 'Projects', 'Publications', 'Integrity', 'Last Active'].map(h => (
+                <Table.Th key={h}>
+                  <Text size="sm" c="dimmed" fw={500}>{h}</Text>
+                </Table.Th>
+              ))}
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {paginated.map(r => (
+              <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(r)}>
+                <Table.Td>
+                  <Group gap="sm" wrap="nowrap">
+                    <Avatar color={r.color} radius="xl" size="md">
+                      {getInitials(r.name)}
+                    </Avatar>
+                    <Box>
+                      <Group gap={6}>
+                        <Text size="sm" fw={600}>{r.name}</Text>
+                        {r.isRedux && (
+                          <Badge size="xs" color="teal" variant="dot" radius="xl">New</Badge>
+                        )}
+                      </Group>
+                      <Text size="xs" c="dimmed">{r.email}</Text>
+                    </Box>
+                  </Group>
+                </Table.Td>
+                <Table.Td><Text size="sm">{r.department}</Text></Table.Td>
+                <Table.Td>
+                  <Badge color={ROLE_COLOR[r.role] ?? 'gray'} variant="light" radius="sm" size="sm">
+                    {r.role}
+                  </Badge>
+                </Table.Td>
+                <Table.Td><Text size="sm" fw={500}>{r.projects || '—'}</Text></Table.Td>
+                <Table.Td><Text size="sm" fw={500}>{r.publications || '—'}</Text></Table.Td>
+                <Table.Td>
+                  {r.integrity > 0
+                    ? <Text fw={700} style={{ color: integrityColor(r.integrity) }}>{r.integrity}</Text>
+                    : <Text size="sm" c="dimmed">—</Text>
+                  }
+                </Table.Td>
+                <Table.Td><Text size="sm" c="dimmed">{r.lastActive}</Text></Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Paper>
+
+      {/* ── Pagination ── */}
+      {totalPages > 1 && (
+        <Group justify="space-between" mt="md">
+          <Text size="sm" c="dimmed">
+            Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} researchers
+          </Text>
+          <Pagination total={totalPages} value={page} onChange={setPage} color="brand" radius="md" size="sm" />
+        </Group>
+      )}
+
+      {/* ══ Institution Users — Supervisors & Students from Supabase ══════ */}
+      <Box mt="xl">
+        <Group justify="space-between" mb="md">
+          <Box>
+            <Text fw={700} size="lg">Institution Users</Text>
+            <Text size="sm" c="dimmed">
+              All users registered under <strong>{authUser?.institutionName ?? institutionId}</strong>
+            </Text>
+          </Box>
+          <Button size="xs" variant="subtle" leftSection={<LuRefreshCw size={13} />} onClick={loadFromSupabase} loading={sbLoading}>
+            Refresh
+          </Button>
+        </Group>
+
+        <Tabs value={activeTab} onChange={v => v && setActiveTab(v)} variant="pills" color="brand">
+          <Tabs.List mb="md">
+            <Tabs.Tab value="supervisors" leftSection={<LuUserCheck size={14} />}>
+              Supervisors
+              {sbSupervisors.length > 0 && (
+                <Badge size="xs" color="brand" variant="filled" ml={6} radius="xl" style={{ pointerEvents: 'none' }}>
+                  {sbSupervisors.length}
+                </Badge>
+              )}
+            </Tabs.Tab>
+            <Tabs.Tab value="students" leftSection={<LuUsers size={14} />}>
+              Students / Researchers
+              {sbStudents.length > 0 && (
+                <Badge size="xs" color="teal" variant="filled" ml={6} radius="xl" style={{ pointerEvents: 'none' }}>
+                  {sbStudents.length}
+                </Badge>
+              )}
+            </Tabs.Tab>
+          </Tabs.List>
+
+          {/* ── Supervisors tab ── */}
+          <Tabs.Panel value="supervisors">
+            {sbLoading ? (
+              <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
+            ) : sbSupervisors.length === 0 ? (
+              <Paper withBorder p="xl" radius="md" ta="center">
+                <LuUserCheck size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+                <Text c="dimmed" size="sm">No supervisors found for this institution.</Text>
+                <Text size="xs" c="dimmed" mt={4}>Create supervisors via HOD Supervisors page or Add User above.</Text>
+              </Paper>
+            ) : (
+              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                <Table highlightOnHover verticalSpacing="sm">
+                  <Table.Thead>
+                    <Table.Tr style={{ background: '#f8f9fa' }}>
+                      {['Name', 'Email', 'Role', 'Specialisation', 'Phone', 'Joined'].map(h => (
+                        <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
+                      ))}
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {sbSupervisors.map(u => (
+                      <Table.Tr key={u.id}>
+                        <Table.Td>
+                          <Group gap="sm" wrap="nowrap">
+                            <Avatar color="blue" radius="xl" size="sm">
+                              {u.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}
+                            </Avatar>
+                            <Text size="sm" fw={600}>{u.name}</Text>
+                          </Group>
+                        </Table.Td>
+                        <Table.Td><Text size="sm" c="dimmed">{u.email}</Text></Table.Td>
+                        <Table.Td>
+                          <Badge color="blue" variant="light" size="sm">{u.role}</Badge>
+                        </Table.Td>
+                        <Table.Td><Text size="sm">{u.specialty || '—'}</Text></Table.Td>
+                        <Table.Td><Text size="sm" c="dimmed">{u.phone || '—'}</Text></Table.Td>
+                        <Table.Td><Text size="xs" c="dimmed">{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Paper>
+            )}
+          </Tabs.Panel>
+
+          {/* ── Students / Researchers tab ── */}
+          <Tabs.Panel value="students">
+            {sbLoading ? (
+              <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
+            ) : sbStudents.length === 0 ? (
+              <Paper withBorder p="xl" radius="md" ta="center">
+                <LuUsers size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+                <Text c="dimmed" size="sm">No students or researchers found for this institution.</Text>
+                <Text size="xs" c="dimmed" mt={4}>Create students via HOD Students page or Add User above.</Text>
+              </Paper>
+            ) : (
+              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                <Table highlightOnHover verticalSpacing="sm">
+                  <Table.Thead>
+                    <Table.Tr style={{ background: '#f8f9fa' }}>
+                      {['Name', 'Email', 'Role', 'Matric No', 'Research Program', 'Phone', 'Joined'].map(h => (
+                        <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
+                      ))}
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {sbStudents.map(u => (
+                      <Table.Tr key={u.id}>
+                        <Table.Td>
+                          <Group gap="sm" wrap="nowrap">
+                            <Avatar color="teal" radius="xl" size="sm">
+                              {u.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}
+                            </Avatar>
+                            <Text size="sm" fw={600}>{u.name}</Text>
+                          </Group>
+                        </Table.Td>
+                        <Table.Td><Text size="sm" c="dimmed">{u.email}</Text></Table.Td>
+                        <Table.Td>
+                          <Badge color="teal" variant="light" size="sm">{u.role}</Badge>
+                        </Table.Td>
+                        <Table.Td><Text size="sm" ff="monospace">{u.matric_no || '—'}</Text></Table.Td>
+                        <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 180 }}>{u.project_title || '—'}</Text></Table.Td>
+                        <Table.Td><Text size="sm" c="dimmed">{u.phone || '—'}</Text></Table.Td>
+                        <Table.Td><Text size="xs" c="dimmed">{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Paper>
+            )}
+          </Tabs.Panel>
+        </Tabs>
+      </Box>
+
+      {/* ════════════════════════════════════════════════════════════════════
+          Add User Modal
+      ════════════════════════════════════════════════════════════════════ */}
+      <Modal
+        opened={addOpen}
+        onClose={closeAdd}
+        title={null}
+        size="lg"
+        padding={0}
+        centered
+        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.7, blur: 2 }}
+        styles={{
+          content: { borderRadius: 16, overflow: 'hidden', maxHeight: '90vh', display: 'flex', flexDirection: 'column' },
+          body:    { padding: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+        }}
+      >
+        {created ? (
+          /* ── Success screen ── */
+          <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <Box style={{
+              background: 'linear-gradient(135deg, #2f9e44 0%, #51cf66 100%)',
+              padding: '40px 32px 32px',
+              textAlign: 'center',
+              flexShrink: 0,
+            }}>
+              <Box style={{
+                width: 68, height: 68, borderRadius: '50%',
+                background: 'rgba(255,255,255,0.22)',
+                border: '2px solid rgba(255,255,255,0.4)',
+                margin: '0 auto 16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <LuCheck size={30} color="white" />
+              </Box>
+              <Text fw={800} size="xl" c="white">User Created Successfully</Text>
+              <Text size="sm" mt={6} style={{ color: 'rgba(255,255,255,0.78)' }}>
+                Account is ready — share these credentials securely with the user.
+              </Text>
+            </Box>
+
+            <Box p="xl" style={{ overflowY: 'auto', flex: 1 }}>
+              <Alert
+                variant="light" color="orange" mb="lg"
+                icon={<LuKey size={15} />}
+                title="Save these credentials now"
+              >
+                The password cannot be recovered after this dialog is closed.
+              </Alert>
+
+              <Paper withBorder p="lg" radius="md" mb="lg" style={{ background: '#f8f9fa' }}>
+                <Stack gap="md">
+                  <CredentialRow label="Email Address" value={created.email} />
+                  <Divider />
+                  <CredentialRow label="Password" value={created.password} />
+                </Stack>
+              </Paper>
+
+              <Group gap="sm">
+                <Button
+                  style={{ flex: 1 }} variant="default" radius="md"
+                  onClick={() => { setCreated(null); setForm({ ...EMPTY_FORM, password: genPassword() }); }}
+                >
+                  Add Another User
+                </Button>
+                <Button style={{ flex: 2 }} color="brand" radius="md" onClick={closeAdd}>
+                  Done
+                </Button>
+              </Group>
+            </Box>
+          </Box>
+        ) : (
+          /* ── Form ── */
+          <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            {/* Gradient header with live name/email preview */}
+            <Box style={{
+              background: 'linear-gradient(135deg, #3b5bdb 0%, #4c6ef5 100%)',
+              padding: '28px 32px 24px',
+              flexShrink: 0,
+            }}>
+              <Group gap="md" wrap="nowrap">
+                <Box style={{
+                  width: 52, height: 52, borderRadius: '50%', flexShrink: 0,
+                  background: 'rgba(255,255,255,0.18)',
+                  border: '2px solid rgba(255,255,255,0.35)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {form.name.trim()
+                    ? <Text fw={800} style={{ color: 'white', fontSize: 16, letterSpacing: '-0.5px' }}>{getInitials(form.name)}</Text>
+                    : <LuUserPlus size={22} color="white" />}
+                </Box>
+                <Box style={{ flex: 1, minWidth: 0 }}>
+                  <Text fw={800} size="lg" c="white" lh={1.2} lineClamp={1}>
+                    {form.name.trim() || 'New User Account'}
+                  </Text>
+                  <Text size="xs" mt={3} lineClamp={1} style={{ color: 'rgba(255,255,255,0.7)' }}>
+                    {form.email.trim() || 'Complete the form below to create an account'}
+                  </Text>
+                </Box>
+                <Badge radius="xl" size="sm" style={{
+                  background: 'rgba(255,255,255,0.2)', color: 'white',
+                  border: '1px solid rgba(255,255,255,0.3)', flexShrink: 0,
+                }}>
+                  {form.role || 'Researcher'}
+                </Badge>
+              </Group>
+            </Box>
+
+            {/* Form body — scrollable */}
+            <Box p="xl" style={{ overflowY: 'auto', flex: 1 }}>
+              <Stack gap="lg">
+
+                {/* ── 1 · Account Details ── */}
+                <Box>
+                  <Group gap={8} mb="md">
+                    <Box style={{
+                      width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                      background: '#3b5bdb',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: 800, color: 'white', lineHeight: 1 }}>1</Text>
+                    </Box>
+                    <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.9 }}>
+                      Account Details
+                    </Text>
+                  </Group>
+                  <Stack gap="sm">
+                    <TextInput
+                      label="Full Name" placeholder="e.g. Dr. Jane Doe"
+                      size="md" required
+                      value={form.name}
+                      onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, name: v })); }}
+                    />
+                    <TextInput
+                      label="Email Address" placeholder="user@university.edu"
+                      size="md" required leftSection={<LuMail size={15} />}
+                      value={form.email}
+                      onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, email: v })); }}
+                    />
+                    <Select
+                      label="Role" placeholder="Select a role"
+                      size="md" data={ADD_ROLE_OPTIONS} value={form.role}
+                      onChange={v => setForm(f => ({ ...f, role: (v ?? 'Researcher') as AppRole, supervisorId: '' }))}
+                    />
+                    <TextInput
+                      label="Department" placeholder="e.g. Computer Science"
+                      size="md" leftSection={<LuBuilding2 size={15} />}
+                      value={form.department}
+                      onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, department: v })); }}
+                    />
+                  </Stack>
+                </Box>
+
+                <Divider />
+
+                {/* ── 2 · Login Credentials ── */}
+                <Box>
+                  <Group gap={8} mb="md">
+                    <Box style={{
+                      width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                      background: '#3b5bdb',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: 800, color: 'white', lineHeight: 1 }}>2</Text>
+                    </Box>
+                    <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.9 }}>
+                      Login Credentials
+                    </Text>
+                    <Box style={{ flex: 1 }} />
+                    <Tooltip label="Generate strong password" withArrow>
+                      <ActionIcon size="sm" variant="subtle" color="brand"
+                        onClick={() => setForm(f => ({ ...f, password: genPassword() }))}>
+                        <LuRefreshCw size={13} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+
+                  <Group gap="xs" mb={form.password ? 10 : 0}>
+                    <PasswordInput
+                      style={{ flex: 1 }} size="md"
+                      placeholder="At least 8 characters"
+                      visible={showPassword}
+                      onVisibilityChange={setShowPassword}
+                      value={form.password}
+                      onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, password: v })); }}
+                    />
+                    <CopyButton value={form.password}>
+                      {({ copied, copy }) => (
+                        <Tooltip label={copied ? 'Copied!' : 'Copy password'} withArrow>
+                          <ActionIcon
+                            onClick={copy} variant="light"
+                            color={copied ? 'teal' : 'gray'}
+                            size="42px"
+                          >
+                            {copied ? <LuCheck size={16} /> : <LuCopy size={16} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+                    </CopyButton>
+                  </Group>
+
+                  {form.password && (() => {
+                    const s = pwStrength(form.password);
+                    return (
+                      <Box>
+                        <Group justify="space-between" mb={5}>
+                          <Text size="xs" c="dimmed">Password strength</Text>
+                          <Text size="xs" fw={700} c={s.color}>{s.label}</Text>
+                        </Group>
+                        <Progress value={(s.score / 5) * 100} color={s.color} size="sm" radius="xl" />
+                      </Box>
+                    );
+                  })()}
+                </Box>
+
+                {/* ── 3 · Student Details (conditional) ── */}
+                {isStudentRole && (
+                  <>
+                    <Divider />
+                    <Box>
+                      <Group gap={8} mb="md">
+                        <Box style={{
+                          width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                          background: '#3b5bdb',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Text style={{ fontSize: 11, fontWeight: 800, color: 'white', lineHeight: 1 }}>3</Text>
+                        </Box>
+                        <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.9 }}>
+                          Student Details
+                        </Text>
+                      </Group>
+                      <Stack gap="sm">
+                        <TextInput
+                          label="Matric / Student Number" placeholder="e.g. GF/2024/001"
+                          size="md"
+                          value={form.matricNo}
+                          onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, matricNo: v })); }}
+                        />
+                        <Select
+                          label="Degree Level" placeholder="Select level"
+                          size="md" data={DEGREE_OPTIONS} value={form.degreeLevel}
+                          onChange={v => setForm(f => ({ ...f, degreeLevel: v ?? '' }))}
+                        />
+                        <TextInput
+                          label="Project Title" placeholder="Working title of research"
+                          size="md" leftSection={<LuFolder size={15} />}
+                          value={form.projectTitle}
+                          onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, projectTitle: v })); }}
+                        />
+                        <Select
+                          label="Assign Supervisor" placeholder="Select supervisor"
+                          size="md"
+                          data={allSupervisors.map(s => ({ value: s.id, label: s.name }))}
+                          value={form.supervisorId}
+                          onChange={v => setForm(f => ({ ...f, supervisorId: v ?? '' }))}
+                          clearable leftSection={<LuLink size={14} />}
+                        />
+                      </Stack>
+                    </Box>
+                  </>
+                )}
+
+                {/* ── Footer actions ── */}
+                <Group gap="sm" style={{ borderTop: '1px solid #f1f3f5', paddingTop: 20 }}>
+                  <Button style={{ flex: 1 }} variant="default" radius="md" size="md" onClick={closeAdd}>
+                    Cancel
+                  </Button>
+                  <Button
+                    style={{ flex: 2 }} color="brand" radius="md" size="md"
+                    leftSection={<LuKey size={15} />}
+                    disabled={!form.name.trim() || !form.email.trim() || !form.password.trim()}
+                    onClick={handleCreate}
+                  >
+                    Create User Account
+                  </Button>
+                </Group>
+
+              </Stack>
+            </Box>
+          </Box>
+        )}
+      </Modal>
+
+      {/* ════════════════════════════════════════════════════════════════════
+          Researcher Detail Modal
+      ════════════════════════════════════════════════════════════════════ */}
+      <Modal
+        opened={!!selected}
+        onClose={() => setSelected(null)}
+        size="lg"
+        centered
+        padding="xl"
+        title={null}
+        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.7, blur: 2 }}
+      >
+        {selected && (
+          <Stack gap="lg">
+
+            {/* Header */}
+            <Group gap="lg" wrap="nowrap">
+              <Avatar color={selected.color} radius="xl" size={72} style={{ fontSize: 18 }}>
+                {getInitials(selected.name)}
+              </Avatar>
+              <Box>
+                <Group gap="xs" mb={4}>
+                  <Title order={3}>{selected.name}</Title>
+                  <Badge color={ROLE_COLOR[selected.role] ?? 'gray'} variant="light" radius="sm">
+                    {selected.role}
+                  </Badge>
+                  {selected.isRedux && (
+                    <Badge color="teal" variant="dot" radius="xl" size="sm">Redux user</Badge>
+                  )}
+                </Group>
+                <Group gap="xs">
+                  <LuMail size={14} color="#868e96" />
+                  <Text size="sm" c="dimmed">{selected.email}</Text>
+                </Group>
+                <Group gap="xs" mt={2}>
+                  <LuBuilding2 size={14} color="#868e96" />
+                  <Text size="sm" c="dimmed">{selected.department}</Text>
+                </Group>
+              </Box>
+            </Group>
+
+            <Divider />
+
+            {/* Stats (only meaningful for mock users) */}
+            {!selected.isRedux && (
+              <SimpleGrid cols={3}>
+                <StatCard icon={LuFolder} iconColor="#228be6" label="Projects" value={selected.projects} />
+                <StatCard icon={LuBookOpen} iconColor="#7950f2" label="Publications" value={selected.publications} />
+                <StatCard
+                  icon={LuShield}
+                  iconColor={integrityColor(selected.integrity)}
+                  label="Integrity"
+                  value={selected.integrity}
+                  valueColor={integrityColor(selected.integrity)}
+                />
+              </SimpleGrid>
+            )}
+
+            {/* Redux student: matric / degree / project */}
+            {selected.isRedux && (selected.matricNo || selected.degreeLevel || selected.projectTitle) && (
+              <SimpleGrid cols={3}>
+                {selected.matricNo && (
+                  <Box>
+                    <Text size="xs" c="dimmed" fw={600} style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>Matric No</Text>
+                    <Text size="sm" fw={500}>{selected.matricNo}</Text>
+                  </Box>
+                )}
+                {selected.degreeLevel && (
+                  <Box>
+                    <Text size="xs" c="dimmed" fw={600} style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>Degree</Text>
+                    <Text size="sm" fw={500}>{selected.degreeLevel}</Text>
+                  </Box>
+                )}
+                {selected.projectTitle && (
+                  <Box>
+                    <Text size="xs" c="dimmed" fw={600} style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>Project</Text>
+                    <Text size="sm" fw={500} lineClamp={2}>{selected.projectTitle}</Text>
+                  </Box>
+                )}
+              </SimpleGrid>
+            )}
+
+            {/* Bio */}
+            <Box>
+              <SectionLabel>About</SectionLabel>
+              <Text size="sm" c="dimmed" lh={1.7}>{selected.bio}</Text>
+            </Box>
+
+            {/* Specializations */}
+            {selected.specializations.length > 0 && (
+              <Box>
+                <SectionLabel>Specialisations</SectionLabel>
+                <Group gap="xs">
+                  {selected.specializations.map(s => (
+                    <Badge key={s} variant="light" color="blue" radius="sm">{s}</Badge>
+                  ))}
+                </Group>
+              </Box>
+            )}
+
+            {/* Recent projects */}
+            {selected.recentProjects.length > 0 && (
+              <Box>
+                <SectionLabel>Recent Projects</SectionLabel>
+                <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                  {selected.recentProjects.map((p, i) => (
+                    <Group
+                      key={p.title}
+                      justify="space-between"
+                      px="md"
+                      py="sm"
+                      wrap="nowrap"
+                      style={{ borderTop: i > 0 ? '1px solid #f1f3f5' : undefined }}
+                    >
+                      <Text size="sm" style={{ flex: 1 }} lineClamp={1}>{p.title}</Text>
+                      <Badge color={STATUS_COLOR[p.status] ?? 'gray'} variant="light" radius="sm" size="sm" style={{ flexShrink: 0 }}>
+                        {p.status}
+                      </Badge>
+                    </Group>
+                  ))}
+                </Paper>
+              </Box>
+            )}
+
+            {/* ── Supervisor assignment (Redux students only) ── */}
+            {selected.isRedux && STUDENT_ROLES.includes(selected.role as AppRole) && (
+              <>
+                <Divider />
+                <Box>
+                  <SectionLabel>Supervisor Assignment</SectionLabel>
+                  {selected.supervisorId && (
+                    <Text size="sm" c="dimmed" mb="xs">
+                      Currently assigned to:{' '}
+                      <Text component="span" fw={600} c="dark">
+                        {allSupervisors.find(s => s.id === selected.supervisorId)?.name ?? 'Unknown'}
+                      </Text>
+                    </Text>
+                  )}
+                  <Group gap="sm">
+                    <Select
+                      placeholder="Select supervisor"
+                      data={allSupervisors.map(s => ({ value: s.id, label: s.name }))}
+                      value={assignSupId}
+                      onChange={v => setAssignSupId(v ?? '')}
+                      clearable
+                      style={{ flex: 1 }}
+                      leftSection={<LuLink size={14} />}
+                    />
+                    <Button
+                      radius="md"
+                      disabled={!assignSupId}
+                      onClick={handleAssign}
+                      color={assignSaved ? 'teal' : 'blue'}
+                      leftSection={assignSaved ? <LuCheck size={14} /> : undefined}
+                    >
+                      {assignSaved ? 'Assigned!' : 'Assign'}
+                    </Button>
+                  </Group>
+                </Box>
+              </>
+            )}
+
+            <Text size="xs" c="dimmed" ta="right">Last active: {selected.lastActive}</Text>
+
+          </Stack>
+        )}
+      </Modal>
+    </Box>
+  );
+}
+
+// ── Small reusable sub-components ──────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <Text size="xs" fw={700} c="dimmed" mb="xs" style={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
+      {children}
+    </Text>
+  );
+}
+
+function StatCard({
+  icon: Icon, iconColor, label, value, valueColor,
+}: { icon: React.ElementType; iconColor: string; label: string; value: number; valueColor?: string }) {
+  return (
+    <Paper withBorder p="md" radius="md" ta="center">
+      <Group gap="xs" justify="center" mb={4}>
+        <Icon size={16} color={iconColor} />
+        <Text size="xs" c="dimmed" fw={500}>{label}</Text>
+      </Group>
+      <Text fw={800} size="xl" style={valueColor ? { color: valueColor } : undefined}>{value}</Text>
+    </Paper>
+  );
+}
+
+function CredentialRow({ label, value }: { label: string; value: string }) {
+  return (
+    <Group justify="space-between" wrap="nowrap">
+      <Box>
+        <Text size="xs" c="dimmed" fw={600}>{label}</Text>
+        <Text size="sm" fw={600} ff="monospace">{value}</Text>
+      </Box>
+      <CopyButton value={value}>
+        {({ copied, copy }) => (
+          <Tooltip label={copied ? 'Copied!' : `Copy ${label.toLowerCase()}`} withArrow>
+            <ActionIcon onClick={copy} variant="light" color={copied ? 'teal' : 'gray'} size="md">
+              {copied ? <LuCheck size={14} /> : <LuCopy size={14} />}
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </CopyButton>
+    </Group>
+  );
+}
