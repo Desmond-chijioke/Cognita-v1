@@ -4,21 +4,23 @@ import type { AppRole } from '../Redux/slices/authSlice';
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface UserProfile {
-  id:                 string;
-  name:               string;
-  email:              string;
-  role:               AppRole;
-  institution_id?:    string;
-  institution_name?:  string;
-  institution_email?: string;
-  institution_type?:  string;
-  phone?:             string;
-  department_name?:   string;   // name of the dept/faculty/college this user manages
-  department?:        string;
-  matric_no?:         string;
-  degree_level?:      string;
-  project_title?:     string;
-  supervisor_id?:     string;
+  id:                  string;
+  name:                string;
+  email:               string;
+  role:                AppRole;
+  institution_id?:     string;
+  institution_name?:   string;
+  institution_email?:  string;
+  institution_type?:   string;
+  phone?:              string;
+  department_name?:    string;
+  department?:         string;
+  matric_no?:          string;
+  degree_level?:       string;
+  project_title?:      string;
+  supervisor_id?:      string;
+  supervisor_name?:    string;   // resolved from supervisor_id
+  supervisor_email?:   string;
 }
 
 export interface InstitutionSignupParams {
@@ -119,9 +121,12 @@ export async function signUpInstitution(
 export async function signInSupabase(
   email: string,
   password: string,
-): Promise<{ profile: UserProfile } | null> {
+): Promise<{ profile: UserProfile; accessToken: string; refreshToken: string } | null> {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.user) return null;
+
+  const accessToken  = data.session?.access_token  ?? '';
+  const refreshToken = data.session?.refresh_token ?? '';
 
   // Primary lookup by auth user id
   let profile = await fetchProfile(data.user.id);
@@ -145,7 +150,7 @@ export async function signInSupabase(
   // can show a helpful recovery message instead of "wrong password".
   if (!profile) throw new Error('PROFILE_NOT_FOUND');
 
-  return { profile };
+  return { profile, accessToken, refreshToken };
 }
 
 // ── Fetch full profile (single query, all columns) ─────────────────────────
@@ -204,11 +209,54 @@ export async function fetchProfile(userId: string): Promise<UserProfile | null> 
     }
   }
 
-  return { ...user, department_name: departmentName } as UserProfile;
+  // For students: look up their assigned supervisor's name and email
+  let supervisorName: string | undefined;
+  let supervisorEmail: string | undefined;
+  const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+  if (STUDENT_ROLES.includes(user.role) && user.supervisor_id) {
+    const { data: sup } = await supabase
+      .from('users')
+      .select('name, email')
+      .eq('id', user.supervisor_id)
+      .maybeSingle();
+    if (sup) {
+      supervisorName  = sup.name;
+      supervisorEmail = sup.email;
+    }
+  }
+
+  return {
+    ...user,
+    department_name:  departmentName,
+    supervisor_name:  supervisorName,
+    supervisor_email: supervisorEmail,
+  } as UserProfile;
 }
 
 // ── Sign out ───────────────────────────────────────────────────────────────
 
 export async function signOut() {
-  await supabase.auth.signOut();
+  // scope:'local' clears the local session immediately and is fast (no network
+  // await required for the session to be gone locally).  The Supabase client
+  // itself removes the sb-* storage key as part of this call.
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    // ignore — belt-and-suspenders sweep below still runs
+  }
+
+  // Belt-and-suspenders: remove any sb-* keys the client may have left behind.
+  // We deliberately do NOT call localStorage.clear() here — a full clear would
+  // race with an immediate re-login and wipe the new cognita_user_session that
+  // App.tsx's SIGNED_IN handler writes, breaking refresh for the new session.
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith('sb-')) toRemove.push(k);
+    }
+    toRemove.forEach(k => localStorage.removeItem(k));
+  } catch {
+    // ignore — unavailable in some private-browsing modes
+  }
 }

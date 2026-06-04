@@ -1,6 +1,8 @@
 import { AppShell, Box, Group, Image, NavLink, Stack, Text, Badge, Divider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useAppSelector } from '../../Redux/hooks';
+import { useUnreadCount } from '../../hooks/useUnreadCount';
 import {
   LuLayoutDashboard,
   LuPenLine,
@@ -36,9 +38,11 @@ const NAV_ITEMS = [
 ];
 
 export default function StudentLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const navigate    = useNavigate();
+  const location    = useLocation();
   const [opened, { toggle, close }] = useDisclosure();
+  const myId        = useAppSelector(s => s.auth.user?.id ?? '');
+  const unreadCount = useUnreadCount(myId);
 
   return (
     <AppShell
@@ -59,6 +63,9 @@ export default function StudentLayout() {
               key={item.path}
               label={item.label}
               leftSection={<item.icon size={18} />}
+              rightSection={item.label === 'Messages' && unreadCount > 0
+                ? <Badge size="xs" color="brand" variant="filled" circle>{unreadCount}</Badge>
+                : undefined}
               active={location.pathname === item.path}
               onClick={() => { navigate(item.path); close(); }}
               variant="light"

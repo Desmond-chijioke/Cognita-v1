@@ -1,26 +1,25 @@
 import { Button } from '@mantine/core';
 import { LuLogOut } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
 import { useAppDispatch } from '../../Redux/hooks';
 import { logout } from '../../Redux/slices/authSlice';
 import { signOut } from '../../supabase/auth';
 import { clearSession } from '../../helper/storage';
+import { useNavigate } from 'react-router-dom';
 
 export default function Logout() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    // 1. Clear local state first so the App.tsx onAuthStateChange(SIGNED_OUT)
-    //    handler sees an empty localStorage and doesn't try to keep the user in.
+    // 1. Immediately clear the app session and Redux state — user sees
+    //    the login page right away without waiting for any network call.
     clearSession();
     dispatch(logout());
+    navigate('/login', { replace: true });
 
-    // 2. Redirect immediately — user is already logged out locally.
-    navigate('/login');
-
-    // 3. Fire-and-forget Supabase server-side signout (non-blocking).
-    //    If this fails it doesn't matter — the local session is already gone.
+    // 2. Supabase cleanup runs in the background (fire-and-forget).
+    //    This invalidates the server-side refresh token so the session
+    //    can't be restored later, but we don't block navigation on it.
     signOut().catch(() => {});
   };
 

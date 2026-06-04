@@ -12,7 +12,7 @@ import heroBg from '../../assets/hero-bg.jpg';
 import { ROLE_HOME } from '../../Route/types';
 import { showsucessnotification } from '../../helper/notificationhelper';
 import { signInSupabase } from '../../supabase/auth';
-import { saveSession } from '../../helper/storage';
+import { saveSession, clearSession } from '../../helper/storage';
 
 export function fullyear() {
   return new Date().getFullYear();
@@ -43,6 +43,9 @@ export default function Login() {
     if (password.length < 8) { form.setFieldError('password', 'Minimum 8 characters'); return; }
 
     setLoading(true);
+
+   
+
     try {
       const result = await signInSupabase(email, password);
 
@@ -51,9 +54,9 @@ export default function Login() {
         return;
       }
 
-      const { profile } = result;
+      const { profile, accessToken, refreshToken } = result;
 
-      // Save the complete profile to localStorage — all institution fields included
+      // Save profile + tokens into ONE key — Supabase never writes sb-* itself
       saveSession({
         id:               profile.id,
         name:             profile.name,
@@ -63,6 +66,11 @@ export default function Login() {
         institutionName:  profile.institution_name  ?? undefined,
         institutionEmail: profile.institution_email ?? undefined,
         departmentName:   profile.department_name   ?? undefined,
+        supervisorId:     profile.supervisor_id     ?? undefined,
+        supervisorName:   profile.supervisor_name   ?? undefined,
+        supervisorEmail:  profile.supervisor_email  ?? undefined,
+        accessToken,
+        refreshToken,
       });
 
       // Sync to Redux
@@ -75,6 +83,9 @@ export default function Login() {
         institutionName:  profile.institution_name  ?? undefined,
         institutionEmail: profile.institution_email ?? undefined,
         departmentName:   profile.department_name   ?? undefined,
+        supervisorId:     profile.supervisor_id     ?? undefined,
+        supervisorName:   profile.supervisor_name   ?? undefined,
+        supervisorEmail:  profile.supervisor_email  ?? undefined,
       }));
 
       showsucessnotification({ message: `Welcome back, ${profile.name}!` });

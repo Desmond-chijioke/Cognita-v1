@@ -1,4 +1,4 @@
-import { AppShell, Divider, NavLink, Stack } from '@mantine/core';
+import { AppShell, Badge, Divider, NavLink, Stack } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -9,6 +9,8 @@ import { SiGoogleanalytics } from 'react-icons/si';
 import { APPROUTE_LIST } from '../../Route/types';
 import Logout from '../Auth/Logout';
 import AppHeader from '../shared/AppHeader';
+import { useAppSelector } from '../../Redux/hooks';
+import { useUnreadCount } from '../../hooks/useUnreadCount';
 
 const NAV_ITEMS = [
   { label: 'Dashboard',         icon: LuLayoutDashboard, path: APPROUTE_LIST.ADMIN_DASHBOARD },
@@ -22,9 +24,11 @@ const NAV_ITEMS = [
 ];
 
 export default function AdminLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const navigate    = useNavigate();
+  const location    = useLocation();
   const [opened, { toggle, close }] = useDisclosure();
+  const myId        = useAppSelector(s => s.auth.user?.id ?? '');
+  const unreadCount = useUnreadCount(myId);
 
   return (
     <AppShell
@@ -43,6 +47,9 @@ export default function AdminLayout() {
               key={item.path}
               label={item.label}
               leftSection={<item.icon size={18} />}
+              rightSection={item.label === 'Messages' && unreadCount > 0
+                ? <Badge size="xs" color="brand" variant="filled" circle>{unreadCount}</Badge>
+                : undefined}
               active={location.pathname === item.path}
               onClick={() => { navigate(item.path); close(); }}
               variant="light"

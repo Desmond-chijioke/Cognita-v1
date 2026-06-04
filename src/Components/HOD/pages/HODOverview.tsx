@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import {
   Avatar, Badge, Box, Divider, Group, Paper, Progress,
   RingProgress, SimpleGrid, Stack, Text, ThemeIcon, Title,
@@ -7,8 +8,10 @@ import {
   LuActivity, LuTriangleAlert, LuCalendar, LuMicroscope,
   LuTrendingUp, LuBookOpen,
 } from 'react-icons/lu';
-import { useAppSelector } from '../../../Redux/hooks';
+import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
+import { loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
 import type { HODSupervisor, HODStudent } from '../../../Redux/slices/hodSlice';
+import { supabase } from '../../../supabase/client';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -119,11 +122,67 @@ function RecentStudentRow({ student: st }: RecentStudentRowProps) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+const SUP_ROLES    = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
+
 export default function HODOverview() {
+  const dispatch       = useAppDispatch();
   const students       = useAppSelector(s => s.hod.students);
   const supervisors    = useAppSelector(s => s.hod.supervisors);
   const user           = useAppSelector(s => s.auth.user);
-  const departmentName = user?.departmentName ?? 'Department';
+  const institutionId   = user?.institutionId  ?? '';
+  const institutionName = user?.institutionName ?? '';
+  const departmentName  = user?.departmentName ?? 'Department';
+
+  // ── Fetch students + supervisors on mount so overview always has live counts ──
+  useEffect(() => {
+    const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
+    const CT = ['orange', 'indigo', 'blue', 'red', 'green', 'grape'];
+
+    const query = async (roles: string[], select: string) => {
+      type Row = Record<string, unknown>;
+      // Try institution_id → institution_name → all (same 3-strategy as other pages)
+      for (const filter of [
+        institutionId   ? { institution_id:   institutionId }   : null,
+        institutionName ? { institution_name: institutionName } : null,
+        {},   // last resort: no filter
+      ]) {
+        if (filter === null) continue;
+        let q = supabase.from('users').select(select).in('role', roles).order('created_at');
+        for (const [k, v] of Object.entries(filter)) q = q.eq(k, v as string);
+        const { data } = await q;
+        if (data && data.length > 0) return (data ?? []) as Row[];
+      }
+      return [] as Row[];
+    };
+
+    Promise.all([
+      query(STUDENT_ROLES, 'id, name, email, role, matric_no, project_title, supervisor_id, created_at'),
+      query(SUP_ROLES,     'id, name, email, role, specialty, created_at'),
+    ]).then(([studs, sups]) => {
+      dispatch(loadStudents(studs.map((st, i) => ({
+        id:           String(st.id   ?? ''),
+        name:         String(st.name ?? ''),
+        email:        String(st.email ?? ''),
+        matricNo:     String(st.matric_no     ?? ''),
+        program:      String(st.project_title ?? ''),
+        role:         String(st.role ?? ''),
+        supervisorId: (st.supervisor_id as string | null) ?? null,
+        color:        CT[i % CT.length],
+        addedOn:      new Date(String(st.created_at)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      }))));
+      dispatch(loadSupervisors(sups.map((s, i) => ({
+        id:               String(s.id   ?? ''),
+        name:             String(s.name ?? ''),
+        email:            String(s.email ?? ''),
+        specialty:        String(s.specialty ?? ''),
+        role:             String(s.role ?? ''),
+        studentsAssigned: studs.filter(st => st.supervisor_id === s.id).length,
+        color:            CS[i % CS.length],
+        addedOn:          new Date(String(s.created_at)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      }))));
+    });
+  }, [institutionId, institutionName, dispatch]);
 
   // Student splits
   const assigned   = students.filter(s => s.supervisorId);

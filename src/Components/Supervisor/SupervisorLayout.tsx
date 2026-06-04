@@ -1,6 +1,10 @@
+import { useEffect, useState } from 'react';
 import { AppShell, Box, Group, Image, NavLink, Stack, Text, Badge, Divider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useAppSelector } from '../../Redux/hooks';
+import { useUnreadCount } from '../../hooks/useUnreadCount';
+import { supabase } from '../../supabase/client';
 import {
   LuLayoutDashboard,
   LuUsers,
@@ -22,15 +26,39 @@ const NAV_ITEMS = [
   { label: 'Reviews',       icon: LuFileText,        path: APPROUTE_LIST.SUPERVISOR_REVIEWS },
   { label: 'Approvals',     icon: LuClipboardCheck,  path: APPROUTE_LIST.SUPERVISOR_APPROVALS },
   { label: 'Analytics',     icon: SiGoogleanalytics, path: APPROUTE_LIST.SUPERVISOR_ANALYTICS },
-  { label: 'Notifications', icon: LuBell,            path: APPROUTE_LIST.SUPERVISOR_NOTIFICATIONS },
+  // { label: 'Notifications', icon: LuBell,            path: APPROUTE_LIST.SUPERVISOR_NOTIFICATIONS },
   { label: 'Messages',      icon: LuMessageSquare,   path: APPROUTE_LIST.SUPERVISOR_MESSAGES },
   { label: 'Settings',      icon: LuSettings,        path: APPROUTE_LIST.SUPERVISOR_SETTINGS },
 ];
 
 export default function SupervisorLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const navigate    = useNavigate();
+  const location    = useLocation();
   const [opened, { toggle, close }] = useDisclosure();
+  const myId        = useAppSelector(s => s.auth.user?.id ?? '');
+  const unreadCount = useUnreadCount(myId);
+  const [pendingNotifs, setPendingNotifs] = useState(0);
+
+  useEffect(() => {
+    if (!myId) return;
+    const fetchPending = () =>
+      supabase
+        .from('submissions')
+        .select('*', { count: 'exact', head: true })
+        .eq('supervisor_id', myId)
+        .eq('status', 'pending')
+        .then(({ count }) => setPendingNotifs(count ?? 0));
+
+    fetchPending();
+
+    const channel = supabase
+      .channel(`layout-pending-${myId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions', filter: `supervisor_id=eq.${myId}` },
+        fetchPending)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [myId]);
 
   return (
     <AppShell
@@ -52,6 +80,13 @@ export default function SupervisorLayout() {
               key={item.path}
               label={item.label}
               leftSection={<item.icon size={18} />}
+              rightSection={
+                item.label === 'Messages' && unreadCount > 0
+                  ? <Badge size="xs" color="brand" variant="filled" circle>{unreadCount}</Badge>
+                  : item.label === 'Notifications' && pendingNotifs > 0
+                  ? <Badge size="xs" color="red" variant="filled" circle>{pendingNotifs}</Badge>
+                  : undefined
+              }
               active={location.pathname === item.path}
               onClick={() => { navigate(item.path); close(); }}
               variant="light"

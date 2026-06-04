@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActionIcon, Alert, Avatar, Badge, Box, Button, CopyButton,
   Divider, Group, Loader, Modal, Pagination, Paper, PasswordInput, Progress,
-  Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Title, Tooltip,
+  Select, SimpleGrid, Stack, Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import {
-  LuSearch, LuMail, LuBuilding2, LuFolder, LuBookOpen, LuShield,
+  LuSearch, LuMail, LuBuilding2, LuFolder,
   LuUsers, LuUserCheck, LuTrendingUp, LuUserPlus, LuKey,
   LuRefreshCw, LuCopy, LuCheck, LuLink,
 } from 'react-icons/lu';
@@ -38,85 +38,6 @@ interface DisplayResearcher {
   projectTitle?: string;
 }
 
-// ── Mock data ──────────────────────────────────────────────────────────────────
-
-const RESEARCHERS: DisplayResearcher[] = [
-  {
-    id: '1', name: 'Dr. Fatima Hassan', email: 'f.hassan@greenfield.edu',
-    department: 'Computer Science', role: 'Researcher',
-    projects: 2, publications: 5, integrity: 84, lastActive: '2 hours ago',
-    color: 'indigo', isRedux: false,
-    specializations: ['Machine Learning', 'Computer Vision', 'Agricultural AI'],
-    bio: 'Researcher specialising in AI-driven solutions for agricultural challenges and early disease detection using deep learning techniques.',
-    recentProjects: [
-      { title: 'AI-Based Early Detection of Crop Diseases Using Computer Vision', status: 'In-Progress' },
-      { title: 'Neural Machine Translation for Low-Resource African Languages', status: 'In-Progress' },
-    ],
-  },
-  {
-    id: '2', name: 'Dr. Sarah Chen', email: 's.chen@greenfield.edu',
-    department: 'Environmental Science', role: 'Researcher',
-    projects: 1, publications: 8, integrity: 92, lastActive: '4 hours ago',
-    color: 'teal', isRedux: false,
-    specializations: ['Environmental Toxicology', 'Water Quality', 'Ecosystem Science'],
-    bio: 'Environmental scientist focused on microplastic pollution and its impact on freshwater biodiversity and ecosystem health.',
-    recentProjects: [{ title: 'Microplastic Contamination in Freshwater Ecosystems', status: 'Review' }],
-  },
-  {
-    id: '3', name: 'Dr. Kwame Asante', email: 'k.asante@greenfield.edu',
-    department: 'Medicine', role: 'Postgraduate Student',
-    projects: 1, publications: 2, integrity: 68, lastActive: '1 day ago',
-    color: 'red', isRedux: false,
-    specializations: ['Gene Therapy', 'Haematology', 'CRISPR Technology'],
-    bio: 'PhD candidate exploring gene editing applications in treating sickle cell disease, with a focus on clinical translational outcomes.',
-    recentProjects: [{ title: 'CRISPR-Cas9 Gene Editing for Sickle Cell Disease Therapy', status: 'In-Progress' }],
-  },
-  {
-    id: '4', name: 'Prof. Elena Vasquez', email: 'e.vasquez@greenfield.edu',
-    department: 'Chemistry', role: 'Supervisor',
-    projects: 3, publications: 22, integrity: 95, lastActive: '2 days ago',
-    color: 'grape', isRedux: false,
-    specializations: ['Quantum Chemistry', 'Drug Discovery', 'Computational Modelling'],
-    bio: 'Professor of Chemistry with 20+ years of research in quantum computational approaches and molecular simulation for pharmaceutical applications.',
-    recentProjects: [{ title: 'Quantum Computing Approaches to Drug Discovery', status: 'Draft' }],
-  },
-  {
-    id: '5', name: 'Dr. Amina Yusuf', email: 'a.yusuf@greenfield.edu',
-    department: 'Social Sciences', role: 'Researcher',
-    projects: 2, publications: 6, integrity: 89, lastActive: '3 days ago',
-    color: 'orange', isRedux: false,
-    specializations: ['Public Health Communication', 'Media Studies', 'Misinformation Research'],
-    bio: 'Researcher examining the role of social media in the spread of health misinformation and its measurable impact on public health outcomes.',
-    recentProjects: [{ title: 'Social Media Misinformation and Public Health Outcomes', status: 'Submitted' }],
-  },
-  {
-    id: '6', name: 'Dr. Michael Obi', email: 'm.obi@greenfield.edu',
-    department: 'Engineering', role: 'Researcher',
-    projects: 1, publications: 4, integrity: 81, lastActive: '5 hours ago',
-    color: 'cyan', isRedux: false,
-    specializations: ['Smart Grids', 'Renewable Energy', 'Power Systems'],
-    bio: 'Engineer researching smart grid infrastructure improvements to optimise renewable energy integration at a national scale.',
-    recentProjects: [{ title: 'Renewable Energy Integration in Smart Grid Systems', status: 'In-Progress' }],
-  },
-  {
-    id: '7', name: 'Dr. Grace Ndegwa', email: 'g.ndegwa@greenfield.edu',
-    department: 'Medicine', role: 'Researcher',
-    projects: 2, publications: 9, integrity: 91, lastActive: '1 week ago',
-    color: 'green', isRedux: false,
-    specializations: ['Infectious Disease', 'Hospital Epidemiology', 'Antibiotic Resistance'],
-    bio: 'Medical researcher focusing on antibiotic resistance patterns in hospital settings and evidence-based infection control protocols.',
-    recentProjects: [{ title: 'Antibiotic Resistance Patterns in Hospital-Acquired Infections', status: 'Exported' }],
-  },
-  {
-    id: '8', name: 'Dr. Ibrahim Musa', email: 'i.musa@greenfield.edu',
-    department: 'Computer Science', role: 'Postgraduate Student',
-    projects: 1, publications: 1, integrity: 73, lastActive: '6 hours ago',
-    color: 'blue', isRedux: false,
-    specializations: ['Natural Language Processing', 'Low-Resource NLP', 'African Languages'],
-    bio: 'PhD student developing machine translation systems tailored to low-resource African languages, bridging the AI language gap.',
-    recentProjects: [{ title: 'Neural Machine Translation for Low-Resource African Languages', status: 'In-Progress' }],
-  },
-];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -155,11 +76,6 @@ function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3);
 }
 
-function integrityColor(n: number) {
-  if (n >= 85) return '#2f9e44';
-  if (n >= 70) return '#f59f00';
-  return '#fa5252';
-}
 
 function genPassword(len = 12): string {
   const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$';
@@ -228,15 +144,39 @@ const SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'D
 const STUDENT_ROLES    = ['Student', 'PhD Student', "Master's Student", 'Undergraduate Student', 'Researcher'];
 
 interface SupabaseUser {
-  id:            string;
-  name:          string;
-  email:         string;
-  role:          string;
-  specialty?:    string;
-  phone?:        string;
-  matric_no?:    string;
+  id:             string;
+  name:           string;
+  email:          string;
+  role:           string;
+  department?:    string;
+  specialty?:     string;
+  phone?:         string;
+  matric_no?:     string;
   project_title?: string;
-  created_at:    string;
+  supervisor_id?: string;
+  created_at:     string;
+}
+
+function sbToDisplay(u: SupabaseUser): DisplayResearcher {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    department: u.department ?? 'Unassigned',
+    role: u.role,
+    projects: 0,
+    publications: 0,
+    integrity: 0,
+    lastActive: new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+    color: nameToColor(u.name),
+    specializations: u.specialty ? [u.specialty] : [],
+    bio: '',
+    recentProjects: u.project_title ? [{ title: u.project_title, status: 'Draft' }] : [],
+    isRedux: false,
+    supervisorId: u.supervisor_id,
+    matricNo: u.matric_no,
+    projectTitle: u.project_title,
+  };
 }
 
 export default function AdminResearchers() {
@@ -249,7 +189,6 @@ export default function AdminResearchers() {
   const [sbSupervisors, setSbSupervisors] = useState<SupabaseUser[]>([]);
   const [sbStudents,    setSbStudents]    = useState<SupabaseUser[]>([]);
   const [sbLoading,     setSbLoading]     = useState(false);
-  const [activeTab,     setActiveTab]     = useState<string>('supervisors');
 
   const loadFromSupabase = async () => {
     if (!institutionId) return;
@@ -257,7 +196,7 @@ export default function AdminResearchers() {
     try {
       const { data } = await supabase
         .from('users')
-        .select('id, name, email, role, specialty, phone, matric_no, project_title, created_at')
+        .select('id, name, email, role, department, specialty, phone, matric_no, project_title, supervisor_id, created_at')
         .eq('institution_id', institutionId)
         .neq('role', 'Director of Research')
         .order('created_at');
@@ -287,23 +226,20 @@ export default function AdminResearchers() {
 
   const PER_PAGE = 6;
 
-  // Merge mock + Redux users
   const allResearchers = useMemo<DisplayResearcher[]>(() => [
-    ...RESEARCHERS,
-    ...reduxUsers.map(storedToDisplay),
-  ], [reduxUsers]);
+    ...sbStudents.map(sbToDisplay),
+    ...reduxUsers.filter(u => STUDENT_ROLES.includes(u.role)).map(storedToDisplay),
+  ], [sbStudents, reduxUsers]);
 
   const allDepartments = useMemo(
     () => [...new Set(allResearchers.map(r => r.department).filter(Boolean))],
     [allResearchers],
   );
 
-  // Only Redux-created supervisors — their IDs match what's stored in usersSlice,
-  // so student.supervisorId will correctly match supervisor.user.id at login time.
-  const allSupervisors = useMemo(
-    () => allResearchers.filter(r => r.role === 'Supervisor' && r.isRedux),
-    [allResearchers],
-  );
+  const allSupervisors = useMemo<DisplayResearcher[]>(() => [
+    ...sbSupervisors.map(sbToDisplay),
+    ...reduxUsers.filter(u => SUPERVISOR_ROLES.includes(u.role)).map(storedToDisplay),
+  ], [sbSupervisors, reduxUsers]);
 
   const filtered = useMemo(() => {
     setPage(1);
@@ -340,6 +276,7 @@ export default function AdminResearchers() {
       supervisorId: form.supervisorId || undefined,
     }));
     setCreated({ email: form.email.trim().toLowerCase(), password: form.password });
+    setTimeout(() => loadFromSupabase(), 1500);
   }
 
   function closeAdd() {
@@ -350,9 +287,14 @@ export default function AdminResearchers() {
 
   // ── Supervisor assignment handler ─────────────────────────────────────────
 
-  function handleAssign() {
+  async function handleAssign() {
     if (!selected || !assignSupId) return;
-    dispatch(assignSupervisor({ studentId: selected.id, supervisorId: assignSupId }));
+    if (!selected.isRedux) {
+      await supabase.from('users').update({ supervisor_id: assignSupId }).eq('id', selected.id);
+      loadFromSupabase();
+    } else {
+      dispatch(assignSupervisor({ studentId: selected.id, supervisorId: assignSupId }));
+    }
     setAssignSaved(true);
     setTimeout(() => setAssignSaved(false), 2500);
   }
@@ -373,31 +315,33 @@ export default function AdminResearchers() {
       {/* ── Title + Add button ── */}
       <Group justify="space-between" mb="xl" wrap="nowrap">
         <Box>
-          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Researchers</Title>
+          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Students & Researchers</Title>
           <Text size="sm" c="dimmed">
-            {allResearchers.length} researchers across {allDepartments.length} departments
+            {allResearchers.length} students across {allDepartments.length} departments — {authUser?.institutionName ?? 'your institution'}
           </Text>
         </Box>
-        <Button leftSection={<LuUserPlus size={16} />} radius="md" onClick={openAdd}>
-          Add User
-        </Button>
+        <Group gap="xs">
+          <Button size="sm" variant="subtle" leftSection={<LuRefreshCw size={14} />} onClick={loadFromSupabase} loading={sbLoading}>
+            Refresh
+          </Button>
+          <Button leftSection={<LuUserPlus size={16} />} radius="md" onClick={openAdd}>
+            Add User
+          </Button>
+        </Group>
       </Group>
 
       {/* ── Summary cards ── */}
       <SimpleGrid cols={{ base: 2, md: 4 }} mb="xl">
         {[
-          { label: 'Total Researchers', value: allResearchers.length,                                                                      icon: LuUsers,     color: '#228be6' },
-          { label: 'Departments',       value: allDepartments.length,                                                                      icon: LuBuilding2, color: '#7950f2' },
-          { label: 'Supervisors',       value: allResearchers.filter(r => r.role === 'Supervisor').length,                                  icon: LuUserCheck, color: '#2f9e44' },
-          { label: 'Avg. Integrity',    value: allResearchers.filter(r => r.integrity > 0).length
-              ? Math.round(allResearchers.filter(r => r.integrity > 0).reduce((s, r) => s + r.integrity, 0) /
-                  allResearchers.filter(r => r.integrity > 0).length)
-              : 0,                                                                                                                           icon: LuTrendingUp, color: '#f59f00' },
+          { label: 'Total Students',  value: allResearchers.length,    icon: LuUsers,      color: '#228be6' },
+          { label: 'Departments',     value: allDepartments.length,    icon: LuBuilding2,  color: '#7950f2' },
+          { label: 'Supervisors',     value: allSupervisors.length,    icon: LuUserCheck,  color: '#2f9e44' },
+          { label: 'With Projects',   value: allResearchers.filter(r => !!r.projectTitle).length, icon: LuTrendingUp, color: '#f59f00' },
         ].map(({ label, value, icon: Icon, color }) => (
           <Paper key={label} withBorder p="md" radius="md" bg="white">
             <Group gap="sm" mb={4}>
               <Icon size={20} color={color} />
-              <Text fw={800} size="xl">{value}</Text>
+              <Text fw={800} size="xl">{sbLoading ? '…' : value}</Text>
             </Group>
             <Text size="sm" c="dimmed">{label}</Text>
           </Paper>
@@ -415,56 +359,60 @@ export default function AdminResearchers() {
       />
 
       {/* ── Table ── */}
-      <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-        <Table highlightOnHover verticalSpacing="md">
-          <Table.Thead>
-            <Table.Tr style={{ background: '#f8f9fa' }}>
-              {['Researcher', 'Department', 'Role', 'Projects', 'Publications', 'Integrity', 'Last Active'].map(h => (
-                <Table.Th key={h}>
-                  <Text size="sm" c="dimmed" fw={500}>{h}</Text>
-                </Table.Th>
-              ))}
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {paginated.map(r => (
-              <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(r)}>
-                <Table.Td>
-                  <Group gap="sm" wrap="nowrap">
-                    <Avatar color={r.color} radius="xl" size="md">
-                      {getInitials(r.name)}
-                    </Avatar>
-                    <Box>
-                      <Group gap={6}>
-                        <Text size="sm" fw={600}>{r.name}</Text>
-                        {r.isRedux && (
-                          <Badge size="xs" color="teal" variant="dot" radius="xl">New</Badge>
-                        )}
-                      </Group>
-                      <Text size="xs" c="dimmed">{r.email}</Text>
-                    </Box>
-                  </Group>
-                </Table.Td>
-                <Table.Td><Text size="sm">{r.department}</Text></Table.Td>
-                <Table.Td>
-                  <Badge color={ROLE_COLOR[r.role] ?? 'gray'} variant="light" radius="sm" size="sm">
-                    {r.role}
-                  </Badge>
-                </Table.Td>
-                <Table.Td><Text size="sm" fw={500}>{r.projects || '—'}</Text></Table.Td>
-                <Table.Td><Text size="sm" fw={500}>{r.publications || '—'}</Text></Table.Td>
-                <Table.Td>
-                  {r.integrity > 0
-                    ? <Text fw={700} style={{ color: integrityColor(r.integrity) }}>{r.integrity}</Text>
-                    : <Text size="sm" c="dimmed">—</Text>
-                  }
-                </Table.Td>
-                <Table.Td><Text size="sm" c="dimmed">{r.lastActive}</Text></Table.Td>
+      {sbLoading ? (
+        <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
+      ) : allResearchers.length === 0 ? (
+        <Paper withBorder p="xl" radius="md" ta="center">
+          <LuUsers size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+          <Text c="dimmed" size="sm">No students or researchers registered for this institution yet.</Text>
+          <Text size="xs" c="dimmed" mt={4}>Use Add User or the HOD Students page to create accounts.</Text>
+        </Paper>
+      ) : (
+        <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+          <Table highlightOnHover verticalSpacing="md">
+            <Table.Thead>
+              <Table.Tr style={{ background: '#f8f9fa' }}>
+                {['Student / Researcher', 'Department', 'Role', 'Matric No', 'Project Title', 'Joined'].map(h => (
+                  <Table.Th key={h}>
+                    <Text size="sm" c="dimmed" fw={500}>{h}</Text>
+                  </Table.Th>
+                ))}
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Paper>
+            </Table.Thead>
+            <Table.Tbody>
+              {paginated.map(r => (
+                <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(r)}>
+                  <Table.Td>
+                    <Group gap="sm" wrap="nowrap">
+                      <Avatar color={r.color} radius="xl" size="md">
+                        {getInitials(r.name)}
+                      </Avatar>
+                      <Box>
+                        <Group gap={6}>
+                          <Text size="sm" fw={600}>{r.name}</Text>
+                          {r.isRedux && (
+                            <Badge size="xs" color="teal" variant="dot" radius="xl">New</Badge>
+                          )}
+                        </Group>
+                        <Text size="xs" c="dimmed">{r.email}</Text>
+                      </Box>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td><Text size="sm">{r.department}</Text></Table.Td>
+                  <Table.Td>
+                    <Badge color={ROLE_COLOR[r.role] ?? 'gray'} variant="light" radius="sm" size="sm">
+                      {r.role}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td><Text size="sm" ff="monospace" c="dimmed">{r.matricNo || '—'}</Text></Table.Td>
+                  <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 200 }}>{r.projectTitle || '—'}</Text></Table.Td>
+                  <Table.Td><Text size="sm" c="dimmed">{r.lastActive}</Text></Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Paper>
+      )}
 
       {/* ── Pagination ── */}
       {totalPages > 1 && (
@@ -476,134 +424,6 @@ export default function AdminResearchers() {
         </Group>
       )}
 
-      {/* ══ Institution Users — Supervisors & Students from Supabase ══════ */}
-      <Box mt="xl">
-        <Group justify="space-between" mb="md">
-          <Box>
-            <Text fw={700} size="lg">Institution Users</Text>
-            <Text size="sm" c="dimmed">
-              All users registered under <strong>{authUser?.institutionName ?? institutionId}</strong>
-            </Text>
-          </Box>
-          <Button size="xs" variant="subtle" leftSection={<LuRefreshCw size={13} />} onClick={loadFromSupabase} loading={sbLoading}>
-            Refresh
-          </Button>
-        </Group>
-
-        <Tabs value={activeTab} onChange={v => v && setActiveTab(v)} variant="pills" color="brand">
-          <Tabs.List mb="md">
-            <Tabs.Tab value="supervisors" leftSection={<LuUserCheck size={14} />}>
-              Supervisors
-              {sbSupervisors.length > 0 && (
-                <Badge size="xs" color="brand" variant="filled" ml={6} radius="xl" style={{ pointerEvents: 'none' }}>
-                  {sbSupervisors.length}
-                </Badge>
-              )}
-            </Tabs.Tab>
-            <Tabs.Tab value="students" leftSection={<LuUsers size={14} />}>
-              Students / Researchers
-              {sbStudents.length > 0 && (
-                <Badge size="xs" color="teal" variant="filled" ml={6} radius="xl" style={{ pointerEvents: 'none' }}>
-                  {sbStudents.length}
-                </Badge>
-              )}
-            </Tabs.Tab>
-          </Tabs.List>
-
-          {/* ── Supervisors tab ── */}
-          <Tabs.Panel value="supervisors">
-            {sbLoading ? (
-              <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
-            ) : sbSupervisors.length === 0 ? (
-              <Paper withBorder p="xl" radius="md" ta="center">
-                <LuUserCheck size={28} color="#ced4da" style={{ marginBottom: 8 }} />
-                <Text c="dimmed" size="sm">No supervisors found for this institution.</Text>
-                <Text size="xs" c="dimmed" mt={4}>Create supervisors via HOD Supervisors page or Add User above.</Text>
-              </Paper>
-            ) : (
-              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-                <Table highlightOnHover verticalSpacing="sm">
-                  <Table.Thead>
-                    <Table.Tr style={{ background: '#f8f9fa' }}>
-                      {['Name', 'Email', 'Role', 'Specialisation', 'Phone', 'Joined'].map(h => (
-                        <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
-                      ))}
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {sbSupervisors.map(u => (
-                      <Table.Tr key={u.id}>
-                        <Table.Td>
-                          <Group gap="sm" wrap="nowrap">
-                            <Avatar color="blue" radius="xl" size="sm">
-                              {u.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}
-                            </Avatar>
-                            <Text size="sm" fw={600}>{u.name}</Text>
-                          </Group>
-                        </Table.Td>
-                        <Table.Td><Text size="sm" c="dimmed">{u.email}</Text></Table.Td>
-                        <Table.Td>
-                          <Badge color="blue" variant="light" size="sm">{u.role}</Badge>
-                        </Table.Td>
-                        <Table.Td><Text size="sm">{u.specialty || '—'}</Text></Table.Td>
-                        <Table.Td><Text size="sm" c="dimmed">{u.phone || '—'}</Text></Table.Td>
-                        <Table.Td><Text size="xs" c="dimmed">{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Paper>
-            )}
-          </Tabs.Panel>
-
-          {/* ── Students / Researchers tab ── */}
-          <Tabs.Panel value="students">
-            {sbLoading ? (
-              <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
-            ) : sbStudents.length === 0 ? (
-              <Paper withBorder p="xl" radius="md" ta="center">
-                <LuUsers size={28} color="#ced4da" style={{ marginBottom: 8 }} />
-                <Text c="dimmed" size="sm">No students or researchers found for this institution.</Text>
-                <Text size="xs" c="dimmed" mt={4}>Create students via HOD Students page or Add User above.</Text>
-              </Paper>
-            ) : (
-              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-                <Table highlightOnHover verticalSpacing="sm">
-                  <Table.Thead>
-                    <Table.Tr style={{ background: '#f8f9fa' }}>
-                      {['Name', 'Email', 'Role', 'Matric No', 'Research Program', 'Phone', 'Joined'].map(h => (
-                        <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
-                      ))}
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {sbStudents.map(u => (
-                      <Table.Tr key={u.id}>
-                        <Table.Td>
-                          <Group gap="sm" wrap="nowrap">
-                            <Avatar color="teal" radius="xl" size="sm">
-                              {u.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}
-                            </Avatar>
-                            <Text size="sm" fw={600}>{u.name}</Text>
-                          </Group>
-                        </Table.Td>
-                        <Table.Td><Text size="sm" c="dimmed">{u.email}</Text></Table.Td>
-                        <Table.Td>
-                          <Badge color="teal" variant="light" size="sm">{u.role}</Badge>
-                        </Table.Td>
-                        <Table.Td><Text size="sm" ff="monospace">{u.matric_no || '—'}</Text></Table.Td>
-                        <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 180 }}>{u.project_title || '—'}</Text></Table.Td>
-                        <Table.Td><Text size="sm" c="dimmed">{u.phone || '—'}</Text></Table.Td>
-                        <Table.Td><Text size="xs" c="dimmed">{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Paper>
-            )}
-          </Tabs.Panel>
-        </Tabs>
-      </Box>
 
       {/* ════════════════════════════════════════════════════════════════════
           Add User Modal
@@ -914,9 +734,6 @@ export default function AdminResearchers() {
                   <Badge color={ROLE_COLOR[selected.role] ?? 'gray'} variant="light" radius="sm">
                     {selected.role}
                   </Badge>
-                  {selected.isRedux && (
-                    <Badge color="teal" variant="dot" radius="xl" size="sm">Redux user</Badge>
-                  )}
                 </Group>
                 <Group gap="xs">
                   <LuMail size={14} color="#868e96" />
@@ -931,28 +748,13 @@ export default function AdminResearchers() {
 
             <Divider />
 
-            {/* Stats (only meaningful for mock users) */}
-            {!selected.isRedux && (
-              <SimpleGrid cols={3}>
-                <StatCard icon={LuFolder} iconColor="#228be6" label="Projects" value={selected.projects} />
-                <StatCard icon={LuBookOpen} iconColor="#7950f2" label="Publications" value={selected.publications} />
-                <StatCard
-                  icon={LuShield}
-                  iconColor={integrityColor(selected.integrity)}
-                  label="Integrity"
-                  value={selected.integrity}
-                  valueColor={integrityColor(selected.integrity)}
-                />
-              </SimpleGrid>
-            )}
-
-            {/* Redux student: matric / degree / project */}
-            {selected.isRedux && (selected.matricNo || selected.degreeLevel || selected.projectTitle) && (
+            {/* Student details: matric / degree / project */}
+            {(selected.matricNo || selected.degreeLevel || selected.projectTitle) && (
               <SimpleGrid cols={3}>
                 {selected.matricNo && (
                   <Box>
                     <Text size="xs" c="dimmed" fw={600} style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>Matric No</Text>
-                    <Text size="sm" fw={500}>{selected.matricNo}</Text>
+                    <Text size="sm" fw={500} ff="monospace">{selected.matricNo}</Text>
                   </Box>
                 )}
                 {selected.degreeLevel && (
@@ -969,12 +771,6 @@ export default function AdminResearchers() {
                 )}
               </SimpleGrid>
             )}
-
-            {/* Bio */}
-            <Box>
-              <SectionLabel>About</SectionLabel>
-              <Text size="sm" c="dimmed" lh={1.7}>{selected.bio}</Text>
-            </Box>
 
             {/* Specializations */}
             {selected.specializations.length > 0 && (
@@ -1012,8 +808,8 @@ export default function AdminResearchers() {
               </Box>
             )}
 
-            {/* ── Supervisor assignment (Redux students only) ── */}
-            {selected.isRedux && STUDENT_ROLES.includes(selected.role as AppRole) && (
+            {/* ── Supervisor assignment ── */}
+            {STUDENT_ROLES.includes(selected.role as AppRole) && (
               <>
                 <Divider />
                 <Box>
@@ -1069,19 +865,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function StatCard({
-  icon: Icon, iconColor, label, value, valueColor,
-}: { icon: React.ElementType; iconColor: string; label: string; value: number; valueColor?: string }) {
-  return (
-    <Paper withBorder p="md" radius="md" ta="center">
-      <Group gap="xs" justify="center" mb={4}>
-        <Icon size={16} color={iconColor} />
-        <Text size="xs" c="dimmed" fw={500}>{label}</Text>
-      </Group>
-      <Text fw={800} size="xl" style={valueColor ? { color: valueColor } : undefined}>{value}</Text>
-    </Paper>
-  );
-}
 
 function CredentialRow({ label, value }: { label: string; value: string }) {
   return (

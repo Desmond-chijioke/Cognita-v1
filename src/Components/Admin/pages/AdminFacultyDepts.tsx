@@ -268,19 +268,18 @@ export default function AdminFacultyDepts() {
     try {
       const { username, password } = generateCredentials(colDeanName);
 
-      // Step 1: Save college to Supabase — must succeed
-      // Step 1: Create dean's account first → get userId for FK reference
+      // Create Provost account first → get userId for FK reference
       let deanId: string | null = null;
       if (colDeanEmail.trim()) {
         try {
-          const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: 'Dean', institutionId, institutionName });
+          const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: 'Provost', institutionId, institutionName });
           deanId = result.userId;
         } catch {
-          notifications.show({ title: 'Note', message: 'Dean login account could not be created. College will be saved without a dean assigned.', color: 'yellow' });
+          notifications.show({ title: 'Note', message: 'Provost login account could not be created. College will be saved without a Provost assigned.', color: 'yellow' });
         }
       }
 
-      // Step 2: Save college with dean_id reference (always succeeds)
+      // Save college with dean_id (reused for Provost FK)
       const id = await insertCollege({ institution_id: institutionId, name: colName.trim(), dean_id: deanId });
 
       setColleges(prev => [...prev, {
@@ -288,7 +287,7 @@ export default function AdminFacultyDepts() {
         dean: deanId ? { id: deanId, name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim() } : null,
         created_at: new Date().toISOString(),
       }]);
-      setCreds({ name: colDeanName.trim(), role: 'Dean (College)', email: colDeanEmail.trim(), username, password });
+      setCreds({ name: colDeanName.trim(), role: 'Provost', email: colDeanEmail.trim(), username, password });
       setShowCollegeModal(false);
       setColName(''); setColDeanName(''); setColDeanEmail(''); setColDeanPhone('');
       showsucessnotification({ message: `${colName.trim()} created successfully!` });
@@ -490,7 +489,7 @@ export default function AdminFacultyDepts() {
         {/* Column 1: Colleges */}
         <HierarchyPanel
           icon={LuLandmark} color="#7950f2"
-          title="Colleges" subtitle="Led by Dean"
+          title="Colleges" subtitle="Led by Provost"
           count={colleges.length} onAdd={() => setShowCollegeModal(true)}
           addLabel="Add College" loading={loading}
           isEmpty={!loading && colleges.length === 0}
@@ -498,7 +497,7 @@ export default function AdminFacultyDepts() {
         >
           {colleges.map(c => (
             <NodeCard key={c.id}
-              name={c.name} leaderLabel="Dean"
+              name={c.name} leaderLabel="Provost"
               leaderName={c.dean?.name ?? '—'} leaderEmail={c.dean?.email ?? ''}
               badge={`${faculties.filter(f => f.college_id === c.id).length} faculties`}
               badgeColor="violet"
@@ -593,20 +592,20 @@ export default function AdminFacultyDepts() {
             placeholder="e.g. College of Physical & Life Sciences"
             value={colName} onChange={e => setColName(e.target.value)} />
 
-          <Divider label="Dean (College Leader)" labelPosition="center" mt="xs" />
+          <Divider label="Provost (College Head)" labelPosition="center" mt="xs" />
 
-          <TextInput label="Dean Full Name" required size="md"
+          <TextInput label="Provost Full Name" required size="md"
             placeholder="e.g. Prof. Aliyu Musa"
             value={colDeanName} onChange={e => setColDeanName(e.target.value)} />
-          <TextInput label="Dean Email" size="md" type="email"
-            placeholder="dean@institution.edu"
+          <TextInput label="Provost Email" size="md" type="email"
+            placeholder="provost@institution.edu"
             value={colDeanEmail} onChange={e => setColDeanEmail(e.target.value)} />
           <TextInput label="Phone Number" size="md" type="tel"
             placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={colDeanPhone} onChange={e => setColDeanPhone(e.target.value)} />
 
-          <Text size="xs" c="dimmed">A login account will be created for the Dean using the email above.</Text>
+          <Text size="xs" c="dimmed">A login account will be created for the Provost using the email above.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={() => setShowCollegeModal(false)}>Cancel</Button>
             <Button color="violet" loading={savingCol} onClick={saveCollege}

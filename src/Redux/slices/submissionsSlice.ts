@@ -38,14 +38,20 @@ const submissionsSlice = createSlice({
   reducers: {
     submitSection(
       state,
-      action: PayloadAction<Pick<Submission, 'studentId' | 'studentName' | 'sectionId' | 'sectionTitle' | 'content'>>,
+      action: PayloadAction<
+        Pick<Submission, 'studentId' | 'studentName' | 'sectionId' | 'sectionTitle' | 'content'>
+        & { id?: string }   // optional: pass Supabase UUID so Redux ID matches DB
+      >,
     ) {
       const existing = state.list.findIndex(
         s => s.studentId === action.payload.studentId && s.sectionId === action.payload.sectionId,
       );
+      // Use provided id (from Supabase) > existing Redux id > new random UUID
+      const resolvedId = action.payload.id
+        ?? (existing >= 0 ? state.list[existing].id : crypto.randomUUID());
       const entry: Submission = {
         ...action.payload,
-        id:                existing >= 0 ? state.list[existing].id : crypto.randomUUID(),
+        id:                resolvedId,
         status:            'pending',
         supervisorComment: '',
         reviewedAt:        '',
@@ -72,12 +78,14 @@ const submissionsSlice = createSlice({
 
     addAnnotation(
       state,
-      action: PayloadAction<{ subId: string; selectedText: string; comment: string; color: string }>,
+      action: PayloadAction<{ subId: string; selectedText: string; comment: string; color: string; id?: string }>,
     ) {
       const sub = state.list.find(s => s.id === action.payload.subId);
       if (!sub) return;
+      // Don't add duplicate (same id already exists from Supabase sync)
+      if (action.payload.id && sub.annotations.some(a => a.id === action.payload.id)) return;
       sub.annotations.push({
-        id:           crypto.randomUUID(),
+        id:           action.payload.id ?? crypto.randomUUID(),
         selectedText: action.payload.selectedText,
         comment:      action.payload.comment,
         color:        action.payload.color,

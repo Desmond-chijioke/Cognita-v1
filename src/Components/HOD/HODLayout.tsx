@@ -1,26 +1,30 @@
-import { AppShell, Divider, NavLink, Stack } from '@mantine/core';
+import { AppShell, Badge, Divider, NavLink, Stack } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LuLayoutDashboard, LuUserCheck, LuUsers,
+  LuLayoutDashboard, LuUsers,
   LuMessageSquare, LuSettings,
 } from 'react-icons/lu';
 import { APPROUTE_LIST } from '../../Route/types';
 import Logout from '../Auth/Logout';
 import AppHeader from '../shared/AppHeader';
+import { useAppSelector } from '../../Redux/hooks';
+import { useUnreadCount } from '../../hooks/useUnreadCount';
 
 const NAV_ITEMS = [
-  { label: 'Overview',    icon: LuLayoutDashboard, path: APPROUTE_LIST.HOD_OVERVIEW },
-  { label: 'Supervisors', icon: LuUserCheck,       path: APPROUTE_LIST.HOD_SUPERVISORS },
-  { label: 'Students',    icon: LuUsers,           path: APPROUTE_LIST.HOD_STUDENTS },
-  { label: 'Messages',    icon: LuMessageSquare,   path: APPROUTE_LIST.HOD_MESSAGES },
-  { label: 'Settings',    icon: LuSettings,        path: APPROUTE_LIST.HOD_SETTINGS },
+  { label: 'Overview',     icon: LuLayoutDashboard, path: APPROUTE_LIST.HOD_OVERVIEW },
+  { label: 'Students',     icon: LuUsers,           path: APPROUTE_LIST.HOD_STUDENTS },
+  { label: 'Supervisors',  icon: LuUsers,           path: APPROUTE_LIST.HOD_SUPERVISORS },
+  { label: 'Messages',     icon: LuMessageSquare,   path: APPROUTE_LIST.HOD_MESSAGES },
+  { label: 'Settings',     icon: LuSettings,        path: APPROUTE_LIST.HOD_SETTINGS },
 ];
 
 export default function HODLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const navigate    = useNavigate();
+  const location    = useLocation();
   const [opened, { toggle, close }] = useDisclosure();
+  const myId        = useAppSelector(s => s.auth.user?.id ?? '');
+  const unreadCount = useUnreadCount(myId);
 
   return (
     <AppShell
@@ -39,6 +43,9 @@ export default function HODLayout() {
               key={item.path}
               label={item.label}
               leftSection={<item.icon size={18} />}
+              rightSection={item.label === 'Messages' && unreadCount > 0
+                ? <Badge size="xs" color="brand" variant="filled" circle>{unreadCount}</Badge>
+                : undefined}
               active={location.pathname === item.path}
               onClick={() => { navigate(item.path); close(); }}
               variant="light"

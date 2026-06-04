@@ -80,7 +80,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-interface SBUser { id: string; name: string; email: string; role: string; specialty?: string; phone?: string; created_at: string; }
+interface SBUser { id: string; name: string; email: string; role: string; specialty?: string; department?: string; phone?: string; created_at: string; }
 
 export default function HODSupervisors() {
   const dispatch        = useAppDispatch();
@@ -91,47 +91,65 @@ export default function HODSupervisors() {
 
   // Local table state — direct from Supabase, no Redux middleman
   const [rows,       setRows]      = useState<SBUser[]>([]);
-  const [loading,    setLoading]   = useState(false);
+  const [loading,    setLoading]   = useState(true);
   const [search,     setSearch]    = useState('');
   const [showModal,  setShowModal] = useState(false);
   const [saving,     setSaving]    = useState(false);
   const [creds,      setCreds]     = useState<GeneratedCreds | null>(null);
 
   // Form fields
-  const [name,      setName]  = useState('');
-  const [email,     setEmail] = useState('');
-  const [phone,     setPhone] = useState('');
-  const [specialty, setSpec]  = useState(departmentName);
-  const [role,      setRole]  = useState('Supervisor');
+  const [name,       setName]   = useState('');
+  const [email,      setEmail]  = useState('');
+  const [phone,      setPhone]  = useState('');
+  const [specialty,  setSpec]   = useState('');
+  const [department, setDept]   = useState(departmentName);
+  const [role,       setRole]   = useState('Supervisor');
 
-  // ── Fetch supervisors from users table filtered by institution_id ──────────
+  // ── All supervisor-type roles ────────────────────────────────────────────────
+  const SUP_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor'];
+
+  // ── Fetch supervisors via edge function (service role, bypasses RLS) ────────
   const loadSupervisorRows = async () => {
-    if (!institutionId) return;
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('users')
-        .select('id, name, email, phone, specialty, role, created_at')
-        .eq('institution_id', institutionId)
-        .in('role', ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Dean', 'Head of Department'])
-        .order('created_at');
+      const { data: edgeData, error: edgeError } = await supabase.functions.invoke('rapid-responder', {
+        body: { action: 'fetch_users', institutionId, roles: SUP_ROLES },
+      });
 
-      const sups = (data ?? []) as SBUser[];
-      setRows(sups);
-      // Also push to Redux so HODStudents can use the dropdown
-      const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
-      dispatch(loadSupervisors(sups.map((s, i) => ({
-        id: s.id, name: s.name, email: s.email,
-        specialty: s.specialty ?? '', role: s.role,
-        studentsAssigned: 0, color: CS[i % CS.length],
-        addedOn: new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      }))));
+      let result: SBUser[] = [];
+
+      if (!edgeError && Array.isArray(edgeData?.users)) {
+        result = edgeData.users as SBUser[];
+      } else {
+        // Fallback: direct query with institution_id
+        const { data, error } = await supabase
+          .from('users')
+          .select('id, name, email, phone, specialty, department, role, created_at')
+          .eq('institution_id', institutionId)
+          .in('role', SUP_ROLES)
+          .order('created_at');
+        if (error) console.error('[HODSupervisors] fetch error:', error.message);
+        result = (data ?? []) as SBUser[];
+      }
+
+      // Only overwrite when query returned data — prevents clearing on JWT-not-ready render
+      if (result.length > 0) {
+        setRows(result);
+        const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
+        dispatch(loadSupervisors(result.map((s, i) => ({
+          id: s.id, name: s.name, email: s.email,
+          specialty: s.specialty ?? '', role: s.role,
+          studentsAssigned: 0, color: CS[i % CS.length],
+          addedOn: new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        }))));
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { loadSupervisorRows(); }, [institutionId]);
+  const myId = user?.id ?? '';
+  useEffect(() => { loadSupervisorRows(); }, [institutionId, institutionName, myId]);
 
   const filtered = search
     ? rows.filter(s =>
@@ -143,7 +161,7 @@ export default function HODSupervisors() {
 
   const closeModal = () => {
     setShowModal(false);
-    setName(''); setEmail(''); setPhone(''); setSpec(''); setRole('Supervisor');
+    setName(''); setEmail(''); setPhone(''); setSpec(''); setDept(departmentName); setRole('Supervisor');
   };
 
   const handleAdd = async () => {
@@ -161,6 +179,7 @@ export default function HODSupervisors() {
         institutionId,
         institutionName,
         specialty:       specialty.trim(),
+        department:      department.trim(),
       });
 
       // Show credentials and close form immediately
@@ -172,7 +191,7 @@ export default function HODSupervisors() {
       const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
       supabase
         .from('users')
-        .select('id, name, email, phone, specialty, role, created_at')
+        .select('id, name, email, phone, specialty, department, role, created_at')
         .eq('institution_id', institutionId)
         .in('role', ['Supervisor', 'Senior Supervisor', 'Co-Supervisor'])
         .order('created_at')
@@ -249,7 +268,7 @@ export default function HODSupervisors() {
           <Table highlightOnHover verticalSpacing="md">
             <Table.Thead>
               <Table.Tr style={{ background: '#f8f9fa' }}>
-                {['Supervisor', 'Email', 'Specialisation', 'Role', 'Phone', 'Added'].map(h => (
+                {['Supervisor', 'Email', 'Specialisation', 'Department', 'Role', 'Phone', 'Added'].map(h => (
                   <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
                 ))}
               </Table.Tr>
@@ -265,6 +284,7 @@ export default function HODSupervisors() {
                   </Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{sv.email}</Text></Table.Td>
                   <Table.Td><Text size="sm">{sv.specialty || '—'}</Text></Table.Td>
+                  <Table.Td><Text size="sm">{sv.department || '—'}</Text></Table.Td>
                   <Table.Td>
                     <Badge color={ROLE_COLOR[sv.role] ?? 'gray'} variant="light" size="sm">{sv.role}</Badge>
                   </Table.Td>
@@ -309,11 +329,18 @@ export default function HODSupervisors() {
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={phone} onChange={e => setPhone(e.target.value)} />
           <TextInput
-            label="Specialisation (Department)"
+            label="Specialisation"
             size="md"
+            placeholder="e.g. Machine Learning, Environmental Science"
             value={specialty}
-            readOnly
-            styles={{ input: { background: '#f8f9fa', color: '#495057' } }}
+            onChange={e => setSpec(e.target.value)}
+          />
+          <TextInput
+            label="Department"
+            size="md"
+            placeholder="e.g. Computer Science"
+            value={department}
+            onChange={e => setDept(e.target.value)}
           />
 
           <Divider label="Role" labelPosition="center" />

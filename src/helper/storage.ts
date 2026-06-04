@@ -1,14 +1,20 @@
 const SESSION_KEY = 'cognita_user_session';
 
 export interface StoredSession {
-  id:               string;
-  name:             string;
-  email:            string;
-  role:             string;
-  institutionId?:   string;
-  institutionName?: string;
+  id:                string;
+  name:              string;
+  email:             string;
+  role:              string;
+  institutionId?:    string;
+  institutionName?:  string;
   institutionEmail?: string;
-  departmentName?:  string;
+  departmentName?:   string;
+  supervisorId?:     string;
+  supervisorName?:   string;
+  supervisorEmail?:  string;
+  // Supabase tokens stored here instead of sb-* keys
+  accessToken?:      string;
+  refreshToken?:     string;
 }
 
 export function saveSession(user: StoredSession): void {

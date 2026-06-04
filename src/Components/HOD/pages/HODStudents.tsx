@@ -5,11 +5,11 @@ import {
   Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import {
-  LuPlus, LuSearch, LuTrash2, LuUserCheck, LuUserX,
+  LuPlus, LuSearch, LuUserCheck, LuUserX,
   LuKeyRound, LuCopy, LuCheck, LuPhone, LuTriangleAlert, LuInfo,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
-import { removeStudent, assignSupervisor, loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
+import { loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
 import { createStaffUser, updateSupervisorAssignment } from '../../../supabase/hierarchy';
 import { supabase } from '../../../supabase/client';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
@@ -21,16 +21,12 @@ function generatePassword(len = 10): string {
   return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
-const STUDENT_ROLES = [
-  { value: 'PhD Student',           label: 'PhD Student' },
-  { value: "Master's Student",      label: "Master's Student" },
-  { value: 'Undergraduate Student', label: 'Undergraduate Student' },
-];
-
-const ROLE_COLOR: Record<string, string> = {
+const STUDENT_ROLE_COLORS: Record<string, string> = {
   'PhD Student':           'blue',
   "Master's Student":      'violet',
   'Undergraduate Student': 'teal',
+  'Student':               'orange',
+  'Researcher':            'grape',
 };
 
 function getInitials(name: string) {
@@ -85,7 +81,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
 // ── Component ──────────────────────────────────────────────────────────────────
 
 interface SBStudent { id: string; name: string; email: string; role: string; phone?: string; matric_no?: string; project_title?: string; supervisor_id?: string; created_at: string; }
-interface SBSup    { id: string; name: string; }
+interface SBSup    { id: string; name: string; role: string; }
 
 export default function HODStudents() {
   const dispatch        = useAppDispatch();
@@ -97,7 +93,7 @@ export default function HODStudents() {
   // Local state — direct from Supabase
   const [rows,          setRows]          = useState<SBStudent[]>([]);
   const [supRows,       setSupRows]       = useState<SBSup[]>([]);
-  const [loading,       setLoading]       = useState(false);
+  const [loading,       setLoading]       = useState(true); // true = show spinner on first mount
   const [search,        setSearch]        = useState('');
   const [showModal,     setShowModal]     = useState(false);
   const [saving,        setSaving]        = useState(false);
@@ -113,36 +109,93 @@ export default function HODStudents() {
   const [role,    setRole]    = useState('PhD Student');
   const [supId,   setSupId]   = useState<string | null>(null);
 
-  // ── Fetch students + supervisors from users table ─────────────────────────
-  const loadAll = () => {
-    if (!institutionId) return;
-    setLoading(true);
-    Promise.all([
-      supabase.from('users')
-        .select('id, name, email, phone, matric_no, project_title, role, supervisor_id, created_at')
-        .eq('institution_id', institutionId)
-        .in('role', ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'])
-        .order('created_at'),
-      supabase.from('users')
-        .select('id, name')
-        .eq('institution_id', institutionId)
-        .in('role', ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Dean', 'Head of Department'])
-        .order('name'),
-    ]).then(([studRes, supRes]) => {
-      setRows((studRes.data ?? []) as SBStudent[]);
-      setSupRows((supRes.data ?? []) as SBSup[]);
-      // Keep Redux in sync for supervisor dropdown
-      const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
-      dispatch(loadSupervisors((supRes.data ?? []).map((s: SBSup, i: number) => ({
-        id: s.id, name: s.name, email: '', specialty: '', role: 'Supervisor',
-        studentsAssigned: 0, color: CS[i % CS.length], addedOn: '',
-      }))));
-    }).finally(() => setLoading(false));
+  const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+  const SUP_ROLES    = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
+
+  // ── Helper: query users with institution_id → institution_name fallback ──────
+  const queryByInstitution = async (select: string, roles: string[]) => {
+    type Row = Record<string, unknown>;
+    let data: Row[] = [];
+
+    if (institutionId) {
+      const { data: d } = await supabase.from('users').select(select)
+        .eq('institution_id', institutionId).in('role', roles).order('created_at');
+      data = (d ?? []) as unknown as Row[];
+    }
+    if (!data.length && institutionName) {
+      const { data: d } = await supabase.from('users').select(select)
+        .eq('institution_name', institutionName).in('role', roles).order('created_at');
+      data = (d ?? []) as unknown as Row[];
+    }
+    // Last resort: all accessible users with matching roles (RLS limits to institution)
+    if (!data.length) {
+      const { data: d } = await supabase.from('users').select(select)
+        .in('role', roles).order('created_at');
+      data = (d ?? []) as unknown as Row[];
+    }
+    return data;
   };
 
-  useEffect(() => { loadAll(); }, [institutionId]);
+  // ── Load supervisors for the Add Student dropdown ─────────────────────────
+  const loadDropdownSups = async () => {
+    const data = await queryByInstitution('id, name, role', SUP_ROLES);
+    if (data.length > 0) setSupRows(data as unknown as SBSup[]);
+  };
 
-  const supervisorOptions = supRows.map(s => ({ value: s.id, label: s.name }));
+  // ── Fetch students + supervisors from users table ─────────────────────────
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      const [studs, sups] = await Promise.all([
+        queryByInstitution(
+          'id, name, email, phone, role, created_at, matric_no, project_title, supervisor_id',
+          STUDENT_ROLES,
+        ),
+        queryByInstitution('id, name, role', SUP_ROLES),
+      ]);
+
+      // Only overwrite state when the query actually returned data.
+      // If Supabase returns empty (e.g. JWT not ready yet on first render),
+      // keep whatever was already in state rather than clearing it.
+      if (studs.length > 0) setRows(studs as unknown as SBStudent[]);
+      if (sups.length  > 0) setSupRows(sups as unknown as SBSup[]);
+
+      const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
+      if (sups.length > 0) {
+        dispatch(loadSupervisors(sups.map((s, i) => ({
+          id:               String(s.id   ?? ''),
+          name:             String(s.name ?? ''),
+          email:            String(s.email ?? ''),
+          specialty:        String(s.specialty ?? ''),
+          role:             String(s.role ?? ''),
+          studentsAssigned: studs.filter(st => st.supervisor_id === s.id).length,
+          color:            CS[i % CS.length],
+          addedOn:          '',
+        }))));
+      }
+      if (studs.length > 0) {
+        dispatch(loadStudents(studs.map((st: Record<string, unknown>, i: number) => ({
+          id:           String(st.id   ?? ''),
+          name:         String(st.name ?? ''),
+          email:        String(st.email ?? ''),
+          matricNo:     String(st.matric_no     ?? ''),
+          program:      String(st.project_title ?? ''),
+          role:         String(st.role ?? ''),
+          supervisorId: (st.supervisor_id as string | null) ?? null,
+          color:        ['orange','indigo','blue','red','green','grape'][i % 6],
+          addedOn:      new Date(String(st.created_at)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        }))));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const myId = user?.id ?? '';
+  useEffect(() => { loadAll(); }, [institutionId, institutionName, myId]);
+
+  const supervisorOptions = supRows.map(s => ({ value: s.id, label: `${s.name} — ${s.role}` }));
+  const supervisorInfo = (id: string | null) => id ? (supRows.find(s => s.id === id) ?? null) : null;
   const supervisorName = (id: string | null) =>
     id ? (supRows.find(s => s.id === id)?.name ?? '—') : null;
 
@@ -244,7 +297,7 @@ export default function HODStudents() {
             {departmentName ? `${departmentName} — ` : ''}Add students and assign them to supervisors.
           </Text>
         </Box>
-        <Button leftSection={<LuPlus size={14} />} color="brand" onClick={() => setShowModal(true)}>
+        <Button leftSection={<LuPlus size={14} />} color="brand" onClick={() => { setShowModal(true); loadDropdownSups(); }}>
           Add Student
         </Button>
       </Group>
@@ -294,12 +347,15 @@ export default function HODStudents() {
                 </Table.Td>
                 <Table.Td><Text size="sm" ff="monospace">{st.matric_no || '—'}</Text></Table.Td>
                 <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 180 }}>{st.project_title || '—'}</Text></Table.Td>
-                <Table.Td><Badge color={ROLE_COLOR[st.role] ?? 'gray'} variant="light" size="sm">{st.role}</Badge></Table.Td>
+                <Table.Td><Badge color={STUDENT_ROLE_COLORS[st.role] ?? 'gray'} variant="light" size="sm">{st.role}</Badge></Table.Td>
                 <Table.Td>
                   {st.supervisor_id ? (
                     <Group gap={4} wrap="nowrap">
                       <LuUserCheck size={13} color="#2f9e44" />
-                      <Text size="sm" c="green.7">{supervisorName(st.supervisor_id)}</Text>
+                      <Box>
+                        <Text size="sm" c="green.7">{supervisorName(st.supervisor_id)}</Text>
+                        <Text size="xs" c="dimmed">{supervisorInfo(st.supervisor_id)?.role ?? ''}</Text>
+                      </Box>
                     </Group>
                   ) : (
                     <Group gap={4} wrap="nowrap">

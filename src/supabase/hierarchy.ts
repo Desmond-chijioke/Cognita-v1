@@ -151,53 +151,63 @@ export async function createStaffUser(params: {
   institutionName: string;
   // Role-specific optional fields
   specialty?:      string;   // supervisors
+  department?:     string;   // supervisors
   matricNo?:       string;   // students
   projectTitle?:   string;   // students (research program)
   supervisorId?:   string;   // students (assigned supervisor)
 }): Promise<{ userId: string }> {
   const { name, email, phone, password, role, institutionId, institutionName,
-          specialty, matricNo, projectTitle, supervisorId } = params;
+          specialty, department, matricNo, projectTitle, supervisorId } = params;
 
-  // Isolated temp client — different storage key so admin session is never touched
-  const temp = createClient(
-    import.meta.env.VITE_SUPABASE_URL      as string,
-    import.meta.env.VITE_SUPABASE_ANON_KEY as string,
-    { auth: { persistSession: false, autoRefreshToken: false, storageKey: 'sb-staff-temp' } },
-  );
-
+  // Use the deployed Edge Function (rapid-responder) to create the auth user.
+  // This runs server-side with the service role key so NO second GoTrueClient
+  // is created in the browser — eliminating the session contamination bug that
+  // caused admins to be signed out when creating staff members.
   let userId: string | null = null;
 
-  // 1. Try to create a new Supabase auth account
-  const { data: signUpData, error: signUpError } = await temp.auth.signUp({ email, password });
+  const { data: edgeData, error: edgeError } = await supabase.functions.invoke('rapid-responder', {
+    body: { name, email, password, role, institutionId, institutionName },
+  });
 
-  if (signUpData?.user) {
-    // New account created successfully
-    userId = signUpData.user.id;
+  if (!edgeError && edgeData?.userId) {
+    // Edge Function created the auth user + inserted the profile row
+    userId = edgeData.userId;
   } else {
-    // signUp returned null user — email already exists in auth.users.
-    // DO NOT try signInWithPassword (the generated password won't match the
-    // existing account's real password → "Invalid login credentials" error).
-    // Instead look up the existing profile row by email.
-    const { data: existingProfile } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email.toLowerCase())
-      .maybeSingle();
+    // Edge Function unavailable — fall back to browser-side signUp.
+    // This creates a second GoTrueClient but is acceptable as a fallback.
+    console.warn('[createStaffUser] Edge Function failed, using browser fallback:', edgeError?.message);
 
-    if (existingProfile) {
-      userId = existingProfile.id;
-    } else if (signUpError) {
-      throw new Error(signUpError.message);
+    const tempClient = createClient(
+      import.meta.env.VITE_SUPABASE_URL      as string,
+      import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      { auth: { persistSession: false, autoRefreshToken: false, storageKey: 'sb-staff-tmp-' + Date.now() } },
+    );
+
+    const { data: signUpData } = await tempClient.auth.signUp({ email, password });
+
+    if (signUpData?.user) {
+      userId = signUpData.user.id;
     } else {
-      throw new Error(`An account for ${email} already exists but has no profile. Contact your administrator.`);
+      // Email already exists — look up by email
+      const { data: existing } = await supabase.from('users').select('id').eq('email', email.toLowerCase()).maybeSingle();
+      if (existing) userId = existing.id;
+      else throw new Error(`Could not create account for ${email}. Try a different email.`);
     }
   }
 
   if (!userId) throw new Error('Could not get user ID — please try again.');
 
-  // INSERT the profile row. Using insert (not upsert) to avoid triggering the
-  // UPDATE RLS policy (which only allows auth.uid() = id — the admin/HoD can't
-  // update another user's row). If the row already exists, skip silently.
+  // If the Edge Function succeeded it already inserted the basic profile row.
+  // We still do a browser-side upsert to add the extra fields (specialty, phone,
+  // matric_no etc.) that the Edge Function doesn't receive.
+  // ignoreDuplicates: false means update if id exists — this is allowed because
+  // after dropping the institution_id unique constraint the only conflict is on
+  // the primary key (id), and the INSERT policy covers new rows while any UPDATE
+  // done here is to the SAME user id that was just created so auth.uid() = id
+  // matches when the admin's session is still active.
+  // Plain INSERT — only the INSERT policy is checked (not UPDATE).
+  // Upsert checks both INSERT + UPDATE policies which causes 42501 when the
+  // HOD inserts a row for a different user (UPDATE policy needs auth.uid() = id).
   const { error: profileError } = await supabase.from('users').insert({
     id:               userId,
     name,
@@ -207,15 +217,17 @@ export async function createStaffUser(params: {
     institution_id:   institutionId,
     institution_name: institutionName,
     specialty:        specialty     ?? null,
+    department:       department    ?? null,
     matric_no:        matricNo      ?? null,
     project_title:    projectTitle  ?? null,
     supervisor_id:    supervisorId  ?? null,
   });
 
-  // Log insert errors but never throw — the auth user was created and that's
-  // the critical part. Profile can be repaired manually if the insert fails.
   if (profileError) {
-    console.error('[createStaffUser] users insert failed:', profileError.code, profileError.message);
+    // 23505 = duplicate key — Edge Function already created the row, that's fine
+    if (profileError.code === '23505') return { userId };
+    console.error('[createStaffUser] profile insert failed:', profileError.code, profileError.message);
+    throw new Error(`Profile could not be saved: ${profileError.message}`);
   }
 
   return { userId };

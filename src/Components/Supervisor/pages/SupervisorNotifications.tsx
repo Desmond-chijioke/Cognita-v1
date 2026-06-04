@@ -1,204 +1,426 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  Badge, Box, Divider, Group, Paper, Select,
-  Stack, Text, ThemeIcon, Title,
+  ActionIcon, Avatar, Badge, Box, Button, Group, Loader,
+  Paper, Stack, Text, ThemeIcon, Title, Tooltip,
 } from '@mantine/core';
 import {
-  LuBell, LuTriangleAlert, LuCircleCheck, LuFileText,
-  LuUserCheck, LuClock, LuRefreshCw,
+  LuBellOff, LuCheckCheck, LuCircleCheck,
+  LuClock, LuFileText, LuTriangleAlert, LuEye, LuX,
 } from 'react-icons/lu';
+import { useAppSelector } from '../../../Redux/hooks';
+import { fetchAllSupervisorSubmissions, type DBSubmission } from '../../../supabase/submissions';
+import { supabase } from '../../../supabase/client';
+import type { DegreeLevel } from '../supervisorData';
 
-// ── Mock data ──────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-type NType = 'submission' | 'compliance' | 'approval' | 'review' | 'system';
+const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+const MANTINE_COLORS = ['blue', 'teal', 'green', 'grape', 'orange', 'cyan', 'indigo', 'red', 'pink', 'yellow'];
 
-interface Notification {
-  id: string;
-  type: NType;
-  title: string;
-  body: string;
-  student?: string;
-  time: string;
-  read: boolean;
+function nameToColor(name: string) {
+  let h = 0;
+  for (const c of name) h = (h << 5) - h + c.charCodeAt(0);
+  return MANTINE_COLORS[Math.abs(h) % MANTINE_COLORS.length];
 }
 
-const INITIAL: Notification[] = [
-  { id: 'n1',  type: 'submission',  title: 'New Chapter Submitted',           body: 'Amara Osei has submitted Chapter 3 — Methodology for your review.',                                        student: 'Amara Osei',       time: '10 min ago',  read: false },
-  { id: 'n2',  type: 'compliance',  title: 'Compliance Flag — Critical',       body: 'Emeka Okafor\'s project has been flagged. AI detection score: 41%, Similarity: 34%. Immediate review required.', student: 'Emeka Okafor',     time: '1 hour ago',  read: false },
-  { id: 'n3',  type: 'approval',    title: 'New Approval Request',             body: 'Kofi Mensah has submitted a Topic Change Request for your approval.',                                        student: 'Kofi Mensah',      time: '3 hours ago', read: false },
-  { id: 'n4',  type: 'submission',  title: 'Literature Review Submitted',      body: 'Kofi Mensah has submitted a Literature Review Update for review.',                                           student: 'Kofi Mensah',      time: 'Yesterday',   read: true  },
-  { id: 'n5',  type: 'compliance',  title: 'Compliance Warning',               body: 'Taiwo Bakare\'s AI detection score reached 32%, approaching the institution threshold of 35%.',             student: 'Taiwo Bakare',     time: 'Yesterday',   read: true  },
-  { id: 'n6',  type: 'review',      title: 'Review Reminder',                  body: 'Emeka Okafor\'s proposal draft has been waiting for review for 4 days.',                                    student: 'Emeka Okafor',     time: '2 days ago',  read: true  },
-  { id: 'n7',  type: 'approval',    title: 'Submission Approval Requested',    body: 'Fatima Al-Rashid has requested final thesis submission approval.',                                           student: 'Fatima Al-Rashid', time: '3 days ago',  read: true  },
-  { id: 'n8',  type: 'system',      title: 'Weekly Integrity Report',          body: 'Your department integrity report for the week of 19–25 May 2026 is now available.',                         time: '3 days ago',          read: true  },
-  { id: 'n9',  type: 'review',      title: 'Revision Submitted',               body: 'Taiwo Bakare has resubmitted Chapter 3 after your revision request.',                                       student: 'Taiwo Bakare',     time: '5 days ago',  read: true  },
-  { id: 'n10', type: 'system',      title: 'Platform Maintenance Scheduled',   body: 'CognitaAI will undergo scheduled maintenance on 1 Jun 2026 from 02:00–04:00 WAT.',                          time: '1 week ago',          read: true  },
-];
+function getInitials(name: string) {
+  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+}
 
-const TYPE_CONFIG: Record<NType, { icon: React.ElementType; color: string; bg: string; border: string }> = {
-  submission: { icon: LuFileText,    color: '#3b5bdb', bg: '#edf2ff', border: '#4c6ef520' },
-  compliance: { icon: LuTriangleAlert, color: '#e03131', bg: '#fff5f5', border: '#ff636320' },
-  approval:   { icon: LuUserCheck,   color: '#f08c00', bg: '#fff9db', border: '#fab00520' },
-  review:     { icon: LuRefreshCw,   color: '#7950f2', bg: '#f3f0ff', border: '#7950f220' },
-  system:     { icon: LuBell,        color: '#0c8599', bg: '#e3fafc', border: '#0c859920' },
-};
+function formatRelativeTime(iso: string) {
+  const diffMs    = Date.now() - new Date(iso).getTime();
+  const diffMins  = Math.floor(diffMs / 60_000);
+  const diffHours = Math.floor(diffMs / 3_600_000);
+  const diffDays  = Math.floor(diffMs / 86_400_000);
+  if (diffMins  <  1) return 'Just now';
+  if (diffMins  < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays  === 1) return 'Yesterday';
+  if (diffDays  <  7) return `${diffDays}d ago`;
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
-const TYPE_LABELS: Record<NType, string> = {
-  submission: 'Submission',
-  compliance: 'Compliance',
-  approval:   'Approval',
-  review:     'Review',
-  system:     'System',
-};
+function statusConfig(status: DBSubmission['status']) {
+  if (status === 'approved')       return { color: '#2f9e44', label: 'Approved',          icon: LuCircleCheck   };
+  if (status === 'needs-revision') return { color: '#f08c00', label: 'Needs Revision',    icon: LuTriangleAlert };
+  return                                  { color: '#3b5bdb', label: 'Awaiting Review',   icon: LuFileText      };
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface StudentRow {
+  id:           string;
+  name:         string;
+  degreeLevel:  DegreeLevel;
+  projectTitle: string;
+  color:        string;
+}
+
+// ── Notification card ─────────────────────────────────────────────────────────
+
+interface CardProps {
+  sub:      DBSubmission;
+  student:  StudentRow | undefined;
+  isUnread: boolean;
+  onRead:   () => void;
+  onView:   () => void;
+}
+
+function NotifCard({ sub, student, isUnread, onRead, onView }: CardProps) {
+  const name   = student?.name  ?? 'Unknown Student';
+  const color  = student?.color ?? 'gray';
+  const cfg    = statusConfig(sub.status);
+  const Icon   = cfg.icon;
+
+  // accent: blue for new pending, green/orange for reviewed
+  const accentColor = sub.status === 'pending' ? '#3b5bdb'
+                    : sub.status === 'approved' ? '#2f9e44'
+                    : '#f08c00';
+
+  return (
+    <Paper
+      withBorder
+      p="md"
+      radius="md"
+      style={{
+        background:  isUnread ? (sub.status === 'pending' ? '#f0f4ff' : '#fff') : 'white',
+        borderLeft:  `4px solid ${isUnread ? accentColor : '#e9ecef'}`,
+        cursor:      isUnread ? 'pointer' : 'default',
+        transition:  'background 0.15s, border-color 0.15s',
+      }}
+      onClick={() => { if (isUnread) onRead(); }}
+    >
+      <Group gap="md" align="flex-start" wrap="nowrap">
+        {/* Avatar */}
+        <Avatar
+          color={color}
+          radius="xl"
+          size="md"
+          style={{ flexShrink: 0, marginTop: 2 }}
+        >
+          {getInitials(name)}
+        </Avatar>
+
+        {/* Content */}
+        <Box style={{ flex: 1, minWidth: 0 }}>
+          {/* Top row: name + unread dot + time + dismiss */}
+          <Group justify="space-between" wrap="nowrap" mb={4}>
+            <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+              <Text size="sm" fw={isUnread ? 700 : 500} lineClamp={1}>
+                {name}
+              </Text>
+              {isUnread && (
+                <Box
+                  style={{
+                    width: 7, height: 7, borderRadius: '50%',
+                    background: accentColor, flexShrink: 0,
+                  }}
+                />
+              )}
+            </Group>
+            <Group gap={6} style={{ flexShrink: 0 }} wrap="nowrap">
+              <Group gap={4} wrap="nowrap">
+                <LuClock size={11} color="#adb5bd" />
+                <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                  {formatRelativeTime(sub.submitted_at)}
+                </Text>
+              </Group>
+              {isUnread && (
+                <Tooltip label="Mark as read" withArrow fz="xs">
+                  <ActionIcon
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={e => { e.stopPropagation(); onRead(); }}
+                  >
+                    <LuX size={11} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </Group>
+          </Group>
+
+          {/* Chapter info */}
+          <Text size="sm" c="dimmed" mb={6}>
+            Submitted <strong style={{ color: '#1c1c1e' }}>{sub.section_title}</strong>
+            {student && <> — {student.projectTitle}</>}
+          </Text>
+
+          {/* Bottom row: status badge + degree badge + view button */}
+          <Group gap="xs" align="center">
+            <Badge
+              variant="light"
+              size="xs"
+              radius="sm"
+              style={{ background: `${cfg.color}15`, color: cfg.color }}
+              leftSection={<Icon size={10} />}
+            >
+              {cfg.label}
+            </Badge>
+            {student && (
+              <Badge
+                variant="outline"
+                size="xs"
+                radius="sm"
+                color={student.degreeLevel === 'PhD' ? 'blue' : student.degreeLevel === "Master's" ? 'violet' : 'teal'}
+              >
+                {student.degreeLevel}
+              </Badge>
+            )}
+            <Button
+              size="xs"
+              variant="subtle"
+              color="brand"
+              leftSection={<LuEye size={11} />}
+              ml="auto"
+              onClick={e => { e.stopPropagation(); onView(); }}
+            >
+              View
+            </Button>
+          </Group>
+
+          {/* Supervisor comment if any */}
+          {sub.supervisor_comment && (
+            <Paper
+              p="xs"
+              radius="sm"
+              mt={8}
+              style={{ background: '#f8f9fa', border: '1px solid #e9ecef' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <Text size="xs" c="dimmed">
+                <strong>Your note:</strong> {sub.supervisor_comment}
+              </Text>
+            </Paper>
+          )}
+        </Box>
+      </Group>
+    </Paper>
+  );
+}
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function SupervisorNotifications() {
-  const [items, setItems]     = useState(INITIAL);
-  const [filter, setFilter]   = useState<string | null>('all');
+  const navigate    = useNavigate();
+  const currentUser = useAppSelector(s => s.auth.user);
 
-  const unread  = items.filter(n => !n.read).length;
-  const filtered = filter === 'all' || !filter
-    ? items
-    : items.filter(n => n.type === filter);
+  const [students,    setStudents]    = useState<StudentRow[]>([]);
+  const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
+  const [loading,     setLoading]     = useState(true);
 
-  const markAllRead = () => setItems(prev => prev.map(n => ({ ...n, read: true })));
+  // ── Read-state via localStorage (per supervisor) ───────────────────────────
+  const lsKey = `cognita_sv_notif_read_${currentUser?.id ?? 'anon'}`;
 
+  const [readIds, setReadIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(lsKey);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch { return new Set(); }
+  });
+
+  const persist = useCallback((next: Set<string>) => {
+    setReadIds(next);
+    try { localStorage.setItem(lsKey, JSON.stringify([...next])); } catch {}
+  }, [lsKey]);
+
+  const markOne = useCallback((id: string) => {
+    const next = new Set(readIds);
+    next.add(id);
+    persist(next);
+  }, [readIds, persist]);
+
+  const markAll = useCallback(() => {
+    persist(new Set(submissions.map(s => s.id)));
+  }, [submissions, persist]);
+
+  // ── Fetch data ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    setLoading(true);
+
+    Promise.all([
+      supabase
+        .from('users')
+        .select('id, name, project_title, role, degree_level')
+        .eq('supervisor_id', currentUser.id)
+        .in('role', STUDENT_ROLES),
+      fetchAllSupervisorSubmissions(currentUser.id),
+    ]).then(([{ data: usersData }, subs]) => {
+      setStudents(
+        ((usersData ?? []) as Record<string, string>[]).map(u => ({
+          id:           u.id,
+          name:         u.name,
+          degreeLevel:  (u.degree_level ?? u.role ?? 'PhD') as DegreeLevel,
+          projectTitle: u.project_title ?? 'Untitled Research',
+          color:        nameToColor(u.name),
+        }))
+      );
+      setSubmissions(subs);
+      setLoading(false);
+    });
+
+    // Realtime: new submission → prepend to list (auto-unread)
+    const channel = supabase
+      .channel(`sv-notif-${currentUser.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'submissions', filter: `supervisor_id=eq.${currentUser.id}` },
+        payload => setSubmissions(prev => [payload.new as DBSubmission, ...prev]),
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'submissions', filter: `supervisor_id=eq.${currentUser.id}` },
+        payload => setSubmissions(prev =>
+          prev.map(s => s.id === (payload.new as DBSubmission).id ? (payload.new as DBSubmission) : s)
+        ),
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [currentUser?.id]);
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const studentMap = useMemo(() => new Map(students.map(s => [s.id, s])), [students]);
+
+  const sorted = useMemo(
+    () => [...submissions].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)),
+    [submissions],
+  );
+
+  const unreadCount = useMemo(
+    () => sorted.filter(s => !readIds.has(s.id)).length,
+    [sorted, readIds],
+  );
+
+  const today = new Date().toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Box p="xl">
 
       {/* ── Header ── */}
       <Group justify="space-between" mb="xl" align="flex-start">
         <Box>
-          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Notifications</Title>
-          <Text size="sm" c="dimmed" mt={4}>
-            Stay updated on student activity, compliance flags, and system alerts.
-          </Text>
-        </Box>
-        {unread > 0 && (
-          <Group gap="xs" align="center">
-            <Badge color="brand" size="lg" radius="sm" variant="light">{unread} unread</Badge>
-            <Text
-              size="xs" c="dimmed"
-              style={{ cursor: 'pointer', textDecoration: 'underline' }}
-              onClick={markAllRead}
-            >
-              Mark all read
-            </Text>
+          <Group gap="sm" mb={4} align="center">
+            <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>
+              Notifications
+            </Title>
+            {unreadCount > 0 && (
+              <Badge color="red" size="lg" radius="sm" variant="filled">
+                {unreadCount} new
+              </Badge>
+            )}
           </Group>
-        )}
+          <Text size="sm" c="dimmed">{today}</Text>
+        </Box>
+
+        <Button
+          size="sm"
+          variant="light"
+          color="brand"
+          leftSection={<LuCheckCheck size={15} />}
+          disabled={unreadCount === 0}
+          onClick={markAll}
+        >
+          Mark all as read
+        </Button>
       </Group>
 
       {/* ── Summary row ── */}
-      <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 28 }}>
-        {(Object.entries(TYPE_CONFIG) as [NType, typeof TYPE_CONFIG[NType]][]).map(([type, cfg]) => {
-          const count = items.filter(n => n.type === type).length;
-          return (
+      {!loading && sorted.length > 0 && (
+        <Box
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 12,
+            marginBottom: 28,
+          }}
+        >
+          {[
+            { label: 'Unread',    count: unreadCount,                                         color: '#3b5bdb' },
+            { label: 'Pending',   count: sorted.filter(s => s.status === 'pending').length,   color: '#f08c00' },
+            { label: 'Approved',  count: sorted.filter(s => s.status === 'approved').length,  color: '#2f9e44' },
+          ].map(({ label, count, color }) => (
             <Box
-              key={type}
-              p="sm"
+              key={label}
+              p="md"
               style={{
                 borderRadius: 10,
-                background: cfg.bg,
-                border: `1.5px solid ${cfg.border}`,
+                background: `${color}10`,
+                border: `1.5px solid ${color}28`,
                 textAlign: 'center',
-                cursor: 'pointer',
               }}
-              onClick={() => setFilter(type)}
             >
-              <Group justify="center" gap={4} mb={4}>
-                <cfg.icon size={13} style={{ color: cfg.color }} />
-              </Group>
-              <Text fw={800} lh={1} style={{ color: cfg.color }}>{count}</Text>
-              <Text size="xs" c="dimmed" mt={4} fw={500}>{TYPE_LABELS[type]}</Text>
+              <Text fw={800} lh={1} style={{ color }}>{count}</Text>
+              <Text size="xs" c="dimmed" mt={4} fw={500}>{label}</Text>
             </Box>
-          );
-        })}
-      </Box>
-
-      {/* ── Filter toolbar ── */}
-      <Paper withBorder p="md" radius="md" bg="white" mb="lg">
-        <Group justify="space-between" align="center">
-          <Group gap="xs">
-            <LuClock size={14} color="#adb5bd" />
-            <Text size="sm" c="dimmed">{filtered.length} notification{filtered.length !== 1 ? 's' : ''}</Text>
-          </Group>
-          <Select
-            placeholder="Filter by type"
-            value={filter}
-            onChange={setFilter}
-            data={[
-              { value: 'all',        label: 'All Types' },
-              { value: 'submission', label: 'Submissions' },
-              { value: 'compliance', label: 'Compliance' },
-              { value: 'approval',   label: 'Approvals' },
-              { value: 'review',     label: 'Reviews' },
-              { value: 'system',     label: 'System' },
-            ]}
-            size="xs"
-            style={{ width: 160 }}
-            clearable
-          />
-        </Group>
-      </Paper>
+          ))}
+        </Box>
+      )}
 
       {/* ── Feed ── */}
-      {filtered.length === 0 ? (
-        <Paper withBorder p="xl" radius="md" style={{ background: '#f4fce3', border: '1.5px solid #94d82d30' }}>
-          <Group gap="sm" justify="center">
-            <ThemeIcon size={34} radius="md" color="green" variant="light">
-              <LuCircleCheck size={16} />
-            </ThemeIcon>
-            <Text size="sm" fw={600}>No notifications in this category.</Text>
-          </Group>
+      {loading ? (
+        <Box ta="center" py="xl">
+          <Loader size="sm" color="brand" />
+          <Text size="sm" c="dimmed" mt="sm">Loading notifications…</Text>
+        </Box>
+      ) : sorted.length === 0 ? (
+        <Paper
+          withBorder p="xl" radius="md" ta="center"
+          style={{ background: '#f8f9fa', border: '1.5px dashed #dee2e6' }}
+        >
+          <ThemeIcon size={48} radius="md" color="gray" variant="light" mx="auto" mb="md">
+            <LuBellOff size={22} />
+          </ThemeIcon>
+          <Text size="sm" fw={600} c="dimmed">No notifications yet</Text>
+          <Text size="xs" c="dimmed" mt={4}>
+            When your students submit chapters, they will appear here.
+          </Text>
         </Paper>
       ) : (
-        <Stack gap="sm">
-          {filtered.map((n, i) => {
-            const cfg = TYPE_CONFIG[n.type];
-            const Icon = cfg.icon;
-            return (
-              <Paper
-                key={n.id}
-                withBorder
-                p="md"
-                radius="md"
-                style={{
-                  background: n.read ? 'white' : cfg.bg,
-                  border: n.read ? '1px solid #dee2e6' : `1.5px solid ${cfg.border}`,
-                  borderLeft: n.read ? undefined : `4px solid ${cfg.color}`,
-                }}
-                onClick={() => setItems(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x))}
-                style-data-index={i}
-              >
-                <Group gap="sm" align="flex-start" wrap="nowrap">
-                  <ThemeIcon size={34} radius="md" style={{ background: cfg.bg, color: cfg.color, flexShrink: 0, marginTop: 2 }}>
-                    <Icon size={15} />
-                  </ThemeIcon>
-                  <Box style={{ flex: 1, minWidth: 0 }}>
-                    <Group justify="space-between" wrap="nowrap" mb={4}>
-                      <Group gap="xs">
-                        <Text size="sm" fw={n.read ? 500 : 700}>{n.title}</Text>
-                        {!n.read && (
-                          <Box style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.color, flexShrink: 0 }} />
-                        )}
-                      </Group>
-                      <Text size="xs" c="dimmed" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{n.time}</Text>
-                    </Group>
-                    <Text size="sm" c="dimmed">{n.body}</Text>
-                    {n.student && (
-                      <Badge variant="outline" size="xs" radius="sm" mt={6} style={{ borderColor: cfg.color, color: cfg.color }}>
-                        {n.student}
-                      </Badge>
-                    )}
-                  </Box>
-                </Group>
-                {i < filtered.length - 1 && <Divider mt="sm" />}
-              </Paper>
-            );
-          })}
-        </Stack>
+        <>
+          {unreadCount === 0 && (
+            <Paper
+              withBorder p="sm" radius="md" mb="md"
+              style={{ background: '#f4fce3', border: '1.5px solid #94d82d30' }}
+            >
+              <Group gap="xs">
+                <ThemeIcon size={26} radius="md" color="green" variant="light">
+                  <LuCheckCheck size={13} />
+                </ThemeIcon>
+                <Text size="sm" fw={500} c="dimmed">
+                  All caught up — no unread notifications.
+                </Text>
+              </Group>
+            </Paper>
+          )}
+
+          <Stack gap="sm">
+            {sorted.map(sub => (
+              <NotifCard
+                key={sub.id}
+                sub={sub}
+                student={studentMap.get(sub.student_id)}
+                isUnread={!readIds.has(sub.id)}
+                onRead={() => markOne(sub.id)}
+                onView={() =>
+                  navigate(`/supervisor/students/${sub.student_id}`, {
+                    state: {
+                      tab:    'submissions',
+                      subTab: sub.status === 'approved' ? 'approved' : 'submitted',
+                    },
+                  })
+                }
+              />
+            ))}
+          </Stack>
+        </>
       )}
+
     </Box>
   );
 }

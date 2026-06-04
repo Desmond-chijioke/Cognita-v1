@@ -3,14 +3,20 @@ import type { PayloadAction } from '@reduxjs/toolkit';
 
 export type AppRole =
   | 'schoolAdmin'
+  | 'PhD Student'
   | 'Undergraduate Student'
   | "Master's Student"
+  | 'Postgraduate Student'
   | 'Student'
   | 'Researcher'
   | 'Supervisor'
+  | 'Senior Supervisor'
+  | 'Co-Supervisor'
+  | 'Assistant Supervisor'
   | 'Head of Department'
   | 'PG Coordinator'
   | 'Dean'
+  | 'Provost'
   | 'Director of Research'
   | 'Vice Chancellor'
   | 'External Examiner'
@@ -26,6 +32,9 @@ export interface User {
   institutionName?: string;
   institutionEmail?: string;
   departmentName?:  string;
+  supervisorId?:    string;
+  supervisorName?:  string;
+  supervisorEmail?: string;
 }
 
 interface AuthState {
@@ -55,8 +64,8 @@ const authSlice = createSlice({
     loginStart(state) {
       state.isLoading = true;
     },
-    loginSuccess(state, action: PayloadAction<{ role: AppRole; email: string; id?: string; name?: string; institutionId?: string; institutionName?: string; institutionEmail?: string; departmentName?: string }>) {
-      const { role, email, id, name, institutionId, institutionName, institutionEmail, departmentName } = action.payload;
+    loginSuccess(state, action: PayloadAction<{ role: AppRole; email: string; id?: string; name?: string; institutionId?: string; institutionName?: string; institutionEmail?: string; departmentName?: string; supervisorId?: string; supervisorName?: string; supervisorEmail?: string }>) {
+      const { role, email, id, name, institutionId, institutionName, institutionEmail, departmentName, supervisorId, supervisorName, supervisorEmail } = action.payload;
       state.user = {
         id:               id   ?? crypto.randomUUID(),
         name:             name ?? email.split('@')[0].replace(/[._]/g, ' '),
@@ -66,6 +75,9 @@ const authSlice = createSlice({
         institutionName,
         institutionEmail,
         departmentName,
+        supervisorId,
+        supervisorName,
+        supervisorEmail,
       };
       state.role = role;
       state.isAuthenticated  = true;

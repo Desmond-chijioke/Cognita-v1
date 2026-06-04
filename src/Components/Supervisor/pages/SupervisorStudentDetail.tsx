@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ActionIcon, Avatar, Badge, Box, Button, Divider, Group, Modal, Paper, Progress,
   SimpleGrid, Stack, Table, Tabs, Text, Textarea, ThemeIcon, Tooltip,
@@ -15,9 +15,15 @@ import type { StageStatus, AlertType, StudentSection, DegreeLevel, ComplianceSta
 import { useAppSelector, useAppDispatch } from '../../../Redux/hooks';
 import type { StoredUser } from '../../../Redux/slices/usersSlice';
 import {
-  approveSubmission, requestRevision, addAnnotation, updateAnnotation, deleteAnnotation as deleteSubAnnotation,
+  approveSubmission, requestRevision, addAnnotation, updateAnnotation,
+  deleteAnnotation as deleteSubAnnotation, submitSection, resolveAnnotation,
 } from '../../../Redux/slices/submissionsSlice';
 import type { SubmissionAnnotation } from '../../../Redux/slices/submissionsSlice';
+import {
+  fetchSubmissionsForStudent, reviewSubmission as reviewSubmissionDB,
+  addAnnotation as addAnnotationDB, updateAnnotation as updateAnnotationDB,
+  deleteAnnotationDB, resolveAnnotationDB,
+} from '../../../supabase/submissions';
 import { useCollaborativeDoc } from '../../../hooks/useCollaborativeDoc';
 import type { CollabComment } from '../../../hooks/useCollaborativeDoc';
 
@@ -107,9 +113,11 @@ function applyHighlights(text: string, annotations: CollabComment[]): React.Reac
 }
 
 function applySubmissionHighlights(text: string, annotations: SubmissionAnnotation[]): React.ReactNode {
-  if (!annotations.length) return text;
+  // Only highlight active (unresolved) annotations
+  const active = annotations.filter(a => !a.resolved);
+  if (!active.length) return text;
   const ranges: { start: number; end: number; ann: SubmissionAnnotation; idx: number }[] = [];
-  annotations.forEach((ann, idx) => {
+  active.forEach((ann, idx) => {
     let pos = 0;
     while ((pos = text.indexOf(ann.selectedText, pos)) !== -1) {
       ranges.push({ start: pos, end: pos + ann.selectedText.length, ann, idx });
@@ -128,17 +136,21 @@ function applySubmissionHighlights(text: string, annotations: SubmissionAnnotati
     nodes.push(
       <mark
         key={`${r.ann.id}-${r.start}`}
-        title={r.ann.comment || 'Highlighted'}
+        title={r.ann.resolved ? `[Resolved] ${r.ann.comment}` : (r.ann.comment || 'Highlighted')}
         style={{
-          background: r.ann.color + '66',
-          borderRadius: 3,
-          padding: '1px 2px',
-          borderBottom: `2px solid ${r.ann.color}`,
-          cursor: 'default',
+          background:      r.ann.resolved ? 'rgba(173,181,189,0.25)' : r.ann.color + '66',
+          borderRadius:    3,
+          padding:         '1px 2px',
+          borderBottom:    `2px solid ${r.ann.resolved ? '#adb5bd' : r.ann.color}`,
+          cursor:          'default',
+          opacity:         r.ann.resolved ? 0.55 : 1,
+          textDecoration:  r.ann.resolved ? 'line-through' : 'none',
         }}
       >
         {r.ann.selectedText}
-        <sup style={{ fontSize: 9, color: '#3b5bdb', fontWeight: 800, marginLeft: 1 }}>{r.idx + 1}</sup>
+        <sup style={{ fontSize: 9, color: r.ann.resolved ? '#adb5bd' : '#3b5bdb', fontWeight: 800, marginLeft: 1 }}>
+          {r.ann.resolved ? '✓' : r.idx + 1}
+        </sup>
       </mark>
     );
     cursor = r.end;
@@ -189,16 +201,60 @@ function reduxUserToStudent(u: StoredUser): SupervisedStudent {
 export default function SupervisorStudentDetail() {
   const { studentId } = useParams<{ studentId: string }>();
   const navigate      = useNavigate();
+  const location      = useLocation();
+  const navState      = (location.state ?? {}) as { tab?: string; subTab?: string };
+  const dispatch      = useAppDispatch();
 
-  const dispatch = useAppDispatch();
-
-  // Redux lookup first (real accounts); fall back to mock data only for demo IDs
+  // ── Student lookup: Redux → Supabase → mock ───────────────────────────────
   const reduxUsersList = useAppSelector(s => s.users.list);
   const reduxRaw       = reduxUsersList.find(u => u.id === studentId);
   const mockStudent    = !reduxRaw ? SUPERVISED_STUDENTS.find(s => s.id === studentId) : null;
-  const student        = reduxRaw ? reduxUserToStudent(reduxRaw) : (mockStudent ?? null);
 
-  const [activeTab,    setActiveTab]    = useState('progress');
+  const [sbStudent, setSbStudent] = useState<SupervisedStudent | null>(null);
+
+  useEffect(() => {
+    if (reduxRaw || mockStudent || !studentId) return;
+    // Not in Redux or mock — fetch from Supabase
+    import('../../../supabase/client').then(({ supabase }) =>
+      supabase.from('users')
+        .select('id, name, email, role, matric_no, project_title, degree_level, department')
+        .eq('id', studentId)
+        .single()
+    ).then(({ data }) => {
+      if (!data) return;
+      setSbStudent({
+        id:               data.id,
+        name:             data.name,
+        email:            data.email,
+        matricNo:         data.matric_no      ?? 'N/A',
+        degreeLevel:      (data.degree_level ?? 'PhD') as DegreeLevel,
+        projectTitle:     data.project_title  ?? 'Untitled Research',
+        stage:            'Proposal',
+        progress:         0,
+        similarityIndex:  0,
+        aiDetectionScore: 0,
+        integrityScore:   0,
+        complianceStatus: 'Good' as ComplianceStatus,
+        department:       data.department ?? 'Unassigned',
+        wordCount:        0,
+        targetWordCount:  80000,
+        deadline:         '',
+        lastActivity:     'Active',
+        color:            nameToColor(data.name),
+        stages:           [],
+        sections:         [],
+        analyses:         [],
+        feedbackThreads:  [],
+        alerts:           [],
+      } as SupervisedStudent);
+    });
+  }, [studentId, reduxRaw, mockStudent]);
+
+  const student = reduxRaw
+    ? reduxUserToStudent(reduxRaw)
+    : (mockStudent ?? sbStudent ?? null);
+
+  const [activeTab,    setActiveTab]    = useState(navState.tab ?? 'progress');
   const [newComment,   setNewComment]   = useState('');
   const [sections,     setSections]     = useState(student?.sections ?? []);
   const [stages,       setStages]       = useState(student?.stages ?? []);
@@ -212,14 +268,52 @@ export default function SupervisorStudentDetail() {
   const [selComment,   setSelComment]   = useState('');
   const popupRef = useRef<HTMLDivElement>(null);
 
-  // Submissions from this student
+  // Submissions from this student (Redux — populated from Supabase below)
   const studentSubmissions = useAppSelector(s =>
     s.submissions.list.filter(sub => sub.studentId === studentId),
   );
   const pendingCount = studentSubmissions.filter(s => s.status === 'pending').length;
+
+  // ── Load submissions from Supabase on mount ─────────────────────────────────
+  const authUser = useAppSelector(s => s.auth.user);
+  useEffect(() => {
+    if (!studentId) return;
+    // Pass supervisor id optionally — if submissions have it, great; if not, load anyway
+    fetchSubmissionsForStudent(studentId, authUser?.id ?? undefined).then(dbSubs => {
+      dbSubs.forEach(dbSub => {
+        // Use Supabase UUID as Redux id so annotations link correctly
+        dispatch(submitSection({
+          id:           dbSub.id,            // ← Supabase UUID → Redux id
+          studentId:    dbSub.student_id,
+          studentName:  student?.name ?? dbSub.student_id,
+          sectionId:    dbSub.section_id,
+          sectionTitle: dbSub.section_title,
+          content:      dbSub.content,
+        }));
+        if (dbSub.status === 'approved') {
+          dispatch(approveSubmission({ id: dbSub.id }));
+        } else if (dbSub.status === 'needs-revision' && dbSub.supervisor_comment) {
+          dispatch(requestRevision({ id: dbSub.id, comment: dbSub.supervisor_comment }));
+        }
+        // Sync annotations including resolved status
+        (dbSub.annotations ?? []).forEach(ann => {
+          dispatch(addAnnotation({
+            id:           ann.id,
+            subId:        dbSub.id,
+            selectedText: ann.selected_text,
+            comment:      ann.comment,
+            color:        ann.color,
+          }));
+          if (ann.resolved) {
+            dispatch(resolveAnnotation({ subId: dbSub.id, annId: ann.id }));
+          }
+        });
+      });
+    }).catch(() => {});
+  }, [studentId, authUser?.id]);
   const [revisionInputs, setRevisionInputs] = useState<Record<string, string>>({});
 
-  const [subTab, setSubTab] = useState<string>('submitted');
+  const [subTab, setSubTab] = useState<string>(navState.subTab ?? 'submitted');
 
   // Submission annotation popup state
   const [subAnnoPopup, setSubAnnoPopup] = useState<{ subId: string; text: string; x: number; y: number } | null>(null);
@@ -229,7 +323,7 @@ export default function SupervisorStudentDetail() {
   const subAnnoRef = useRef<HTMLDivElement>(null);
 
   // ── Collaborative doc ───────────────────────────────────────────────────────
-  const authUser = useAppSelector(s => s.auth.user);
+  
   const roomId   = `project-${studentId ?? 'demo'}`;
   const collab   = useCollaborativeDoc(
     roomId,
@@ -247,30 +341,18 @@ export default function SupervisorStudentDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readSection?.id]);
 
-  if (!student) {
-    return (
-      <Box p="xl">
-        <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} mb="lg" onClick={() => navigate('/supervisor/students')}>
-          Back to Students
-        </Button>
-        <Paper withBorder p="xl" radius="md" ta="center">
-          <Text c="dimmed">Student not found.</Text>
-        </Paper>
-      </Box>
-    );
-  }
-
-  const daysToDeadline = student.deadline
+  // Derived values — use ?. so hooks above always run even when student is null
+  const daysToDeadline = student?.deadline
     ? Math.max(0, Math.ceil((new Date(student.deadline).getTime() - Date.now()) / 86400000))
     : null;
 
-  const complianceColor = student.complianceStatus === 'Good' ? 'green' : student.complianceStatus === 'Warning' ? 'orange' : 'red';
+  const complianceColor = student?.complianceStatus === 'Good' ? 'green' : student?.complianceStatus === 'Warning' ? 'orange' : 'red';
 
-  const aiSummary = student.complianceStatus === 'Critical'
-    ? `Immediate attention required: ${student.name}'s similarity index (${student.similarityIndex}%) and AI detection score (${student.aiDetectionScore}%) both exceed acceptable thresholds. Recommend requesting a full revision of flagged sections before any further submission.`
-    : student.complianceStatus === 'Warning'
-    ? `${student.name}'s similarity index (${student.similarityIndex}%) is approaching the borderline threshold. Review the flagged sections and advise proper paraphrasing and citation. Overall progress is on track at ${student.progress}%.`
-    : `${student.name} is progressing well. All compliance metrics are within safe limits. Current stage: ${student.stage}. Integrity score: ${student.integrityScore}%.`;
+  const aiSummary = student?.complianceStatus === 'Critical'
+    ? `Immediate attention required: ${student.name}'s similarity index (${student.similarityIndex}%) and AI detection score (${student.aiDetectionScore}%) both exceed acceptable thresholds.`
+    : student?.complianceStatus === 'Warning'
+    ? `${student.name}'s similarity index (${student.similarityIndex}%) is approaching the borderline threshold.`
+    : `${student?.name ?? ''} is progressing well. Current stage: ${student?.stage ?? ''}. Integrity score: ${student?.integrityScore ?? 0}%.`;
 
   const handleApproveStage = (i: number) => {
     setStages(prev => prev.map((s, idx) => idx === i ? { ...s, supervisorApproved: true } : s));
@@ -310,7 +392,7 @@ export default function SupervisorStudentDetail() {
       setThreads([{ id: 'new', subject: 'Supervisor Feedback', resolved: false, messages: [newMsg] }]);
     }
     setNewComment('');
-    notifications.show({ title: 'Comment sent', message: `Your feedback has been sent to ${student.name}.`, color: 'green' });
+    notifications.show({ title: 'Comment sent', message: `Your feedback has been sent to ${student?.name}.`, color: 'green' });
   };
 
   const handleRequestRevision = () => {
@@ -327,7 +409,7 @@ export default function SupervisorStudentDetail() {
       setThreads([{ id: 'new', subject: 'Revision Request', resolved: false, messages: [newMsg] }]);
     }
     setNewComment('');
-    notifications.show({ title: 'Revision requested', message: `${student.name} has been notified to revise.`, color: 'orange' });
+    notifications.show({ title: 'Revision requested', message: `${student?.name} has been notified to revise.`, color: 'orange' });
   };
 
   const handleDocMouseUp = useCallback(() => {
@@ -374,6 +456,21 @@ export default function SupervisorStudentDetail() {
   const currentAnnotations: CollabComment[] = readSection
     ? collab.comments.filter(c => c.sectionId === readSection.id && !c.resolved)
     : [];
+
+  // ── All hooks have been called above — safe to do conditional returns now ──
+  if (!student) {
+    const isLoading = !reduxRaw && !mockStudent && !sbStudent;
+    return (
+      <Box p="xl">
+        <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} mb="lg" onClick={() => navigate('/supervisor/students')}>
+          Back to Students
+        </Button>
+        <Paper withBorder p="xl" radius="md" ta="center">
+          <Text c="dimmed">{isLoading ? 'Loading student…' : 'Student not found.'}</Text>
+        </Paper>
+      </Box>
+    );
+  }
 
   return (
     <Box p="xl">
@@ -912,16 +1009,20 @@ export default function SupervisorStudentDetail() {
                 <Button
                   size="xs" color="brand"
                   disabled={!subAnnoComment.trim()}
-                  onClick={() => {
-                    dispatch(addAnnotation({
-                      subId:        subAnnoPopup.subId,
-                      selectedText: subAnnoPopup.text,
-                      comment:      subAnnoComment.trim(),
-                      color:        subAnnoColor,
-                    }));
+                  onClick={async () => {
+                    const tempId  = crypto.randomUUID();
+                    const capture = { subId: subAnnoPopup.subId, text: subAnnoPopup.text, comment: subAnnoComment.trim(), color: subAnnoColor };
+                    // Add to Redux immediately with a temp id for instant feedback
+                    dispatch(addAnnotation({ id: tempId, subId: capture.subId, selectedText: capture.text, comment: capture.comment, color: capture.color }));
                     window.getSelection()?.removeAllRanges();
                     setSubAnnoPopup(null);
                     setSubAnnoComment('');
+                    // Persist to Supabase, then replace temp id with real Supabase UUID
+                    try {
+                      const dbAnn = await addAnnotationDB({ submissionId: capture.subId, selectedText: capture.text, comment: capture.comment, color: capture.color });
+                      dispatch(deleteSubAnnotation({ subId: capture.subId, annId: tempId }));
+                      dispatch(addAnnotation({ id: dbAnn.id, subId: capture.subId, selectedText: capture.text, comment: capture.comment, color: capture.color }));
+                    } catch {}
                   }}
                 >
                   Save
@@ -979,9 +1080,14 @@ export default function SupervisorStudentDetail() {
                             <Box>
                               <Group gap={6}>
                                 <Text fw={600} size="sm">{sub.sectionTitle}</Text>
-                                {sub.annotations.length > 0 && (
+                                {sub.annotations.filter(a => !a.resolved).length > 0 && (
                                   <Badge size="xs" color="grape" variant="light" radius="xl">
-                                    {sub.annotations.length} annotation{sub.annotations.length > 1 ? 's' : ''}
+                                    {sub.annotations.filter(a => !a.resolved).length} pending
+                                  </Badge>
+                                )}
+                              {sub.annotations.filter(a => a.resolved).length > 0 && (
+                                  <Badge size="xs" color="green" variant="light" radius="xl">
+                                    {sub.annotations.filter(a => a.resolved).length} resolved
                                   </Badge>
                                 )}
                               </Group>
@@ -1016,63 +1122,106 @@ export default function SupervisorStudentDetail() {
                           </Text>
                         </Paper>
 
-                        {/* Annotations list */}
-                        {sub.annotations.length > 0 && (
-                          <Stack gap={6} mb="md">
-                            <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
-                              Annotations
-                            </Text>
-                            {sub.annotations.map((ann, idx) => (
-                              <Paper key={ann.id} p="sm" radius="md"
-                                style={{ background: ann.color + '22', border: `1.5px solid ${ann.color}88` }}
-                              >
-                                <Group gap={6} mb={4} wrap="nowrap">
-                                  <Box style={{ width: 10, height: 10, borderRadius: '50%', background: ann.color, flexShrink: 0 }} />
-                                  <Text size="xs" fw={700} style={{ color: '#495057' }}>#{idx + 1}</Text>
-                                  <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flex: 1 }} lineClamp={1}>"{ann.selectedText}"</Text>
-                                  <ActionIcon size="xs" color="red" variant="subtle"
-                                    onClick={() => dispatch(deleteSubAnnotation({ subId: sub.id, annId: ann.id }))}
-                                  >
-                                    <LuX size={10} />
-                                  </ActionIcon>
-                                </Group>
-                                {editAnnos[ann.id] !== undefined ? (
-                                  <Group gap={6}>
-                                    <Textarea
-                                      value={editAnnos[ann.id]}
-                                      onChange={e => { const v = e.currentTarget.value; setEditAnnos(prev => ({ ...prev, [ann.id]: v })); }}
-                                      size="xs" rows={2} style={{ flex: 1 }} autoFocus
-                                    />
-                                    <Stack gap={4}>
-                                      <ActionIcon size="sm" color="green" variant="light"
-                                        onClick={() => {
-                                          dispatch(updateAnnotation({ subId: sub.id, annId: ann.id, comment: editAnnos[ann.id] }));
-                                          setEditAnnos(prev => { const n = { ...prev }; delete n[ann.id]; return n; });
-                                        }}
-                                      >
-                                        <LuCheck size={12} />
-                                      </ActionIcon>
-                                      <ActionIcon size="sm" color="gray" variant="subtle"
-                                        onClick={() => setEditAnnos(prev => { const n = { ...prev }; delete n[ann.id]; return n; })}
-                                      >
-                                        <LuX size={12} />
-                                      </ActionIcon>
-                                    </Stack>
+                        {/* Annotations list — active and resolved */}
+                        {sub.annotations.length > 0 && (() => {
+                          const active   = sub.annotations.filter(a => !a.resolved);
+                          const resolved = sub.annotations.filter(a => a.resolved);
+                          return (
+                            <Stack gap={6} mb="md">
+                              {/* Active (unresolved) */}
+                              {active.length > 0 && (
+                                <>
+                                  <Group gap={6} align="center">
+                                    <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                                      Annotations
+                                    </Text>
+                                    <Badge size="xs" color="grape" variant="light" radius="xl">{active.length} active</Badge>
                                   </Group>
-                                ) : (
-                                  <Group gap={6} wrap="nowrap">
-                                    <Text size="xs" style={{ flex: 1 }}>{ann.comment}</Text>
-                                    <ActionIcon size="xs" color="gray" variant="subtle"
-                                      onClick={() => setEditAnnos(prev => ({ ...prev, [ann.id]: ann.comment }))}
+                                  {active.map((ann, idx) => (
+                                    <Paper key={ann.id} p="sm" radius="md"
+                                      style={{ background: ann.color + '22', border: `1.5px solid ${ann.color}88` }}
                                     >
-                                      <LuPencil size={10} />
-                                    </ActionIcon>
+                                      <Group gap={6} mb={4} wrap="nowrap">
+                                        <Box style={{ width: 10, height: 10, borderRadius: '50%', background: ann.color, flexShrink: 0 }} />
+                                        <Text size="xs" fw={700} style={{ color: '#495057' }}>#{idx + 1}</Text>
+                                        <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flex: 1 }} lineClamp={1}>"{ann.selectedText}"</Text>
+                                        <ActionIcon size="xs" color="red" variant="subtle"
+                                          onClick={() => {
+                                            dispatch(deleteSubAnnotation({ subId: sub.id, annId: ann.id }));
+                                            deleteAnnotationDB(ann.id).catch(() => {});
+                                          }}
+                                        >
+                                          <LuX size={10} />
+                                        </ActionIcon>
+                                      </Group>
+                                      {editAnnos[ann.id] !== undefined ? (
+                                        <Group gap={6}>
+                                          <Textarea
+                                            value={editAnnos[ann.id]}
+                                            onChange={e => { const v = e.currentTarget.value; setEditAnnos(prev => ({ ...prev, [ann.id]: v })); }}
+                                            size="xs" rows={2} style={{ flex: 1 }} autoFocus
+                                          />
+                                          <Stack gap={4}>
+                                            <ActionIcon size="sm" color="green" variant="light"
+                                              onClick={() => {
+                                                dispatch(updateAnnotation({ subId: sub.id, annId: ann.id, comment: editAnnos[ann.id] }));
+                                                updateAnnotationDB(ann.id, editAnnos[ann.id]).catch(() => {});
+                                                setEditAnnos(prev => { const n = { ...prev }; delete n[ann.id]; return n; });
+                                              }}
+                                            >
+                                              <LuCheck size={12} />
+                                            </ActionIcon>
+                                            <ActionIcon size="sm" color="gray" variant="subtle"
+                                              onClick={() => setEditAnnos(prev => { const n = { ...prev }; delete n[ann.id]; return n; })}
+                                            >
+                                              <LuX size={12} />
+                                            </ActionIcon>
+                                          </Stack>
+                                        </Group>
+                                      ) : (
+                                        <Group gap={6} wrap="nowrap">
+                                          <Text size="xs" style={{ flex: 1 }}>{ann.comment}</Text>
+                                          <ActionIcon size="xs" color="gray" variant="subtle"
+                                            onClick={() => setEditAnnos(prev => ({ ...prev, [ann.id]: ann.comment }))}
+                                          >
+                                            <LuPencil size={10} />
+                                          </ActionIcon>
+                                        </Group>
+                                      )}
+                                    </Paper>
+                                  ))}
+                                </>
+                              )}
+
+                              {/* Resolved by student */}
+                              {resolved.length > 0 && (
+                                <>
+                                  <Group gap={6} align="center" mt={active.length > 0 ? 6 : 0}>
+                                    <Text size="xs" fw={700} style={{ textTransform: 'uppercase', letterSpacing: 0.6, color: '#2f9e44' }}>
+                                      Resolved by student
+                                    </Text>
+                                    <Badge size="xs" color="green" variant="light" radius="xl">{resolved.length}</Badge>
                                   </Group>
-                                )}
-                              </Paper>
-                            ))}
-                          </Stack>
-                        )}
+                                  {resolved.map((ann, idx) => (
+                                    <Paper key={ann.id} p="sm" radius="md"
+                                      style={{ background: '#f1f3f5', border: '1.5px solid #dee2e6', opacity: 0.75 }}
+                                    >
+                                      <Group gap={6} mb={4} wrap="nowrap">
+                                        <Box style={{ width: 10, height: 10, borderRadius: '50%', background: '#2f9e44', flexShrink: 0 }} />
+                                        <Badge size="xs" color="green" variant="filled" radius="xl" style={{ pointerEvents: 'none' }}>✓ Resolved</Badge>
+                                        <Text size="xs" fw={700} style={{ color: '#868e96' }}>#{active.length + idx + 1}</Text>
+                                        <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flex: 1, textDecoration: 'line-through' }} lineClamp={1}>
+                                          "{ann.selectedText}"
+                                        </Text>
+                                      </Group>
+                                      <Text size="xs" c="dimmed" style={{ paddingLeft: 16, textDecoration: 'line-through' }}>{ann.comment}</Text>
+                                    </Paper>
+                                  ))}
+                                </>
+                              )}
+                            </Stack>
+                          );
+                        })()}
 
                         {/* Existing supervisor comment */}
                         {sub.supervisorComment && (
@@ -1096,6 +1245,8 @@ export default function SupervisorStudentDetail() {
                               size="xs" color="green" leftSection={<LuCheck size={13} />}
                               onClick={() => {
                                 dispatch(approveSubmission({ id: sub.id }));
+                                // Persist to Supabase
+                                reviewSubmissionDB({ submissionId: sub.id, status: 'approved' }).catch(() => {});
                                 notifications.show({ title: 'Chapter approved', message: `"${sub.sectionTitle}" has been approved.`, color: 'green' });
                               }}
                             >
@@ -1105,7 +1256,10 @@ export default function SupervisorStudentDetail() {
                               size="xs" color="orange" variant="light" leftSection={<LuTriangleAlert size={13} />}
                               disabled={!(revisionInputs[sub.id] ?? '').trim()}
                               onClick={() => {
-                                dispatch(requestRevision({ id: sub.id, comment: revisionInputs[sub.id] ?? '' }));
+                                const comment = revisionInputs[sub.id] ?? '';
+                                dispatch(requestRevision({ id: sub.id, comment }));
+                                // Persist to Supabase
+                                reviewSubmissionDB({ submissionId: sub.id, status: 'needs-revision', comment }).catch(() => {});
                                 setRevisionInputs(prev => ({ ...prev, [sub.id]: '' }));
                                 notifications.show({ title: 'Revision requested', message: `Feedback sent for "${sub.sectionTitle}".`, color: 'orange' });
                               }}
@@ -1146,9 +1300,14 @@ export default function SupervisorStudentDetail() {
                               <Badge size="xs" color="green" variant="light" radius="xl">
                                 Chapter {i + 1}
                               </Badge>
-                              {sub.annotations.length > 0 && (
+                              {sub.annotations.filter(a => !a.resolved).length > 0 && (
                                 <Badge size="xs" color="grape" variant="light" radius="xl">
-                                  {sub.annotations.length} note{sub.annotations.length > 1 ? 's' : ''}
+                                  {sub.annotations.filter(a => !a.resolved).length} note{sub.annotations.filter(a => !a.resolved).length > 1 ? 's' : ''}
+                                </Badge>
+                              )}
+                              {sub.annotations.filter(a => a.resolved).length > 0 && (
+                                <Badge size="xs" color="green" variant="light" radius="xl">
+                                  {sub.annotations.filter(a => a.resolved).length} resolved
                                 </Badge>
                               )}
                             </Group>
@@ -1163,33 +1322,48 @@ export default function SupervisorStudentDetail() {
                         </Badge>
                       </Group>
 
-                      {/* Content preview (read-only, with highlights) */}
+                      {/* Content preview — approved chapters show clean text, no highlights */}
                       <Paper p="md" radius="md" mb="sm"
                         style={{ background: '#f6fef9', border: '1px solid #b2f2bb', maxHeight: 180, overflowY: 'auto' }}
                       >
                         <Text size="sm" style={{ fontFamily: 'Georgia, serif', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
-                          {applySubmissionHighlights(sub.content || '(No content)', sub.annotations)}
+                          {sub.content || '(No content)'}
                         </Text>
                       </Paper>
 
-                      {/* Annotations summary */}
-                      {sub.annotations.length > 0 && (
-                        <Stack gap={4} mb="sm">
-                          <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
-                            Reviewer Notes
-                          </Text>
-                          {sub.annotations.map((ann, idx) => (
-                            <Group key={ann.id} gap={8} wrap="nowrap"
-                              style={{ background: ann.color + '18', borderRadius: 6, padding: '4px 8px', border: `1px solid ${ann.color}55` }}
-                            >
-                              <Box style={{ width: 8, height: 8, borderRadius: '50%', background: ann.color, flexShrink: 0 }} />
-                              <Text size="xs" fw={600} c="dimmed" style={{ flexShrink: 0 }}>#{idx + 1}</Text>
-                              <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flexShrink: 0 }} lineClamp={1}>"{ann.selectedText}"</Text>
-                              <Text size="xs" style={{ flex: 1 }} lineClamp={1}>{ann.comment}</Text>
-                            </Group>
-                          ))}
-                        </Stack>
-                      )}
+                      {/* Reviewer Notes side-panel style — resolved / active split */}
+                      {sub.annotations.length > 0 && (() => {
+                        const active   = sub.annotations.filter(a => !a.resolved);
+                        const resolved = sub.annotations.filter(a => a.resolved);
+                        return (
+                          <Stack gap={4} mb="sm">
+                            <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                              Reviewer Notes
+                            </Text>
+                            {active.map((ann, idx) => (
+                              <Group key={ann.id} gap={8} wrap="nowrap"
+                                style={{ background: ann.color + '18', borderRadius: 6, padding: '4px 8px', border: `1px solid ${ann.color}55` }}
+                              >
+                                <Box style={{ width: 8, height: 8, borderRadius: '50%', background: ann.color, flexShrink: 0 }} />
+                                <Text size="xs" fw={600} c="dimmed" style={{ flexShrink: 0 }}>#{idx + 1}</Text>
+                                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flexShrink: 0 }} lineClamp={1}>"{ann.selectedText}"</Text>
+                                <Text size="xs" style={{ flex: 1 }} lineClamp={1}>{ann.comment}</Text>
+                              </Group>
+                            ))}
+                            {resolved.map((ann, idx) => (
+                              <Group key={ann.id} gap={8} wrap="nowrap"
+                                style={{ background: '#f1f3f5', borderRadius: 6, padding: '4px 8px', border: '1px solid #dee2e6', opacity: 0.7 }}
+                              >
+                                <LuCircleCheck size={10} color="#2f9e44" style={{ flexShrink: 0 }} />
+                                <Text size="xs" fw={600} style={{ color: '#2f9e44', flexShrink: 0 }}>Resolved</Text>
+                                <Text size="xs" fw={600} c="dimmed" style={{ flexShrink: 0 }}>#{active.length + idx + 1}</Text>
+                                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flexShrink: 0, textDecoration: 'line-through' }} lineClamp={1}>"{ann.selectedText}"</Text>
+                                <Text size="xs" style={{ flex: 1, textDecoration: 'line-through', color: '#adb5bd' }} lineClamp={1}>{ann.comment}</Text>
+                              </Group>
+                            ))}
+                          </Stack>
+                        );
+                      })()}
 
                       {/* Supervisor's overall comment */}
                       {sub.supervisorComment && (

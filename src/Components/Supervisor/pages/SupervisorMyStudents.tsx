@@ -1,51 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Avatar, Badge, Box, Group, Paper, Progress,
+  Avatar, Badge, Box, Group, Loader, Paper, Progress,
   Table, Tabs, Text, TextInput, ThemeIcon, Title, SimpleGrid,
 } from '@mantine/core';
 import {
   LuUsers, LuSearch, LuGraduationCap, LuActivity,
-  LuTriangleAlert, LuCircleCheck, LuBookOpen, LuArrowRight,
+  LuTriangleAlert, LuCircleCheck, LuBookOpen, LuArrowRight, LuUserX,
 } from 'react-icons/lu';
-import { SUPERVISED_STUDENTS } from '../supervisorData';
 import type { SupervisedStudent, ComplianceStatus, DegreeLevel } from '../supervisorData';
 import { useAppSelector } from '../../../Redux/hooks';
-import type { StoredUser } from '../../../Redux/slices/usersSlice';
+import { supabase } from '../../../supabase/client';
 
 const MANTINE_COLORS = ['blue', 'teal', 'green', 'grape', 'orange', 'cyan', 'indigo', 'red', 'pink', 'yellow'];
 function nameToColor(name: string) {
   let h = 0;
   for (const c of name) h = (h << 5) - h + c.charCodeAt(0);
   return MANTINE_COLORS[Math.abs(h) % MANTINE_COLORS.length];
-}
-
-function reduxUserToStudent(u: StoredUser): SupervisedStudent {
-  return {
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    matricNo: u.matricNo ?? 'N/A',
-    degreeLevel: (u.degreeLevel as DegreeLevel) ?? 'PhD',
-    projectTitle: u.projectTitle ?? 'Untitled Research',
-    stage: 'Proposal',
-    progress: 0,
-    similarityIndex: 0,
-    aiDetectionScore: 0,
-    integrityScore: 0,
-    complianceStatus: 'Good' as ComplianceStatus,
-    department: u.department ?? 'Unassigned',
-    wordCount: 0,
-    targetWordCount: 80000,
-    deadline: 'TBD',
-    lastActivity: 'Just joined',
-    color: nameToColor(u.name),
-    stages: [],
-    sections: [],
-    analyses: [],
-    feedbackThreads: [],
-    alerts: [],
-  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -151,23 +122,60 @@ function StudentTable({ students, onRowClick }: StudentTableProps) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+
 export default function SupervisorMyStudents() {
-  const navigate       = useNavigate();
-  const currentUser    = useAppSelector(s => s.auth.user);
-  const allReduxUsers  = useAppSelector(s => s.users.list);
-  const [search, setSearch] = useState('');
-  const [tab, setTab]       = useState('all');
+  const navigate      = useNavigate();
+  const currentUser   = useAppSelector(s => s.auth.user);
+  const [search,  setSearch]   = useState('');
+  const [tab,     setTab]      = useState('all');
+  const [sbStudents, setSbStudents] = useState<SupervisedStudent[]>([]);
+  const [loading, setLoading]  = useState(true);
 
-  // If this supervisor was created via Redux (real account), show only their Redux students.
-  // If they logged in via the demo role dropdown (no Redux account), fall back to mock data.
-  const allStudents = useMemo<SupervisedStudent[]>(() => {
-    const isReduxSupervisor = allReduxUsers.some(u => u.id === currentUser?.id);
-    const reduxStudents     = allReduxUsers
-      .filter(u => u.supervisorId === currentUser?.id)
-      .map(reduxUserToStudent);
+  // ── Fetch students assigned to this supervisor from Supabase ──────────────
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    setLoading(true);
+    supabase
+      .from('users')
+      .select('id, name, email, matric_no, project_title, role, degree_level, department, created_at')
+      .eq('supervisor_id', currentUser.id)
+      .in('role', STUDENT_ROLES)
+      .order('name')
+      .then(({ data }) => {
+        setLoading(false);
+        if (!data || data.length === 0) return;
+        const mapped = (data as Record<string, string>[]).map((u) => ({
+          id:               u.id,
+          name:             u.name,
+          email:            u.email,
+          matricNo:         u.matric_no      ?? 'N/A',
+          degreeLevel:      (u.degree_level ?? u.role ?? 'PhD') as DegreeLevel,
+          projectTitle:     u.project_title  ?? 'Untitled Research',
+          stage:            'Proposal' as const,
+          progress:         0,
+          similarityIndex:  0,
+          aiDetectionScore: 0,
+          integrityScore:   0,
+          complianceStatus: 'Good' as ComplianceStatus,
+          department:       u.department ?? 'Unassigned',
+          wordCount:        0,
+          targetWordCount:  80000,
+          deadline:         '',
+          lastActivity:     'Active',
+          color:            nameToColor(u.name),
+          stages:           [],
+          sections:         [],
+          analyses:         [],
+          feedbackThreads:  [],
+          alerts:           [],
+        }));
+        setSbStudents(mapped);
+      });
+  }, [currentUser?.id]);
 
-    return isReduxSupervisor ? reduxStudents : [...SUPERVISED_STUDENTS, ...reduxStudents];
-  }, [allReduxUsers, currentUser?.id]);
+  // Show only real Supabase students — no fallback to mock data
+  const allStudents = useMemo<SupervisedStudent[]>(() => sbStudents, [sbStudents]);
 
   const byTab = tab === 'ug'
     ? allStudents.filter(s => s.degreeLevel === 'Undergraduate')
@@ -196,72 +204,86 @@ export default function SupervisorMyStudents() {
         </Text>
       </Box>
 
-      {/* ── Summary chips ── */}
-      <SimpleGrid cols={{ base: 1, sm: 3 }} mb="xl">
-        <SummaryChip value={good}     label="Good Standing" color="#2f9e44" />
-        <SummaryChip value={warning}  label="Warnings"      color="#f08c00" />
-        <SummaryChip value={critical} label="Critical"      color="#e03131" />
-      </SimpleGrid>
+      {loading ? (
+        <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
+      ) : allStudents.length === 0 ? (
+        <Paper withBorder p="xl" radius="md" ta="center">
+          <LuUserX size={32} color="#adb5bd" style={{ marginBottom: 8 }} />
+          <Text fw={600} c="dimmed">No students assigned yet</Text>
+          <Text size="sm" c="dimmed" mt={4}>
+            Students assigned to you by your HOD will appear here. Ask your HOD to assign students to your account.
+          </Text>
+        </Paper>
+      ) : (
+        <>
+          {/* ── Summary chips ── */}
+          <SimpleGrid cols={{ base: 1, sm: 3 }} mb="xl">
+            <SummaryChip value={good}     label="Good Standing" color="#2f9e44" />
+            <SummaryChip value={warning}  label="Warnings"      color="#f08c00" />
+            <SummaryChip value={critical} label="Critical"      color="#e03131" />
+          </SimpleGrid>
 
-      {/* ── Toolbar ── */}
-      <Paper withBorder p="md" radius="md" bg="white" mb="lg">
-        <Group justify="space-between" wrap="nowrap">
-          <TextInput
-            placeholder="Search by name, project, or matric no…"
-            leftSection={<LuSearch size={14} color="#adb5bd" />}
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, maxWidth: 420 }}
-          />
-          <Group gap="xs">
-            <ThemeIcon size={34} radius="md" color="brand" variant="light">
-              <LuUsers size={16} />
-            </ThemeIcon>
-            <Box>
-              <Text size="sm" fw={700}>{allStudents.length}</Text>
-              <Text size="xs" c="dimmed" lh={1}>total</Text>
-            </Box>
-          </Group>
-        </Group>
-      </Paper>
-
-      {/* ── Tabs ── */}
-      <Tabs value={tab} onChange={v => setTab(v ?? 'all')}>
-        <Tabs.List mb="lg">
-          <Tabs.Tab value="all" leftSection={<LuUsers         size={14} />}>
-            All Students ({allStudents.length})
-          </Tabs.Tab>
-          <Tabs.Tab value="ug"  leftSection={<LuBookOpen      size={14} />}>
-            Undergraduate ({allStudents.filter(s => s.degreeLevel === 'Undergraduate').length})
-          </Tabs.Tab>
-          <Tabs.Tab value="pg"  leftSection={<LuGraduationCap size={14} />}>
-            Postgraduate ({allStudents.filter(s => s.degreeLevel !== 'Undergraduate').length})
-          </Tabs.Tab>
-        </Tabs.List>
-
-        <Tabs.Panel value="all"><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
-        <Tabs.Panel value="ug" ><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
-        <Tabs.Panel value="pg" ><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
-      </Tabs>
-
-      {/* ── Legend ── */}
-      <Paper
-        withBorder p="sm" radius="md" mt="lg"
-        style={{ background: '#f8f9fa', border: '1px dashed #dee2e6' }}
-      >
-        <Group gap="xl">
-          {[
-            { icon: LuCircleCheck,   color: '#2f9e44', label: 'Good — integrity ≥ 85%' },
-            { icon: LuTriangleAlert, color: '#f08c00', label: 'Warning — integrity 70–84% or AI score 25–35%' },
-            { icon: LuActivity,      color: '#e03131', label: 'Critical — integrity < 70% or AI score > 35%' },
-          ].map(({ icon: Icon, color, label }) => (
-            <Group key={label} gap="xs">
-              <Icon size={13} style={{ color }} />
-              <Text size="xs" c="dimmed">{label}</Text>
+          {/* ── Toolbar ── */}
+          <Paper withBorder p="md" radius="md" bg="white" mb="lg">
+            <Group justify="space-between" wrap="nowrap">
+              <TextInput
+                placeholder="Search by name, project, or matric no…"
+                leftSection={<LuSearch size={14} color="#adb5bd" />}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{ flex: 1, maxWidth: 420 }}
+              />
+              <Group gap="xs">
+                <ThemeIcon size={34} radius="md" color="brand" variant="light">
+                  <LuUsers size={16} />
+                </ThemeIcon>
+                <Box>
+                  <Text size="sm" fw={700}>{allStudents.length}</Text>
+                  <Text size="xs" c="dimmed" lh={1}>total</Text>
+                </Box>
+              </Group>
             </Group>
-          ))}
-        </Group>
-      </Paper>
+          </Paper>
+
+          {/* ── Tabs ── */}
+          <Tabs value={tab} onChange={v => setTab(v ?? 'all')}>
+            <Tabs.List mb="lg">
+              <Tabs.Tab value="all" leftSection={<LuUsers         size={14} />}>
+                All Students ({allStudents.length})
+              </Tabs.Tab>
+              <Tabs.Tab value="ug"  leftSection={<LuBookOpen      size={14} />}>
+                Undergraduate ({allStudents.filter(s => s.degreeLevel === 'Undergraduate').length})
+              </Tabs.Tab>
+              <Tabs.Tab value="pg"  leftSection={<LuGraduationCap size={14} />}>
+                Postgraduate ({allStudents.filter(s => s.degreeLevel !== 'Undergraduate').length})
+              </Tabs.Tab>
+            </Tabs.List>
+
+            <Tabs.Panel value="all"><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
+            <Tabs.Panel value="ug" ><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
+            <Tabs.Panel value="pg" ><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
+          </Tabs>
+
+          {/* ── Legend ── */}
+          <Paper
+            withBorder p="sm" radius="md" mt="lg"
+            style={{ background: '#f8f9fa', border: '1px dashed #dee2e6' }}
+          >
+            <Group gap="xl">
+              {[
+                { icon: LuCircleCheck,   color: '#2f9e44', label: 'Good — integrity ≥ 85%' },
+                { icon: LuTriangleAlert, color: '#f08c00', label: 'Warning — integrity 70–84% or AI score 25–35%' },
+                { icon: LuActivity,      color: '#e03131', label: 'Critical — integrity < 70% or AI score > 35%' },
+              ].map(({ icon: Icon, color, label }) => (
+                <Group key={label} gap="xs">
+                  <Icon size={13} style={{ color }} />
+                  <Text size="xs" c="dimmed">{label}</Text>
+                </Group>
+              ))}
+            </Group>
+          </Paper>
+        </>
+      )}
 
     </Box>
   );

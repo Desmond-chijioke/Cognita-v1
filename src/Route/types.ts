@@ -17,11 +17,12 @@ export const APPROUTE_LIST = {
   ADMIN_USERS:    '/admin/users',
 
   // Head of Department
-  HOD_OVERVIEW: '/hod/overview',
+  HOD_OVERVIEW:    '/hod/overview',
+  HOD_USERS:       '/hod/users',
   HOD_SUPERVISORS: '/hod/supervisors',
-  HOD_STUDENTS: '/hod/students',
-  HOD_MESSAGES: '/hod/messages',
-  HOD_SETTINGS: '/hod/settings',
+  HOD_STUDENTS:    '/hod/students',
+  HOD_MESSAGES:    '/hod/messages',
+  HOD_SETTINGS:    '/hod/settings',
 
   // Supervisor
   SUPERVISOR_OVERVIEW: '/supervisor/overview',
@@ -49,23 +50,27 @@ export const APPROUTE_LIST = {
 };
 
 export const ROLE_HOME: Record<string, string> = {
-  // Institution admin
-  'Director of Research':  APPROUTE_LIST.ADMIN_DASHBOARD,
-  'schoolAdmin':           APPROUTE_LIST.ADMIN_DASHBOARD,
 
-  // College & Faculty leaders → HOD dashboard
-  'Dean':                  APPROUTE_LIST.HOD_OVERVIEW,
+  // ── Institution admin ─────────────────────────────────────────────────────
+  'Director of Research':   APPROUTE_LIST.ADMIN_DASHBOARD,
+  'schoolAdmin':            APPROUTE_LIST.ADMIN_DASHBOARD,
 
-  // Department leader
-  'Head of Department':    APPROUTE_LIST.HOD_OVERVIEW,
+  // ── HOD-level (College Dean, Faculty Dean, Head of Department) ────────────
+  'Dean':                   APPROUTE_LIST.HOD_OVERVIEW,
+  'Head of Department':     APPROUTE_LIST.HOD_OVERVIEW,
+  'Provost':                APPROUTE_LIST.HOD_OVERVIEW,
 
-  // Supervisor
-  'Supervisor':            APPROUTE_LIST.SUPERVISOR_OVERVIEW,
+  // ── Supervisors — all variants route to supervisor workspace ─────────────
+  'Supervisor':             APPROUTE_LIST.SUPERVISOR_OVERVIEW,
+  'Senior Supervisor':      APPROUTE_LIST.SUPERVISOR_OVERVIEW,
+  'Co-Supervisor':          APPROUTE_LIST.SUPERVISOR_OVERVIEW,
+  'Assistant Supervisor':   APPROUTE_LIST.SUPERVISOR_OVERVIEW,
 
-  // Student-type roles all land on the student workspace
-  'PhD Student':           APPROUTE_LIST.STUDENT_DASHBOARD,
-  'Researcher':            APPROUTE_LIST.STUDENT_DASHBOARD,
-  'Undergraduate Student': APPROUTE_LIST.STUDENT_DASHBOARD,
-  "Master's Student":      APPROUTE_LIST.STUDENT_DASHBOARD,
-  'Student':               APPROUTE_LIST.STUDENT_DASHBOARD,
+  // ── Students / Researchers — all route to student workspace ──────────────
+  'PhD Student':            APPROUTE_LIST.STUDENT_DASHBOARD,
+  'Researcher':             APPROUTE_LIST.STUDENT_DASHBOARD,
+  'Undergraduate Student':  APPROUTE_LIST.STUDENT_DASHBOARD,
+  "Master's Student":       APPROUTE_LIST.STUDENT_DASHBOARD,
+  'Student':                APPROUTE_LIST.STUDENT_DASHBOARD,
+  'Postgraduate Student':   APPROUTE_LIST.STUDENT_DASHBOARD,
 };

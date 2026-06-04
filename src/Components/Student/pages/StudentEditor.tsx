@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useMediaQuery } from '@mantine/hooks';
 import {
   Box, Text, Group, Stack, Select, ActionIcon, Divider,
   Tabs, Textarea, Button, Badge, Progress, Modal,
@@ -13,6 +14,7 @@ import {
   LuMessageSquare, LuPlus, LuSearch, LuSend, LuBot, LuUser,
   LuActivity, LuPencil, LuTrash2, LuCheck, LuX, LuLock,
   LuUpload, LuMessageSquareDot, LuEye,
+  LuMenu, LuArrowLeft, LuLayoutList,
 } from 'react-icons/lu';
 import { STUDENT_REFERENCES, REVIEW_SCORES, REVIEW_ISSUES } from '../studentData';
 import { STUDENT_SECTIONS } from '../studentData';
@@ -22,8 +24,11 @@ import {
 } from '../editorTemplates';
 import type { ProjectType, EditorSection, SectionStatus } from '../editorTemplates';
 import { useAppSelector, useAppDispatch } from '../../../Redux/hooks';
-import { submitSection, resolveAnnotation } from '../../../Redux/slices/submissionsSlice';
+import { submitSection, resolveAnnotation, approveSubmission, requestRevision, addAnnotation, updateAnnotation, deleteAnnotation } from '../../../Redux/slices/submissionsSlice';
 import type { SubmissionStatus, SubmissionAnnotation } from '../../../Redux/slices/submissionsSlice';
+import { submitChapter, fetchStudentSubmissions, resolveAnnotationDB } from '../../../supabase/submissions';
+import { supabase } from '../../../supabase/client';
+import type { DBSubmission } from '../../../supabase/submissions';
 import { useCollaborativeDoc } from '../../../hooks/useCollaborativeDoc';
 
 
@@ -191,12 +196,60 @@ export default function StudentEditor() {
 
   const centerRef = useRef<HTMLDivElement>(null);
 
-  // ── Redux ────────────────────────────────────────────────────────────────────
+  // ── Redux + Supabase submissions ─────────────────────────────────────────────
   const dispatch    = useAppDispatch();
   const user        = useAppSelector(s => s.auth.user);
+  const [projectTitle, setProjectTitle] = useState('');
+
+  // ── Fetch project title ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    supabase
+      .from('users')
+      .select('project_title')
+      .eq('id', user.id)
+      .single()
+      .then(({ data }) => setProjectTitle(data?.project_title ?? ''));
+  }, [user?.id]);
+
   const mySubmissions = useAppSelector(s =>
     s.submissions.list.filter(sub => sub.studentId === user?.id),
   );
+
+  // ── Load submissions from Supabase on mount and sync to Redux ────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchStudentSubmissions(user.id).then(dbSubs => {
+      dbSubs.forEach(dbSub => {
+        // Pass the Supabase UUID as the Redux id — this is the KEY fix:
+        // Redux and Supabase now share the same ID, so annotations link correctly
+        dispatch(submitSection({
+          id:           dbSub.id,           // ← Supabase UUID becomes Redux id
+          studentId:    user.id,
+          studentName:  user.name ?? '',
+          sectionId:    dbSub.section_id,
+          sectionTitle: dbSub.section_title,
+          content:      dbSub.content,
+        }));
+        // Sync status using the Supabase UUID (now = Redux id)
+        if (dbSub.status === 'approved') {
+          dispatch(approveSubmission({ id: dbSub.id }));
+        } else if (dbSub.status === 'needs-revision' && dbSub.supervisor_comment) {
+          dispatch(requestRevision({ id: dbSub.id, comment: dbSub.supervisor_comment }));
+        }
+        // Sync annotations — subId is now the Supabase UUID which matches Redux id
+        (dbSub.annotations ?? []).forEach(ann => {
+          dispatch(addAnnotation({
+            id:           ann.id,             // ← Supabase annotation UUID
+            subId:        dbSub.id,           // ← Supabase submission UUID
+            selectedText: ann.selected_text,
+            comment:      ann.comment,
+            color:        ann.color,
+          }));
+        });
+      });
+    }).catch(() => {});
+  }, [user?.id]);
 
   const getSubStatus = (sectionId: string): SubmissionStatus | null =>
     mySubmissions.find(s => s.sectionId === sectionId)?.status ?? null;
@@ -206,11 +259,12 @@ export default function StudentEditor() {
 
   const getActiveSub = () => mySubmissions.find(s => s.sectionId === activeSectionId) ?? null;
 
-  const handleSubmitSection = () => {
+  const handleSubmitSection = async () => {
     if (!user || !activeSection || !activeSection.content.trim()) {
       notifications.show({ title: 'Nothing to submit', message: 'Write some content first.', color: 'orange' });
       return;
     }
+    // Save to Redux for immediate UI update
     dispatch(submitSection({
       studentId:    user.id,
       studentName:  user.name,
@@ -218,8 +272,60 @@ export default function StudentEditor() {
       sectionTitle: activeSection.title,
       content:      activeSection.content,
     }));
+    // Persist to Supabase
+    submitChapter({
+      studentId:     user.id,
+      supervisorId:  user.supervisorId ?? null,
+      institutionId: user.institutionId ?? '',
+      sectionId:     activeSection.id,
+      sectionTitle:  activeSection.title,
+      content:       activeSection.content,
+    }).catch(err => console.error('submitChapter failed:', err));
+
     notifications.show({ title: 'Chapter submitted', message: `"${activeSection.title}" sent to your supervisor for review.`, color: 'blue' });
   };
+
+  // ── Responsive breakpoints ───────────────────────────────────────────────────
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const isTablet = useMediaQuery('(max-width: 1100px)');
+  const [mobilePanel,  setMobilePanel]  = useState<'sections' | 'editor' | 'review'>('editor');
+  const [showRight,    setShowRight]    = useState(true);
+
+  // ── Draft save / load via localStorage ───────────────────────────────────────
+  const draftKey = useCallback(
+    (sectionKey: string) => `cognita_draft_${user?.id ?? 'anon'}_${sectionKey}`,
+    [user?.id],
+  );
+
+  // Load saved drafts into empty sections on mount (Supabase will override submitted ones)
+  useEffect(() => {
+    if (!user?.id) return;
+    setSections(prev =>
+      prev.map(sec => {
+        const saved = localStorage.getItem(draftKey(sec.key));
+        if (saved && !sec.content.trim()) {
+          return { ...sec, content: saved, wordCount: countWords(saved), status: 'in-progress' as SectionStatus };
+        }
+        return sec;
+      })
+    );
+  }, [user?.id, draftKey]);
+
+  const handleSave = useCallback(() => {
+    if (!user?.id) return;
+    let count = 0;
+    sections.forEach(sec => {
+      if (sec.content.trim()) {
+        localStorage.setItem(draftKey(sec.key), sec.content);
+        count++;
+      }
+    });
+    notifications.show({
+      title: 'Draft saved',
+      message: `${count} section${count !== 1 ? 's' : ''} saved locally. Submit a chapter to send it to your supervisor.`,
+      color: 'green',
+    });
+  }, [sections, user?.id, draftKey]);
 
   // ── Collaborative editing ─────────────────────────────────────────────────────
   const roomId  = `project-${user?.id ?? 'demo'}`;
@@ -423,23 +529,39 @@ export default function StudentEditor() {
 
         {/* Row 2 — Doc actions */}
         <Group justify="space-between" px={12} py={6} style={{ minHeight: 44 }}>
-          <Group gap={6}>
-            <LuShield size={16} color="#2f9e44" />
-            <Text size="sm" fw={600} c="green">88% Integrity</Text>
-            {focusMode && <Text size="xs" c="dimmed" ml={12}>{wordCount.toLocaleString()} words</Text>}
+          <Group gap={8} style={{ minWidth: 0, flex: 1 }}>
+            <Text
+              size="sm"
+              fw={700}
+              c="dark"
+              style={{
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                maxWidth: 320,
+              }}
+            >
+              {projectTitle || user?.name ? (projectTitle || `${user?.name}'s Project`) : 'Research Project'}
+            </Text>
+            {focusMode && (
+              <Text size="xs" c="dimmed">{wordCount.toLocaleString()} words</Text>
+            )}
           </Group>
-          <Group gap={6}>
-            {!focusMode && (
+          <Group gap={6} wrap="nowrap">
+            {!focusMode && !isMobile && (
               <Button size="xs" variant="subtle" leftSection={<LuQuote size={14} />} onClick={() => setCiteModalOpen(true)}>Cite</Button>
             )}
-            <Button size="xs" color="brand" variant="filled" leftSection={<LuSave size={14} />}
-              onClick={() => notifications.show({ title: 'Saved', message: 'Your work has been saved.', color: 'green' })}>
-              Save
+            <Button
+              size="xs"
+              color="brand"
+              variant="light"
+              leftSection={<LuSave size={14} />}
+              onClick={handleSave}
+            >
+              {isMobile ? '' : 'Save'}
             </Button>
             {(() => {
               const st = activeSection ? getSubStatus(activeSection.id) : null;
               const color = st === 'approved' ? 'green' : st === 'needs-revision' ? 'orange' : 'blue';
-              const label = st === 'approved' ? 'Approved' : st === 'needs-revision' ? 'Needs Revision' : st === 'pending' ? 'Pending Review' : 'Submit Chapter';
+              const label = st === 'approved' ? 'Approved' : st === 'needs-revision' ? 'Revision' : st === 'pending' ? 'Pending' : 'Submit';
               return (
                 <Button
                   size="xs"
@@ -453,10 +575,26 @@ export default function StudentEditor() {
                 </Button>
               );
             })()}
-            <Button size="xs" variant="subtle" leftSection={focusMode ? <LuMinimize size={14} /> : <LuMaximize size={14} />}
-              onClick={() => setFocusMode(m => !m)}>
-              {focusMode ? 'Exit Focus' : 'Focus Mode'}
-            </Button>
+            {!isMobile && (
+              <>
+                {isTablet && !focusMode && (
+                  <Tooltip label={showRight ? 'Hide review panel' : 'Show review panel'} withArrow>
+                    <ActionIcon
+                      size="sm"
+                      variant={showRight ? 'light' : 'subtle'}
+                      color="brand"
+                      onClick={() => setShowRight(r => !r)}
+                    >
+                      <LuLayoutList size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+                <Button size="xs" variant="subtle" leftSection={focusMode ? <LuMinimize size={14} /> : <LuMaximize size={14} />}
+                  onClick={() => setFocusMode(m => !m)}>
+                  {focusMode ? 'Exit' : 'Focus'}
+                </Button>
+              </>
+            )}
           </Group>
         </Group>
       </Box>
@@ -465,13 +603,35 @@ export default function StudentEditor() {
       <Box style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
         {/* ── LEFT PANEL ─────────────────────────────────────────────────── */}
-        {!focusMode && (
+        {!focusMode && (!isMobile || mobilePanel === 'sections') && (
           <Box style={{
-            width: 240, flexShrink: 0, borderRight: '1px solid #f1f3f5', background: '#fff',
+            width: isMobile ? '100%' : 240,
+            flexShrink: 0, borderRight: '1px solid #f1f3f5', background: '#fff',
             display: 'flex', flexDirection: 'column', height: panelHeight, overflowY: 'auto',
           }}>
+            {/* Mobile: back-to-editor button */}
+            {isMobile && (
+              <Box px={12} pt={10} pb={6} style={{ flexShrink: 0, borderBottom: '1px solid #f1f3f5' }}>
+                <Button size="xs" variant="subtle" leftSection={<LuArrowLeft size={13} />}
+                  onClick={() => setMobilePanel('editor')}>
+                  Back to Editor
+                </Button>
+              </Box>
+            )}
+            {/* Project title */}
+            {projectTitle && (
+              <Box px={12} pt={12} pb={4} style={{ flexShrink: 0 }}>
+                {/* <Text size="xs" fw={700} lineClamp={2} lh={1.35} c="dark">
+                  {projectTitle}
+                </Text> */}
+                {user?.name && (
+                  <Text size="10px" c="dimmed" mt={2}>{user.name}</Text>
+                )}
+              </Box>
+            )}
+
             {/* Project type selector */}
-            <Box px={12} pt={12} pb={8} style={{ flexShrink: 0 }}>
+            <Box px={12} pt={projectTitle ? 6 : 12} pb={8} style={{ flexShrink: 0 }}>
               <Text size="10px" fw={700} c="dimmed" mb={6} style={{ letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 Project Type
               </Text>
@@ -622,8 +782,10 @@ export default function StudentEditor() {
         )}
 
         {/* ── CENTER PANEL ──────────────────────────────────────────────── */}
+        {(!isMobile || mobilePanel === 'editor') && (
         <Box ref={centerRef} style={{
-          flex: 1, background: '#f0f0f0', overflowY: 'auto',
+          flex: 1, background: isMobile ? '#fff' : '#f0f0f0',
+          overflowY: 'auto', overflowX: isMobile ? 'hidden' : 'auto',
           height: panelHeight, display: 'flex', flexDirection: 'column',
         }}>
           {/* Sticky section breadcrumb */}
@@ -696,42 +858,77 @@ export default function StudentEditor() {
             </Box>
           )}
 
-          {/* A4 pages */}
-          <Box style={{ padding: '24px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-            {Array.from({ length: pageCount }, (_, i) => (
-              <Box key={i} style={{ marginBottom: i < pageCount - 1 ? 24 : 0, position: 'relative' }}>
-                <Box style={{
-                  width: 816, minHeight: 1056, background: '#fff',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
-                  paddingTop: 72, paddingBottom: 72, paddingLeft: 80, paddingRight: 80,
-                  boxSizing: 'border-box', position: 'relative',
-                }}>
-                  {i === 0 && (
-                    <textarea
-                      value={content}
-                      onChange={e => updateContent(e.target.value)}
-                      style={{ ...textareaStyle, height: Math.max(600, pageCount * 912) } as React.CSSProperties}
-                      spellCheck
-                      placeholder={activeSection?.placeholder ?? 'Start writing here…'}
-                    />
-                  )}
-                  <Box style={{ position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center' }}>
-                    <Text size="xs" c="dimmed">Page {i + 1}</Text>
+          {/* Mobile: plain full-screen textarea */}
+          {isMobile ? (
+            <textarea
+              value={content}
+              onChange={e => updateContent(e.target.value)}
+              spellCheck
+              placeholder={activeSection?.placeholder ?? 'Start writing here…'}
+              style={{
+                flex: 1,
+                width: '100%',
+                resize: 'none',
+                border: 'none',
+                outline: 'none',
+                padding: '16px',
+                fontSize: 16,
+                lineHeight: 1.7,
+                fontFamily,
+                background: '#fff',
+                color: '#212529',
+                boxSizing: 'border-box',
+              }}
+            />
+          ) : (
+            /* Desktop / tablet: A4 pages */
+            <Box style={{ padding: '24px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+              {Array.from({ length: pageCount }, (_, i) => (
+                <Box key={i} style={{ marginBottom: i < pageCount - 1 ? 24 : 0, position: 'relative' }}>
+                  <Box style={{
+                    width: 816, minHeight: 1056, background: '#fff',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
+                    paddingTop: 72, paddingBottom: 72, paddingLeft: 80, paddingRight: 80,
+                    boxSizing: 'border-box', position: 'relative',
+                  }}>
+                    {i === 0 && (
+                      <textarea
+                        value={content}
+                        onChange={e => updateContent(e.target.value)}
+                        style={{ ...textareaStyle, height: Math.max(600, pageCount * 912) } as React.CSSProperties}
+                        spellCheck
+                        placeholder={activeSection?.placeholder ?? 'Start writing here…'}
+                      />
+                    )}
+                    <Box style={{ position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center' }}>
+                      <Text size="xs" c="dimmed">Page {i + 1}</Text>
+                    </Box>
                   </Box>
                 </Box>
-              </Box>
-            ))}
-          </Box>
+              ))}
+            </Box>
+          )}
         </Box>
+        )}
 
         {/* ── RIGHT PANEL ───────────────────────────────────────────────── */}
-        {!focusMode && (
+        {!focusMode && (!isMobile || mobilePanel === 'review') && (isTablet ? showRight : true) && (
           <Box style={{
-            width: 300, flexShrink: 0, borderLeft: '1px solid #f1f3f5', background: '#fff',
+            width: isMobile ? '100%' : 300,
+            flexShrink: 0, borderLeft: '1px solid #f1f3f5', background: '#fff',
             display: 'flex', flexDirection: 'column', height: panelHeight, overflowY: 'auto',
           }}>
+            {/* Mobile: back-to-editor button */}
+            {isMobile && (
+              <Box px={12} pt={10} pb={6} style={{ flexShrink: 0, borderBottom: '1px solid #f1f3f5' }}>
+                <Button size="xs" variant="subtle" leftSection={<LuArrowLeft size={13} />}
+                  onClick={() => setMobilePanel('editor')}>
+                  Back to Editor
+                </Button>
+              </Box>
+            )}
             <Tabs value={rightTab} onChange={v => v && setRightTab(v)}
-              style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
               <Tabs.List style={{ flexShrink: 0 }}>
                 <Tabs.Tab value="chat"      leftSection={<LuBot      size={13} />} style={{ fontSize: 12 }}>AI Chat</Tabs.Tab>
                 <Tabs.Tab value="reviewer"  leftSection={<LuActivity size={13} />} style={{ fontSize: 12 }}>Reviewer</Tabs.Tab>
@@ -1037,7 +1234,10 @@ export default function StudentEditor() {
                                     <Tooltip label="Mark as resolved" withArrow>
                                       <ActionIcon
                                         size="xs" color="green" variant="subtle"
-                                        onClick={() => dispatch(resolveAnnotation({ subId: sub.id, annId: ann.id }))}
+                                        onClick={() => {
+                                          dispatch(resolveAnnotation({ subId: sub.id, annId: ann.id }));
+                                          resolveAnnotationDB(ann.id).catch(() => {});
+                                        }}
                                       >
                                         <LuCircleCheck size={13} />
                                       </ActionIcon>
@@ -1113,6 +1313,33 @@ export default function StudentEditor() {
         )}
       </Box>
 
+      {/* ════════════════ MOBILE BOTTOM TAB BAR ══════════════════════════════ */}
+      {isMobile && !focusMode && (
+        <Box style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+          borderTop: '1px solid #e9ecef', background: '#fff',
+          padding: '6px 8px', flexShrink: 0,
+        }}>
+          {([
+            { id: 'sections', icon: LuMenu,       label: 'Sections' },
+            { id: 'editor',   icon: LuPencil,     label: 'Editor'   },
+            { id: 'review',   icon: LuActivity,   label: 'Review'   },
+          ] as const).map(tab => (
+            <Button
+              key={tab.id}
+              variant={mobilePanel === tab.id ? 'light' : 'subtle'}
+              color={mobilePanel === tab.id ? 'brand' : 'gray'}
+              size="sm"
+              leftSection={<tab.icon size={16} />}
+              onClick={() => setMobilePanel(tab.id)}
+              style={{ flex: 1 }}
+            >
+              {tab.label}
+            </Button>
+          ))}
+        </Box>
+      )}
+
       {/* ════════════════ SWITCH PROJECT TYPE MODAL ══════════════════════════ */}
       <Modal
         opened={switchModal.open}
@@ -1124,7 +1351,7 @@ export default function StudentEditor() {
         }
         centered
         size="sm"
-        styles={{ body: { paddingTop: 8 } }}
+        styles={{ body: { padding: '8px 16px 16px' } }}
       >
         <Stack gap="lg">
           <Text size="sm" c="dimmed">

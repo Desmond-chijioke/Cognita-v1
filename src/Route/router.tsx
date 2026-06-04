@@ -24,6 +24,7 @@ import AdminSettings from '../Components/Admin/pages/AdminSettings';
 
 // HOD pages
 import HODOverview from '../Components/HOD/pages/HODOverview';
+import HODUsers from '../Components/HOD/pages/HODUsers';
 import HODSupervisors from '../Components/HOD/pages/HODSupervisors';
 import HODStudents from '../Components/HOD/pages/HODStudents';
 import HODMessages from '../Components/HOD/pages/HODMessages';
@@ -92,6 +93,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true,          element: <Navigate to="overview" replace /> },
           { path: 'overview',     element: <HODOverview /> },
+          { path: 'users',        element: <HODUsers /> },
           { path: 'supervisors',  element: <HODSupervisors /> },
           { path: 'students',     element: <HODStudents /> },
           { path: 'messages',     element: <HODMessages /> },
