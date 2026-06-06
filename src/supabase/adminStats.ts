@@ -181,20 +181,20 @@ async function load(institutionId: string): Promise<{
     .from('submissions').select(SUB_SELECT)
     .eq('institution_id', institutionId)
     .order('submitted_at', { ascending: false })
-    .then(r => (r.data ?? []) as SubRow[]);
+    .then(r => (r.data ?? []) as unknown  as SubRow[]);
 
   const pathB = studentIds.length
     ? supabase.from('submissions').select(SUB_SELECT)
         .in('student_id', studentIds)
         .order('submitted_at', { ascending: false })
-        .then(r => (r.data ?? []) as SubRow[])
+        .then(r => (r.data ?? []) as unknown  as SubRow[])
     : Promise.resolve<SubRow[]>([]);
 
   const pathC = supervisorIds.length
     ? supabase.from('submissions').select(SUB_SELECT)
         .in('supervisor_id', supervisorIds)
         .order('submitted_at', { ascending: false })
-        .then(r => (r.data ?? []) as SubRow[])
+        .then(r => (r.data ?? []) as unknown  as SubRow[])
     : Promise.resolve<SubRow[]>([]);
 
   const [subsA, subsB, subsC] = await Promise.all([pathA, pathB, pathC]);

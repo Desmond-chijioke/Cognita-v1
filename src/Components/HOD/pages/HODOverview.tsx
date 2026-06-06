@@ -148,7 +148,9 @@ export default function HODOverview() {
         .eq('institution_id', institutionId)
         .in('role', roles)
         .order('created_at');
-      return (data ?? []) as Row[];
+      // supabase may type errors as GenericStringError[] which doesn't overlap with Row[];
+      // cast via unknown to satisfy TypeScript when data shape is known at runtime
+      return (data ?? []) as unknown as Row[];
     };
 
     Promise.all([
