@@ -3,7 +3,7 @@ import { useMediaQuery } from '@mantine/hooks';
 import {
   Box, Text, Group, Stack, Select, ActionIcon, Divider,
   Tabs, Textarea, Button, Badge, Progress, Modal,
-  TextInput, Tooltip, Paper,
+  TextInput, Tooltip, Paper, Drawer,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -14,7 +14,7 @@ import {
   LuMessageSquare, LuPlus, LuSearch, LuSend, LuBot, LuUser,
   LuActivity, LuPencil, LuTrash2, LuCheck, LuX, LuLock,
   LuUpload, LuMessageSquareDot, LuEye,
-  LuMenu, LuArrowLeft, LuLayoutList,
+  LuMenu, LuArrowLeft,
 } from 'react-icons/lu';
 import { STUDENT_REFERENCES, REVIEW_SCORES, REVIEW_ISSUES } from '../studentData';
 import { STUDENT_SECTIONS } from '../studentData';
@@ -27,12 +27,13 @@ import { useAppSelector, useAppDispatch } from '../../../Redux/hooks';
 import { submitSection, resolveAnnotation, approveSubmission, requestRevision, addAnnotation, updateAnnotation, deleteAnnotation } from '../../../Redux/slices/submissionsSlice';
 import type { SubmissionStatus, SubmissionAnnotation } from '../../../Redux/slices/submissionsSlice';
 import { submitChapter, fetchStudentSubmissions, resolveAnnotationDB } from '../../../supabase/submissions';
+import { fetchSectionDrafts, saveSectionDrafts } from '../../../supabase/drafts';
 import { supabase } from '../../../supabase/client';
 import type { DBSubmission } from '../../../supabase/submissions';
 import { useCollaborativeDoc } from '../../../hooks/useCollaborativeDoc';
 
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+// â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const FONT_FAMILIES = ['Times New Roman', 'Arial', 'Calibri', 'Georgia', 'Garamond', 'Helvetica'];
 const FONT_SIZES    = ['8','9','10','11','12','14','16','18','20','24','28','36','48','72'];
 const LINE_SPACINGS = ['1.0','1.15','1.5','2.0','2.5','3.0'];
@@ -46,7 +47,7 @@ interface ChatMessage {
   text: string;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function sectionStatusIcon(status: SectionStatus) {
   switch (status) {
@@ -129,47 +130,40 @@ function RingProgress({ value, size = 80 }: { value: number; size?: number }) {
   );
 }
 
-// ── Initial sections from existing STUDENT_SECTIONS data ──────────────────────
+// â”€â”€ Initial sections â€” empty; Supabase drafts + submissions populate content â”€â”€â”€
 function buildInitialSections(): EditorSection[] {
-  const keyMap: Record<string, string> = {
-    'Title': 'title', 'Abstract': 'abstract', 'Acknowledgements': 'acknowledge',
-    'Introduction': 'introduction', 'Literature Review': 'lit_review',
-    'Methodology': 'methodology', 'Results': 'results', 'Discussion': 'discussion',
-    'Conclusion': 'conclusion', 'References': 'references', 'Appendices': 'appendices',
-  };
   return STUDENT_SECTIONS.map(s => ({
-    id:      s.id,
-    key:     keyMap[s.title] ?? s.title.toLowerCase().replace(/\s+/g, '_'),
-    title:   s.title,
-    mandatory: s.mandatory,
-    placeholder: `Start writing your ${s.title.toLowerCase()} here…`,
-    content:   s.content,
-    status:    s.status as SectionStatus,
-    wordCount: s.wordCount,
-    supervisorComment: s.supervisorComment,
+    id:          s.id,
+    key:         s.key,
+    title:       s.title,
+    mandatory:   s.mandatory,
+    placeholder: `Start writing your ${s.title.toLowerCase()} hereâ€¦`,
+    content:     '',
+    status:      'not-started' as SectionStatus,
+    wordCount:   0,
   }));
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────────
+// â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function StudentEditor() {
 
-  // ── Core state ──────────────────────────────────────────────────────────────
+  // â”€â”€ Core state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [projectType, setProjectType]     = useState<ProjectType>('Thesis');
   const [sections,    setSections]        = useState<EditorSection[]>(buildInitialSections);
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? '');
 
-  // ── Switch-type modal ────────────────────────────────────────────────────────
+  // â”€â”€ Switch-type modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [switchModal, setSwitchModal]     = useState<{ open: boolean; pending: ProjectType | null }>({ open: false, pending: null });
 
-  // ── Section rename state ─────────────────────────────────────────────────────
+  // â”€â”€ Section rename state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [editingId,    setEditingId]      = useState<string | null>(null);
   const [editingTitle, setEditingTitle]   = useState('');
 
-  // ── Add-section modal ────────────────────────────────────────────────────────
+  // â”€â”€ Add-section modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [addModal,      setAddModal]      = useState(false);
   const [newSecTitle,   setNewSecTitle]   = useState('');
 
-  // ── Formatting ───────────────────────────────────────────────────────────────
+  // â”€â”€ Formatting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [fontFamily,  setFontFamily]  = useState('Georgia');
   const [fontSize,    setFontSize]    = useState('12');
   const [lineSpacing, setLineSpacing] = useState('1.5');
@@ -179,7 +173,7 @@ export default function StudentEditor() {
   const [strikethrough, setStrike]    = useState(false);
   const [alignment,   setAlignment]   = useState<Alignment>('left');
 
-  // ── UI state ─────────────────────────────────────────────────────────────────
+  // â”€â”€ UI state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [focusMode,     setFocusMode]     = useState(false);
   const [citeModalOpen, setCiteModalOpen] = useState(false);
   const [citeSearch,    setCiteSearch]    = useState('');
@@ -190,18 +184,18 @@ export default function StudentEditor() {
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: 'ai-1', role: 'ai', text: 'Hello! I am your AI writing assistant. I can help you refine arguments, suggest citations, improve clarity, or expand sections. What would you like to work on?' },
-    { id: 'ai-2', role: 'ai', text: 'Tip: You are currently in Chapter 1. Consider adding a thesis roadmap paragraph at the end of your introduction — it helps examiners navigate your structure.' },
+    { id: 'ai-2', role: 'ai', text: 'Tip: You are currently in Chapter 1. Consider adding a thesis roadmap paragraph at the end of your introduction â€” it helps examiners navigate your structure.' },
   ]);
   const [chatInput, setChatInput] = useState('');
 
   const centerRef = useRef<HTMLDivElement>(null);
 
-  // ── Redux + Supabase submissions ─────────────────────────────────────────────
+  // â”€â”€ Redux + Supabase submissions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const dispatch    = useAppDispatch();
   const user        = useAppSelector(s => s.auth.user);
   const [projectTitle, setProjectTitle] = useState('');
 
-  // ── Fetch project title ──────────────────────────────────────────────────────
+  // â”€â”€ Fetch project title â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (!user?.id) return;
     supabase
@@ -216,38 +210,76 @@ export default function StudentEditor() {
     s.submissions.list.filter(sub => sub.studentId === user?.id),
   );
 
-  // ── Load submissions from Supabase on mount and sync to Redux ────────────────
+  // â”€â”€ Load drafts + submissions from Supabase on mount â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Drafts  â†’ populate editor content (what the student is currently writing)
+  // Submissions â†’ populate Redux for status badges; also seed editor if no draft
   useEffect(() => {
     if (!user?.id) return;
-    fetchStudentSubmissions(user.id).then(dbSubs => {
+
+    Promise.all([
+      fetchSectionDrafts(user.id),
+      fetchStudentSubmissions(user.id),
+    ]).then(([drafts, dbSubs]) => {
+
+      setSections(prev => {
+        // Update standard sections with saved draft or submission content
+        const updated = prev.map(sec => {
+          const draft = drafts.find(d => d.section_id === sec.id);
+          if (draft && draft.content.trim()) {
+            return { ...sec, content: draft.content, wordCount: countWords(draft.content), status: 'in-progress' as SectionStatus };
+          }
+          // No draft yet â€” seed from submitted content so student sees their work
+          const sub = dbSubs.find(s => s.section_id === sec.id);
+          if (sub && sub.content.trim()) {
+            return { ...sec, content: sub.content, wordCount: countWords(sub.content), status: 'in-progress' as SectionStatus };
+          }
+          return sec;
+        });
+
+        // Re-attach any custom sections saved as drafts
+        const existingIds = new Set(prev.map(s => s.id));
+        const customSections: EditorSection[] = drafts
+          .filter(d => !existingIds.has(d.section_id))
+          .map(d => ({
+            id:          d.section_id,
+            key:         d.section_id,
+            title:       d.section_title,
+            mandatory:   false,
+            placeholder: 'Start writing hereâ€¦',
+            content:     d.content,
+            status:      d.content.trim() ? 'in-progress' as SectionStatus : 'not-started' as SectionStatus,
+            wordCount:   countWords(d.content),
+          }));
+
+        return [...updated, ...customSections];
+      });
+
+      // Sync submissions to Redux for status + annotation tracking
       dbSubs.forEach(dbSub => {
-        // Pass the Supabase UUID as the Redux id — this is the KEY fix:
-        // Redux and Supabase now share the same ID, so annotations link correctly
         dispatch(submitSection({
-          id:           dbSub.id,           // ← Supabase UUID becomes Redux id
+          id:           dbSub.id,
           studentId:    user.id,
           studentName:  user.name ?? '',
           sectionId:    dbSub.section_id,
           sectionTitle: dbSub.section_title,
           content:      dbSub.content,
         }));
-        // Sync status using the Supabase UUID (now = Redux id)
         if (dbSub.status === 'approved') {
           dispatch(approveSubmission({ id: dbSub.id }));
         } else if (dbSub.status === 'needs-revision' && dbSub.supervisor_comment) {
           dispatch(requestRevision({ id: dbSub.id, comment: dbSub.supervisor_comment }));
         }
-        // Sync annotations — subId is now the Supabase UUID which matches Redux id
         (dbSub.annotations ?? []).forEach(ann => {
           dispatch(addAnnotation({
-            id:           ann.id,             // ← Supabase annotation UUID
-            subId:        dbSub.id,           // ← Supabase submission UUID
+            id:           ann.id,
+            subId:        dbSub.id,
             selectedText: ann.selected_text,
             comment:      ann.comment,
             color:        ann.color,
           }));
         });
       });
+
     }).catch(() => {});
   }, [user?.id]);
 
@@ -264,6 +296,14 @@ export default function StudentEditor() {
       notifications.show({ title: 'Nothing to submit', message: 'Write some content first.', color: 'orange' });
       return;
     }
+
+    // Save draft first so the submitted content matches what's in the database
+    saveSectionDrafts(user.id, [{
+      sectionId:    activeSection.id,
+      sectionTitle: activeSection.title,
+      content:      activeSection.content,
+    }]).catch(() => {});
+
     // Save to Redux for immediate UI update
     dispatch(submitSection({
       studentId:    user.id,
@@ -272,7 +312,7 @@ export default function StudentEditor() {
       sectionTitle: activeSection.title,
       content:      activeSection.content,
     }));
-    // Persist to Supabase
+    // Persist submission to Supabase
     submitChapter({
       studentId:     user.id,
       supervisorId:  user.supervisorId ?? null,
@@ -285,49 +325,53 @@ export default function StudentEditor() {
     notifications.show({ title: 'Chapter submitted', message: `"${activeSection.title}" sent to your supervisor for review.`, color: 'blue' });
   };
 
-  // ── Responsive breakpoints ───────────────────────────────────────────────────
+  // â”€â”€ Responsive breakpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const isMobile = useMediaQuery('(max-width: 768px)');
   const isTablet = useMediaQuery('(max-width: 1100px)');
   const [mobilePanel,  setMobilePanel]  = useState<'sections' | 'editor' | 'review'>('editor');
-  const [showRight,    setShowRight]    = useState(true);
+  const [drawerTab,    setDrawerTab]    = useState<string | null>(null);
 
-  // ── Draft save / load via localStorage ───────────────────────────────────────
+  // â”€â”€ Draft save / load via localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const draftKey = useCallback(
     (sectionKey: string) => `cognita_draft_${user?.id ?? 'anon'}_${sectionKey}`,
     [user?.id],
   );
 
-  // Load saved drafts into empty sections on mount (Supabase will override submitted ones)
-  useEffect(() => {
+  const handleSave = useCallback(async () => {
     if (!user?.id) return;
-    setSections(prev =>
-      prev.map(sec => {
-        const saved = localStorage.getItem(draftKey(sec.key));
-        if (saved && !sec.content.trim()) {
-          return { ...sec, content: saved, wordCount: countWords(saved), status: 'in-progress' as SectionStatus };
-        }
-        return sec;
-      })
-    );
-  }, [user?.id, draftKey]);
 
-  const handleSave = useCallback(() => {
-    if (!user?.id) return;
-    let count = 0;
+    // All sections get saved: custom ones always (to preserve their existence),
+    // standard ones only when they have content.
+    const toSave = sections
+      .filter(s => s.content.trim() || s.id.startsWith('custom_'))
+      .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
+
+    // localStorage as instant offline backup
     sections.forEach(sec => {
-      if (sec.content.trim()) {
-        localStorage.setItem(draftKey(sec.key), sec.content);
-        count++;
-      }
+      if (sec.content.trim()) localStorage.setItem(draftKey(sec.key), sec.content);
     });
+
+    if (toSave.length > 0) {
+      try {
+        await saveSectionDrafts(user.id, toSave);
+      } catch {
+        notifications.show({
+          title: 'Saved locally only',
+          message: 'Could not reach the database. Your work is saved locally â€” try again when online.',
+          color: 'orange',
+        });
+        return;
+      }
+    }
+
     notifications.show({
       title: 'Draft saved',
-      message: `${count} section${count !== 1 ? 's' : ''} saved locally. Submit a chapter to send it to your supervisor.`,
+      message: `${toSave.length} section${toSave.length !== 1 ? 's' : ''} saved to database.`,
       color: 'green',
     });
   }, [sections, user?.id, draftKey]);
 
-  // ── Collaborative editing ─────────────────────────────────────────────────────
+  // â”€â”€ Collaborative editing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const roomId  = `project-${user?.id ?? 'demo'}`;
   const collab  = useCollaborativeDoc(
     roomId,
@@ -355,7 +399,7 @@ export default function StudentEditor() {
     });
   }, [activeSectionId, collab.observeSection, collab.setActiveSection]);
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Derived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const activeSection = sections.find(s => s.id === activeSectionId) ?? sections[0];
   const content       = activeSection?.content ?? '';
   const wordCount     = countWords(content);
@@ -381,7 +425,7 @@ export default function StudentEditor() {
     r.authors[0]?.toLowerCase().includes(citeSearch.toLowerCase())
   );
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const updateContent = (val: string) => {
     const old = activeSection?.content ?? '';
@@ -434,16 +478,21 @@ export default function StudentEditor() {
   // Add custom section
   const handleAddSection = () => {
     if (!newSecTitle.trim()) return;
+    const id = `custom_${Date.now()}`;
     const newSec: EditorSection = {
-      id: `custom_${Date.now()}`, key: `custom_${Date.now()}`,
+      id, key: id,
       title: newSecTitle.trim(), mandatory: false,
-      placeholder: 'Start writing here…',
+      placeholder: 'Start writing hereâ€¦',
       content: '', status: 'not-started', wordCount: 0,
     };
     setSections(prev => [...prev, newSec]);
-    setActiveSectionId(newSec.id);
+    setActiveSectionId(id);
     setAddModal(false);
     setNewSecTitle('');
+    // Persist immediately so the section survives a page refresh
+    if (user?.id) {
+      saveSectionDrafts(user.id, [{ sectionId: id, sectionTitle: newSec.title, content: '' }]).catch(() => {});
+    }
   };
 
   // Delete section (non-mandatory only)
@@ -465,12 +514,12 @@ export default function StudentEditor() {
       setChatMessages(prev => [...prev, {
         id: `ai-${Date.now()}`,
         role: 'ai',
-        text: `Regarding "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}" — I recommend clarifying your methodology claims with explicit references to your experimental setup. Would you like me to draft a revised paragraph?`,
+        text: `Regarding "${text.slice(0, 60)}${text.length > 60 ? 'â€¦' : ''}" â€” I recommend clarifying your methodology claims with explicit references to your experimental setup. Would you like me to draft a revised paragraph?`,
       }]);
     }, 500);
   };
 
-  // ── Textarea style ────────────────────────────────────────────────────────────
+  // â”€â”€ Textarea style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const textareaStyle: React.CSSProperties = {
     fontFamily, fontSize: parseInt(fontSize), lineHeight: lineSpacing,
     fontWeight:  bold      ? 'bold'   : 'normal',
@@ -492,14 +541,387 @@ export default function StudentEditor() {
     </Tooltip>
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────────
+  // â”€â”€ Right panel tabs (shared by mobile panel and desktop drawer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const renderRightTabs = () => (
+    <Tabs value={rightTab} onChange={v => v && setRightTab(v)}
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      <Tabs.List style={{ flexShrink: 0 }}>
+        <Tabs.Tab value="chat"      leftSection={<LuBot      size={13} />} style={{ fontSize: 12 }}>AI Chat</Tabs.Tab>
+        <Tabs.Tab value="reviewer"  leftSection={<LuActivity size={13} />} style={{ fontSize: 12 }}>Reviewer</Tabs.Tab>
+        <Tabs.Tab value="citations" leftSection={<LuQuote    size={13} />} style={{ fontSize: 12 }}>Citations</Tabs.Tab>
+        <Tabs.Tab value="comments"  leftSection={<LuMessageSquare size={13} />} style={{ fontSize: 12 }}>
+          Comments
+          {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length > 0 && (
+            <Badge size="xs" color="brand" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
+              {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length}
+            </Badge>
+          )}
+        </Tabs.Tab>
+        <Tabs.Tab value="review" leftSection={<LuEye size={13} />} style={{ fontSize: 12 }}>
+          Review
+          {(() => {
+            const sub = getActiveSub();
+            if (!sub) return null;
+            const open = sub.annotations.filter(a => !a.resolved).length;
+            if (open > 0) {
+              return (
+                <Badge size="xs" color="orange" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
+                  {open}
+                </Badge>
+              );
+            }
+            if (sub.supervisorComment || sub.annotations.length > 0) {
+              return (
+                <Badge size="xs" color="green" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
+                  âœ“
+                </Badge>
+              );
+            }
+            return null;
+          })()}
+        </Tabs.Tab>
+      </Tabs.List>
+
+      {/* AI Chat */}
+      <Tabs.Panel value="chat" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+        <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 10px' }}>
+          <Stack gap={10}>
+            {chatMessages.map(msg => (
+              <Box key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: 6, alignItems: 'flex-end' }}>
+                {msg.role === 'ai' && (
+                  <Box style={{ width: 26, height: 26, borderRadius: '50%', background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <LuBot size={14} color={BRAND} />
+                  </Box>
+                )}
+                <Box style={{ maxWidth: '78%', padding: '8px 10px', borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: msg.role === 'user' ? BRAND : '#f8f9fa', color: msg.role === 'user' ? '#fff' : '#212529' }}>
+                  <Text size="xs" style={{ lineHeight: 1.5 }}>{msg.text}</Text>
+                </Box>
+                {msg.role === 'user' && (
+                  <Box style={{ width: 26, height: 26, borderRadius: '50%', background: '#f1f3f5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <LuUser size={14} color="#495057" />
+                  </Box>
+                )}
+              </Box>
+            ))}
+          </Stack>
+        </Box>
+        <Box style={{ borderTop: '1px solid #f1f3f5', padding: '8px 10px', flexShrink: 0 }}>
+          <Group gap={6} align="flex-end">
+            <Textarea value={chatInput} onChange={e => setChatInput(e.currentTarget.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              placeholder="Ask the AI assistantâ€¦" rows={2} style={{ flex: 1 }}
+              styles={{ input: { fontSize: 12 } }} size="xs" />
+            <ActionIcon color="brand" variant="filled" onClick={handleSend} size="md" style={{ marginBottom: 1 }}>
+              <LuSend size={14} />
+            </ActionIcon>
+          </Group>
+        </Box>
+      </Tabs.Panel>
+
+      {/* Reviewer */}
+      <Tabs.Panel value="reviewer" style={{ overflowY: 'auto', padding: '14px 12px' }}>
+        <Box style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+          <Box style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <RingProgress value={reviewPct} size={80} />
+            <Box style={{ position: 'absolute', textAlign: 'center' }}>
+              <Text size="sm" fw={700} c="brand">{reviewPct}%</Text>
+            </Box>
+          </Box>
+          <Box>
+            <Text size="xs" fw={600} mb={2}>Overall Score</Text>
+            <Text size="xs" c="dimmed">{totalScore} / {maxTotalScore} points</Text>
+            <Text size="10px" c="dimmed" mt={2}>Based on {REVIEW_SCORES.length} categories</Text>
+          </Box>
+        </Box>
+        <Stack gap={8} mb={16}>
+          {REVIEW_SCORES.map((rs: ReviewScore) => (
+            <Box key={rs.category}>
+              <Group justify="space-between" mb={3}>
+                <Text size="xs">{rs.category}</Text>
+                <Text size="xs" c="dimmed">{rs.score}/{rs.maxScore}</Text>
+              </Group>
+              <Progress value={(rs.score / rs.maxScore) * 100}
+                color={rs.score / rs.maxScore >= 0.7 ? 'green' : rs.score / rs.maxScore >= 0.4 ? 'yellow' : 'red'}
+                size="sm" radius="xl" />
+            </Box>
+          ))}
+        </Stack>
+        <Text size="xs" fw={600} mb={8}>Issues</Text>
+        <Stack gap={6}>
+          {REVIEW_ISSUES.map((issue: ReviewIssue) => (
+            <Box key={issue.id}
+              style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', background: expandedIssueId === issue.id ? '#f8f9fa' : '#fff' }}
+              onClick={() => setExpandedIssueId(id => id === issue.id ? null : issue.id)}>
+              <Group gap={6} mb={4}>
+                <Badge size="xs" color={severityColor(issue.severity)} variant="light" tt="capitalize">{issue.severity}</Badge>
+                <Text size="10px" c="dimmed">{issue.sectionTitle}</Text>
+              </Group>
+              <Text size="xs">{issue.message}</Text>
+              {expandedIssueId === issue.id && issue.suggestion && (
+                <Box mt={8} style={{ background: '#f0f4ff', borderRadius: 6, padding: '6px 8px', borderLeft: `3px solid ${BRAND}` }}>
+                  <Text size="xs" c="brand">{issue.suggestion}</Text>
+                </Box>
+              )}
+            </Box>
+          ))}
+        </Stack>
+      </Tabs.Panel>
+
+      {/* Comments */}
+      <Tabs.Panel value="comments" style={{ overflowY: 'auto', padding: '12px 10px' }}>
+        <Stack gap="sm">
+          <Paper withBorder p="sm" radius="md">
+            <Textarea
+              placeholder="Add a comment for this sectionâ€¦"
+              value={commentText}
+              onChange={e => setCommentText(e.currentTarget.value)}
+              rows={2} size="xs" mb="xs"
+              styles={{ input: { fontSize: 12 } }}
+            />
+            <Button
+              size="xs" color="brand" leftSection={<LuSend size={12} />}
+              disabled={!commentText.trim()} fullWidth
+              onClick={() => {
+                collab.addComment({
+                  author:    user?.name ?? 'Student',
+                  role:      user?.role ?? 'Student',
+                  text:      commentText.trim(),
+                  sectionId: activeSectionId,
+                  resolved:  false,
+                  color:     collab.userColor,
+                });
+                setCommentText('');
+              }}
+            >
+              Post Comment
+            </Button>
+          </Paper>
+
+          {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length === 0 ? (
+            <Text size="xs" c="dimmed" ta="center" py={20}>No comments yet for this section.</Text>
+          ) : (
+            [...collab.comments]
+              .filter(c => c.sectionId === activeSectionId && !c.resolved)
+              .sort((a, b) => b.timestamp - a.timestamp)
+              .map(c => (
+                <Paper key={c.id} withBorder p="sm" radius="md" style={{ borderLeft: `3px solid ${c.color}` }}>
+                  <Group justify="space-between" mb={4} wrap="nowrap">
+                    <Group gap={6} wrap="nowrap">
+                      <Box style={{ width: 16, height: 16, borderRadius: '50%', background: c.color, flexShrink: 0 }} />
+                      <Text size="xs" fw={600} lineClamp={1}>{c.author}</Text>
+                      <Badge size="xs" variant="light" radius="sm" style={{ flexShrink: 0 }}>{c.role}</Badge>
+                    </Group>
+                    <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                      <Tooltip label="Mark resolved" withArrow>
+                        <ActionIcon size="xs" variant="subtle" color="green" onClick={() => collab.resolveComment(c.id)}>
+                          <LuCheck size={10} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <ActionIcon size="xs" variant="subtle" color="red" onClick={() => collab.deleteComment(c.id)}>
+                        <LuTrash2 size={10} />
+                      </ActionIcon>
+                    </Group>
+                  </Group>
+                  {c.selectedText && (
+                    <Text size="xs" fs="italic" c="dimmed" mb={4} lineClamp={2}>"{c.selectedText}"</Text>
+                  )}
+                  <Text size="xs" lh={1.5}>{c.text}</Text>
+                  <Text size="10px" c="dimmed" mt={4}>
+                    {new Date(c.timestamp).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </Paper>
+              ))
+          )}
+
+          {collab.comments.filter(c => c.sectionId === activeSectionId && c.resolved).length > 0 && (
+            <>
+              <Divider label="Resolved" labelPosition="center" />
+              {[...collab.comments]
+                .filter(c => c.sectionId === activeSectionId && c.resolved)
+                .map(c => (
+                  <Paper key={c.id} withBorder p="sm" radius="md" style={{ opacity: 0.55 }}>
+                    <Group justify="space-between" mb={2}>
+                      <Text size="xs" fw={600} c="dimmed">{c.author} Â· <span style={{ fontWeight: 400 }}>{c.role}</span></Text>
+                      <ActionIcon size="xs" color="red" variant="subtle" onClick={() => collab.deleteComment(c.id)}>
+                        <LuTrash2 size={10} />
+                      </ActionIcon>
+                    </Group>
+                    <Text size="xs" c="dimmed">{c.text}</Text>
+                  </Paper>
+                ))}
+            </>
+          )}
+        </Stack>
+      </Tabs.Panel>
+
+      {/* Citations */}
+      <Tabs.Panel value="citations" style={{ overflowY: 'auto', padding: '12px 10px' }}>
+        <TextInput placeholder="Search referencesâ€¦" leftSection={<LuSearch size={14} />}
+          size="xs" mb={10} value={refSearch} onChange={e => setRefSearch(e.currentTarget.value)} />
+        <Stack gap={6}>
+          {filteredRefs.map(ref => (
+            <Box key={ref.id} style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px' }}>
+              <Text size="xs" fw={500} mb={2} lineClamp={2}>{ref.title}</Text>
+              <Text size="xs" c="dimmed" mb={6}>{ref.authors[0]} Â· {ref.year}</Text>
+              <Button size="xs" variant="light" color="brand" onClick={() => insertCitation(ref.id)}>Insert</Button>
+            </Box>
+          ))}
+          {filteredRefs.length === 0 && <Text size="xs" c="dimmed" ta="center" py={20}>No references found.</Text>}
+        </Stack>
+      </Tabs.Panel>
+
+      {/* Supervisor Review */}
+      <Tabs.Panel value="review" style={{ overflowY: 'auto', padding: '12px 10px' }}>
+        {(() => {
+          const sub = getActiveSub();
+          if (!sub) {
+            return (
+              <Stack align="center" py={32} gap={8}>
+                <LuEye size={28} color="#ced4da" />
+                <Text size="xs" c="dimmed" ta="center">
+                  This section hasn't been submitted yet.<br />Submit it so your supervisor can review it.
+                </Text>
+              </Stack>
+            );
+          }
+
+          const statusColor = sub.status === 'approved' ? 'green' : sub.status === 'needs-revision' ? 'orange' : 'blue';
+          const statusLabel = sub.status === 'approved' ? 'Approved' : sub.status === 'needs-revision' ? 'Needs Revision' : 'Pending Review';
+          const activeAnns   = sub.annotations.filter(a => !a.resolved);
+          const resolvedAnns = sub.annotations.filter(a =>  a.resolved);
+
+          return (
+            <Stack gap={12}>
+              <Paper withBorder p="sm" radius="md" style={{ borderLeft: `3px solid var(--mantine-color-${statusColor}-6)` }}>
+                <Group justify="space-between" mb={4}>
+                  <Text size="xs" fw={600}>Supervisor Feedback</Text>
+                  <Badge size="xs" color={statusColor} variant="light">{statusLabel}</Badge>
+                </Group>
+                <Text size="10px" c="dimmed">
+                  Submitted {new Date(sub.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {sub.reviewedAt && ` Â· Reviewed ${new Date(sub.reviewedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}
+                </Text>
+                {sub.supervisorComment && (
+                  <Box mt={8} style={{ background: '#fff8e1', borderRadius: 6, padding: '6px 8px', borderLeft: '3px solid #f08c00' }}>
+                    <Text size="xs" style={{ fontStyle: 'italic', color: '#e67700' }}>"{sub.supervisorComment}"</Text>
+                  </Box>
+                )}
+                {sub.status === 'pending' && !sub.supervisorComment && (
+                  <Text size="xs" c="dimmed" mt={6} style={{ fontStyle: 'italic' }}>Awaiting supervisor reviewâ€¦</Text>
+                )}
+              </Paper>
+
+              {activeAnns.length > 0 && (
+                <>
+                  <Text size="10px" fw={700} c="dimmed" style={{ letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    Open Annotations ({activeAnns.length})
+                  </Text>
+                  <Box style={{
+                    border: '1px solid #e9ecef', borderRadius: 8, padding: '10px 12px',
+                    background: '#fafbff', fontSize: 11, lineHeight: 1.7, color: '#212529',
+                    maxHeight: 160, overflowY: 'auto', userSelect: 'none',
+                  }}>
+                    {applyReviewHighlights(sub.content, activeAnns)}
+                  </Box>
+                  <Stack gap={8}>
+                    {activeAnns.map((ann, idx) => (
+                      <Paper key={ann.id} withBorder p="sm" radius="md"
+                        style={{ borderLeft: `3px solid ${ann.color}`, background: ann.color + '22' }}
+                      >
+                        <Group justify="space-between" mb={4} wrap="nowrap">
+                          <Group gap={6} wrap="nowrap">
+                            <Box style={{ width: 14, height: 14, borderRadius: 3, background: ann.color, border: '1px solid #ddd', flexShrink: 0 }} />
+                            <Text size="10px" fw={700} c="dimmed">Note {idx + 1}</Text>
+                          </Group>
+                          <Group gap={4} wrap="nowrap">
+                            <Text size="9px" c="dimmed">
+                              {new Date(ann.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                            </Text>
+                            <Tooltip label="Mark as resolved" withArrow>
+                              <ActionIcon
+                                size="xs" color="green" variant="subtle"
+                                onClick={() => {
+                                  dispatch(resolveAnnotation({ subId: sub.id, annId: ann.id }));
+                                  resolveAnnotationDB(ann.id).catch(() => {});
+                                  setShowResolvedAnnos(true);
+                                }}
+                              >
+                                <LuCircleCheck size={13} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        </Group>
+                        <Text size="xs" fs="italic" c="dimmed" mb={4} lineClamp={2}>"{ann.selectedText}"</Text>
+                        <Text size="xs" lh={1.5}>{ann.comment}</Text>
+                      </Paper>
+                    ))}
+                  </Stack>
+                </>
+              )}
+
+              {resolvedAnns.length > 0 && (
+                <>
+                  <Box
+                    onClick={() => setShowResolvedAnnos(v => !v)}
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}
+                  >
+                    <LuCircleCheck size={12} color="#2f9e44" />
+                    <Text size="xs" c="green" fw={600} style={{ textDecoration: 'underline' }}>
+                      {showResolvedAnnos ? 'Hide' : 'Show'} resolved ({resolvedAnns.length})
+                    </Text>
+                  </Box>
+                  {showResolvedAnnos && (
+                    <Stack gap={6}>
+                      {resolvedAnns.map((ann, idx) => (
+                        <Paper key={ann.id} withBorder p="sm" radius="md"
+                          style={{ borderLeft: '3px solid #ced4da', background: '#f8f9fa', opacity: 0.6 }}
+                        >
+                          <Group justify="space-between" mb={4} wrap="nowrap">
+                            <Group gap={6} wrap="nowrap">
+                              <Box style={{ width: 14, height: 14, borderRadius: 3, background: '#ced4da', border: '1px solid #ddd', flexShrink: 0 }} />
+                              <Text size="10px" fw={700} c="dimmed">Note {idx + 1}</Text>
+                              <Badge size="xs" color="green" variant="light" radius="xl">Resolved</Badge>
+                            </Group>
+                            <LuCircleCheck size={12} color="#2f9e44" />
+                          </Group>
+                          <Text size="xs" fs="italic" c="dimmed" mb={4} lineClamp={2}
+                            style={{ textDecoration: 'line-through' }}>
+                            "{ann.selectedText}"
+                          </Text>
+                          <Text size="xs" c="dimmed" lh={1.5}>{ann.comment}</Text>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  )}
+                </>
+              )}
+
+              {activeAnns.length === 0 && resolvedAnns.length === 0 && sub.status !== 'pending' && !sub.supervisorComment && (
+                <Text size="xs" c="dimmed" ta="center" py={12}>No annotations left by your supervisor.</Text>
+              )}
+              {activeAnns.length === 0 && resolvedAnns.length > 0 && (
+                <Paper withBorder p="sm" radius="md" style={{ background: '#ebfbee', borderColor: '#b2f2bb' }}>
+                  <Group gap={6}>
+                    <LuCircleCheck size={14} color="#2f9e44" />
+                    <Text size="xs" fw={600} c="green">All annotations resolved â€” great work!</Text>
+                  </Group>
+                </Paper>
+              )}
+            </Stack>
+          );
+        })()}
+      </Tabs.Panel>
+    </Tabs>
+  );
+
+  
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
 
-      {/* ════════════════ TOOLBAR ════════════════════════════════════════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• TOOLBAR â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       <Box style={{ background: '#fff', borderBottom: '1px solid #e9ecef', flexShrink: 0, zIndex: 10 }}>
 
-        {/* Row 1 — Formatting */}
+        {/* Row 1 â€” Formatting */}
         {!focusMode && (
           <Group gap={4} px={12} py={6} style={{ borderBottom: '1px solid #f1f3f5', flexWrap: 'wrap', minHeight: 44 }}>
             <Select data={FONT_FAMILIES} value={fontFamily} onChange={v => v && setFontFamily(v)}
@@ -523,11 +945,11 @@ export default function StudentEditor() {
             <Divider orientation="vertical" mx={4} />
             <Select data={LINE_SPACINGS} value={lineSpacing} onChange={v => v && setLineSpacing(v)}
               size="xs" w={72} comboboxProps={{ withinPortal: true }}
-              leftSection={<Text size="9px" c="dimmed" style={{ lineHeight: 1 }}>≡≡</Text>} />
+              leftSection={<Text size="9px" c="dimmed" style={{ lineHeight: 1 }}>â‰¡â‰¡</Text>} />
           </Group>
         )}
 
-        {/* Row 2 — Doc actions */}
+        {/* Row 2 â€” Doc actions */}
         <Group justify="space-between" px={12} py={6} style={{ minHeight: 44 }}>
           <Group gap={8} style={{ minWidth: 0, flex: 1 }}>
             <Text
@@ -576,33 +998,19 @@ export default function StudentEditor() {
               );
             })()}
             {!isMobile && (
-              <>
-                {isTablet && !focusMode && (
-                  <Tooltip label={showRight ? 'Hide review panel' : 'Show review panel'} withArrow>
-                    <ActionIcon
-                      size="sm"
-                      variant={showRight ? 'light' : 'subtle'}
-                      color="brand"
-                      onClick={() => setShowRight(r => !r)}
-                    >
-                      <LuLayoutList size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-                <Button size="xs" variant="subtle" leftSection={focusMode ? <LuMinimize size={14} /> : <LuMaximize size={14} />}
-                  onClick={() => setFocusMode(m => !m)}>
-                  {focusMode ? 'Exit' : 'Focus'}
-                </Button>
-              </>
+              <Button size="xs" variant="subtle" leftSection={focusMode ? <LuMinimize size={14} /> : <LuMaximize size={14} />}
+                onClick={() => setFocusMode(m => !m)}>
+                {focusMode ? 'Exit' : 'Focus'}
+              </Button>
             )}
           </Group>
         </Group>
       </Box>
 
-      {/* ════════════════ THREE-PANEL ROW ════════════════════════════════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• THREE-PANEL ROW â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       <Box style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
-        {/* ── LEFT PANEL ─────────────────────────────────────────────────── */}
+        {/* â”€â”€ LEFT PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {!focusMode && (!isMobile || mobilePanel === 'sections') && (
           <Box style={{
             width: isMobile ? '100%' : 240,
@@ -781,11 +1189,11 @@ export default function StudentEditor() {
           </Box>
         )}
 
-        {/* ── CENTER PANEL ──────────────────────────────────────────────── */}
+        {/* â”€â”€ CENTER PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {(!isMobile || mobilePanel === 'editor') && (
         <Box ref={centerRef} style={{
           flex: 1, background: isMobile ? '#fff' : '#f0f0f0',
-          overflowY: 'auto', overflowX: isMobile ? 'hidden' : 'auto',
+          overflowY: 'auto', overflowX: isMobile ? 'hidden' : 'scroll',
           height: panelHeight, display: 'flex', flexDirection: 'column',
         }}>
           {/* Sticky section breadcrumb */}
@@ -801,7 +1209,7 @@ export default function StudentEditor() {
             <Text size="xs" c="dimmed">{wordCount.toLocaleString()} words</Text>
           </Box>
 
-          {/* Presence bar — live collaborators */}
+          {/* Presence bar â€” live collaborators */}
           {collab.connectedUsers.length > 0 && (
             <Box style={{
               padding: '6px 20px', background: '#f8f9ff',
@@ -864,7 +1272,7 @@ export default function StudentEditor() {
               value={content}
               onChange={e => updateContent(e.target.value)}
               spellCheck
-              placeholder={activeSection?.placeholder ?? 'Start writing here…'}
+              placeholder={activeSection?.placeholder ?? 'Start writing hereâ€¦'}
               style={{
                 flex: 1,
                 width: '100%',
@@ -882,7 +1290,7 @@ export default function StudentEditor() {
             />
           ) : (
             /* Desktop / tablet: A4 pages */
-            <Box style={{ padding: '24px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+            <Box style={{ padding: '24px 48px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, minWidth: 912 }}>
               {Array.from({ length: pageCount }, (_, i) => (
                 <Box key={i} style={{ marginBottom: i < pageCount - 1 ? 24 : 0, position: 'relative' }}>
                   <Box style={{
@@ -897,7 +1305,7 @@ export default function StudentEditor() {
                         onChange={e => updateContent(e.target.value)}
                         style={{ ...textareaStyle, height: Math.max(600, pageCount * 912) } as React.CSSProperties}
                         spellCheck
-                        placeholder={activeSection?.placeholder ?? 'Start writing here…'}
+                        placeholder={activeSection?.placeholder ?? 'Start writing hereâ€¦'}
                       />
                     )}
                     <Box style={{ position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center' }}>
@@ -911,409 +1319,94 @@ export default function StudentEditor() {
         </Box>
         )}
 
-        {/* ── RIGHT PANEL ───────────────────────────────────────────────── */}
-        {!focusMode && (!isMobile || mobilePanel === 'review') && (isTablet ? showRight : true) && (
+        {/* â”€â”€ MOBILE: full-screen review panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {!focusMode && isMobile && mobilePanel === 'review' && (
           <Box style={{
-            width: isMobile ? '100%' : 300,
-            flexShrink: 0, borderLeft: '1px solid #f1f3f5', background: '#fff',
+            width: '100%', flexShrink: 0, borderLeft: '1px solid #f1f3f5', background: '#fff',
             display: 'flex', flexDirection: 'column', height: panelHeight, overflowY: 'auto',
           }}>
-            {/* Mobile: back-to-editor button */}
-            {isMobile && (
-              <Box px={12} pt={10} pb={6} style={{ flexShrink: 0, borderBottom: '1px solid #f1f3f5' }}>
-                <Button size="xs" variant="subtle" leftSection={<LuArrowLeft size={13} />}
-                  onClick={() => setMobilePanel('editor')}>
-                  Back to Editor
-                </Button>
-              </Box>
-            )}
-            <Tabs value={rightTab} onChange={v => v && setRightTab(v)}
-              style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-              <Tabs.List style={{ flexShrink: 0 }}>
-                <Tabs.Tab value="chat"      leftSection={<LuBot      size={13} />} style={{ fontSize: 12 }}>AI Chat</Tabs.Tab>
-                <Tabs.Tab value="reviewer"  leftSection={<LuActivity size={13} />} style={{ fontSize: 12 }}>Reviewer</Tabs.Tab>
-                <Tabs.Tab value="citations" leftSection={<LuQuote    size={13} />} style={{ fontSize: 12 }}>Citations</Tabs.Tab>
-                <Tabs.Tab value="comments"  leftSection={<LuMessageSquare size={13} />} style={{ fontSize: 12 }}>
-                  Comments
-                  {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length > 0 && (
-                    <Badge size="xs" color="brand" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
-                      {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length}
-                    </Badge>
-                  )}
-                </Tabs.Tab>
-                <Tabs.Tab value="review" leftSection={<LuEye size={13} />} style={{ fontSize: 12 }}>
-                  Review
-                  {(() => {
-                    const sub = getActiveSub();
-                    if (!sub) return null;
-                    const open = sub.annotations.filter(a => !a.resolved).length;
-                    if (open > 0) {
-                      return (
-                        <Badge size="xs" color="orange" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
-                          {open}
-                        </Badge>
-                      );
-                    }
-                    if (sub.supervisorComment || sub.annotations.length > 0) {
-                      return (
-                        <Badge size="xs" color="green" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
-                          ✓
-                        </Badge>
-                      );
-                    }
-                    return null;
-                  })()}
-                </Tabs.Tab>
-              </Tabs.List>
-
-              {/* AI Chat */}
-              <Tabs.Panel value="chat" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-                <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 10px' }}>
-                  <Stack gap={10}>
-                    {chatMessages.map(msg => (
-                      <Box key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: 6, alignItems: 'flex-end' }}>
-                        {msg.role === 'ai' && (
-                          <Box style={{ width: 26, height: 26, borderRadius: '50%', background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <LuBot size={14} color={BRAND} />
-                          </Box>
-                        )}
-                        <Box style={{ maxWidth: '78%', padding: '8px 10px', borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: msg.role === 'user' ? BRAND : '#f8f9fa', color: msg.role === 'user' ? '#fff' : '#212529' }}>
-                          <Text size="xs" style={{ lineHeight: 1.5 }}>{msg.text}</Text>
-                        </Box>
-                        {msg.role === 'user' && (
-                          <Box style={{ width: 26, height: 26, borderRadius: '50%', background: '#f1f3f5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <LuUser size={14} color="#495057" />
-                          </Box>
-                        )}
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-                <Box style={{ borderTop: '1px solid #f1f3f5', padding: '8px 10px', flexShrink: 0 }}>
-                  <Group gap={6} align="flex-end">
-                    <Textarea value={chatInput} onChange={e => setChatInput(e.currentTarget.value)}
-                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                      placeholder="Ask the AI assistant…" rows={2} style={{ flex: 1 }}
-                      styles={{ input: { fontSize: 12 } }} size="xs" />
-                    <ActionIcon color="brand" variant="filled" onClick={handleSend} size="md" style={{ marginBottom: 1 }}>
-                      <LuSend size={14} />
-                    </ActionIcon>
-                  </Group>
-                </Box>
-              </Tabs.Panel>
-
-              {/* Reviewer */}
-              <Tabs.Panel value="reviewer" style={{ overflowY: 'auto', padding: '14px 12px' }}>
-                <Box style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
-                  <Box style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <RingProgress value={reviewPct} size={80} />
-                    <Box style={{ position: 'absolute', textAlign: 'center' }}>
-                      <Text size="sm" fw={700} c="brand">{reviewPct}%</Text>
-                    </Box>
-                  </Box>
-                  <Box>
-                    <Text size="xs" fw={600} mb={2}>Overall Score</Text>
-                    <Text size="xs" c="dimmed">{totalScore} / {maxTotalScore} points</Text>
-                    <Text size="10px" c="dimmed" mt={2}>Based on {REVIEW_SCORES.length} categories</Text>
-                  </Box>
-                </Box>
-                <Stack gap={8} mb={16}>
-                  {REVIEW_SCORES.map((rs: ReviewScore) => (
-                    <Box key={rs.category}>
-                      <Group justify="space-between" mb={3}>
-                        <Text size="xs">{rs.category}</Text>
-                        <Text size="xs" c="dimmed">{rs.score}/{rs.maxScore}</Text>
-                      </Group>
-                      <Progress value={(rs.score / rs.maxScore) * 100}
-                        color={rs.score / rs.maxScore >= 0.7 ? 'green' : rs.score / rs.maxScore >= 0.4 ? 'yellow' : 'red'}
-                        size="sm" radius="xl" />
-                    </Box>
-                  ))}
-                </Stack>
-                <Text size="xs" fw={600} mb={8}>Issues</Text>
-                <Stack gap={6}>
-                  {REVIEW_ISSUES.map((issue: ReviewIssue) => (
-                    <Box key={issue.id}
-                      style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', background: expandedIssueId === issue.id ? '#f8f9fa' : '#fff' }}
-                      onClick={() => setExpandedIssueId(id => id === issue.id ? null : issue.id)}>
-                      <Group gap={6} mb={4}>
-                        <Badge size="xs" color={severityColor(issue.severity)} variant="light" tt="capitalize">{issue.severity}</Badge>
-                        <Text size="10px" c="dimmed">{issue.sectionTitle}</Text>
-                      </Group>
-                      <Text size="xs">{issue.message}</Text>
-                      {expandedIssueId === issue.id && issue.suggestion && (
-                        <Box mt={8} style={{ background: '#f0f4ff', borderRadius: 6, padding: '6px 8px', borderLeft: `3px solid ${BRAND}` }}>
-                          <Text size="xs" c="brand">{issue.suggestion}</Text>
-                        </Box>
-                      )}
-                    </Box>
-                  ))}
-                </Stack>
-              </Tabs.Panel>
-
-              {/* Comments */}
-              <Tabs.Panel value="comments" style={{ overflowY: 'auto', padding: '12px 10px' }}>
-                <Stack gap="sm">
-                  {/* Add comment */}
-                  <Paper withBorder p="sm" radius="md">
-                    <Textarea
-                      placeholder="Add a comment for this section…"
-                      value={commentText}
-                      onChange={e => setCommentText(e.currentTarget.value)}
-                      rows={2} size="xs" mb="xs"
-                      styles={{ input: { fontSize: 12 } }}
-                    />
-                    <Button
-                      size="xs" color="brand" leftSection={<LuSend size={12} />}
-                      disabled={!commentText.trim()} fullWidth
-                      onClick={() => {
-                        collab.addComment({
-                          author:    user?.name ?? 'Student',
-                          role:      user?.role ?? 'Student',
-                          text:      commentText.trim(),
-                          sectionId: activeSectionId,
-                          resolved:  false,
-                          color:     collab.userColor,
-                        });
-                        setCommentText('');
-                      }}
-                    >
-                      Post Comment
-                    </Button>
-                  </Paper>
-
-                  {/* Active comments */}
-                  {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length === 0 ? (
-                    <Text size="xs" c="dimmed" ta="center" py={20}>No comments yet for this section.</Text>
-                  ) : (
-                    [...collab.comments]
-                      .filter(c => c.sectionId === activeSectionId && !c.resolved)
-                      .sort((a, b) => b.timestamp - a.timestamp)
-                      .map(c => (
-                        <Paper key={c.id} withBorder p="sm" radius="md" style={{ borderLeft: `3px solid ${c.color}` }}>
-                          <Group justify="space-between" mb={4} wrap="nowrap">
-                            <Group gap={6} wrap="nowrap">
-                              <Box style={{ width: 16, height: 16, borderRadius: '50%', background: c.color, flexShrink: 0 }} />
-                              <Text size="xs" fw={600} lineClamp={1}>{c.author}</Text>
-                              <Badge size="xs" variant="light" radius="sm" style={{ flexShrink: 0 }}>{c.role}</Badge>
-                            </Group>
-                            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-                              <Tooltip label="Mark resolved" withArrow>
-                                <ActionIcon size="xs" variant="subtle" color="green" onClick={() => collab.resolveComment(c.id)}>
-                                  <LuCheck size={10} />
-                                </ActionIcon>
-                              </Tooltip>
-                              <ActionIcon size="xs" variant="subtle" color="red" onClick={() => collab.deleteComment(c.id)}>
-                                <LuTrash2 size={10} />
-                              </ActionIcon>
-                            </Group>
-                          </Group>
-                          {c.selectedText && (
-                            <Text size="xs" fs="italic" c="dimmed" mb={4} lineClamp={2}>"{c.selectedText}"</Text>
-                          )}
-                          <Text size="xs" lh={1.5}>{c.text}</Text>
-                          <Text size="10px" c="dimmed" mt={4}>
-                            {new Date(c.timestamp).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                          </Text>
-                        </Paper>
-                      ))
-                  )}
-
-                  {/* Resolved */}
-                  {collab.comments.filter(c => c.sectionId === activeSectionId && c.resolved).length > 0 && (
-                    <>
-                      <Divider label="Resolved" labelPosition="center" />
-                      {[...collab.comments]
-                        .filter(c => c.sectionId === activeSectionId && c.resolved)
-                        .map(c => (
-                          <Paper key={c.id} withBorder p="sm" radius="md" style={{ opacity: 0.55 }}>
-                            <Group justify="space-between" mb={2}>
-                              <Text size="xs" fw={600} c="dimmed">{c.author} · <span style={{ fontWeight: 400 }}>{c.role}</span></Text>
-                              <ActionIcon size="xs" color="red" variant="subtle" onClick={() => collab.deleteComment(c.id)}>
-                                <LuTrash2 size={10} />
-                              </ActionIcon>
-                            </Group>
-                            <Text size="xs" c="dimmed">{c.text}</Text>
-                          </Paper>
-                        ))}
-                    </>
-                  )}
-                </Stack>
-              </Tabs.Panel>
-
-              {/* Citations */}
-              <Tabs.Panel value="citations" style={{ overflowY: 'auto', padding: '12px 10px' }}>
-                <TextInput placeholder="Search references…" leftSection={<LuSearch size={14} />}
-                  size="xs" mb={10} value={refSearch} onChange={e => setRefSearch(e.currentTarget.value)} />
-                <Stack gap={6}>
-                  {filteredRefs.map(ref => (
-                    <Box key={ref.id} style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px' }}>
-                      <Text size="xs" fw={500} mb={2} lineClamp={2}>{ref.title}</Text>
-                      <Text size="xs" c="dimmed" mb={6}>{ref.authors[0]} · {ref.year}</Text>
-                      <Button size="xs" variant="light" color="brand" onClick={() => insertCitation(ref.id)}>Insert</Button>
-                    </Box>
-                  ))}
-                  {filteredRefs.length === 0 && <Text size="xs" c="dimmed" ta="center" py={20}>No references found.</Text>}
-                </Stack>
-              </Tabs.Panel>
-
-              {/* Supervisor Review */}
-              <Tabs.Panel value="review" style={{ overflowY: 'auto', padding: '12px 10px' }}>
-                {(() => {
-                  const sub = getActiveSub();
-                  if (!sub) {
-                    return (
-                      <Stack align="center" py={32} gap={8}>
-                        <LuEye size={28} color="#ced4da" />
-                        <Text size="xs" c="dimmed" ta="center">
-                          This section hasn't been submitted yet.<br />Submit it so your supervisor can review it.
-                        </Text>
-                      </Stack>
-                    );
-                  }
-
-                  const statusColor = sub.status === 'approved' ? 'green' : sub.status === 'needs-revision' ? 'orange' : 'blue';
-                  const statusLabel = sub.status === 'approved' ? 'Approved' : sub.status === 'needs-revision' ? 'Needs Revision' : 'Pending Review';
-                  const activeAnns   = sub.annotations.filter(a => !a.resolved);
-                  const resolvedAnns = sub.annotations.filter(a =>  a.resolved);
-
-                  return (
-                    <Stack gap={12}>
-
-                      {/* Status + supervisor comment */}
-                      <Paper withBorder p="sm" radius="md" style={{ borderLeft: `3px solid var(--mantine-color-${statusColor}-6)` }}>
-                        <Group justify="space-between" mb={4}>
-                          <Text size="xs" fw={600}>Supervisor Feedback</Text>
-                          <Badge size="xs" color={statusColor} variant="light">{statusLabel}</Badge>
-                        </Group>
-                        <Text size="10px" c="dimmed">
-                          Submitted {new Date(sub.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          {sub.reviewedAt && ` · Reviewed ${new Date(sub.reviewedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}
-                        </Text>
-                        {sub.supervisorComment && (
-                          <Box mt={8} style={{ background: '#fff8e1', borderRadius: 6, padding: '6px 8px', borderLeft: '3px solid #f08c00' }}>
-                            <Text size="xs" style={{ fontStyle: 'italic', color: '#e67700' }}>"{sub.supervisorComment}"</Text>
-                          </Box>
-                        )}
-                        {sub.status === 'pending' && !sub.supervisorComment && (
-                          <Text size="xs" c="dimmed" mt={6} style={{ fontStyle: 'italic' }}>Awaiting supervisor review…</Text>
-                        )}
-                      </Paper>
-
-                      {/* Active (unresolved) annotations */}
-                      {activeAnns.length > 0 && (
-                        <>
-                          <Text size="10px" fw={700} c="dimmed" style={{ letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                            Open Annotations ({activeAnns.length})
-                          </Text>
-
-                          {/* Content preview with highlights */}
-                          <Box style={{
-                            border: '1px solid #e9ecef', borderRadius: 8, padding: '10px 12px',
-                            background: '#fafbff', fontSize: 11, lineHeight: 1.7, color: '#212529',
-                            maxHeight: 160, overflowY: 'auto', userSelect: 'none',
-                          }}>
-                            {applyReviewHighlights(sub.content, activeAnns)}
-                          </Box>
-
-                          {/* Annotation cards */}
-                          <Stack gap={8}>
-                            {activeAnns.map((ann, idx) => (
-                              <Paper key={ann.id} withBorder p="sm" radius="md"
-                                style={{ borderLeft: `3px solid ${ann.color}`, background: ann.color + '22' }}
-                              >
-                                <Group justify="space-between" mb={4} wrap="nowrap">
-                                  <Group gap={6} wrap="nowrap">
-                                    <Box style={{ width: 14, height: 14, borderRadius: 3, background: ann.color, border: '1px solid #ddd', flexShrink: 0 }} />
-                                    <Text size="10px" fw={700} c="dimmed">Note {idx + 1}</Text>
-                                  </Group>
-                                  <Group gap={4} wrap="nowrap">
-                                    <Text size="9px" c="dimmed">
-                                      {new Date(ann.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                                    </Text>
-                                    <Tooltip label="Mark as resolved" withArrow>
-                                      <ActionIcon
-                                        size="xs" color="green" variant="subtle"
-                                        onClick={() => {
-                                          dispatch(resolveAnnotation({ subId: sub.id, annId: ann.id }));
-                                          resolveAnnotationDB(ann.id).catch(() => {});
-                                        }}
-                                      >
-                                        <LuCircleCheck size={13} />
-                                      </ActionIcon>
-                                    </Tooltip>
-                                  </Group>
-                                </Group>
-                                <Text size="xs" fs="italic" c="dimmed" mb={4} lineClamp={2}>"{ann.selectedText}"</Text>
-                                <Text size="xs" lh={1.5}>{ann.comment}</Text>
-                              </Paper>
-                            ))}
-                          </Stack>
-                        </>
-                      )}
-
-                      {/* Resolved annotations toggle */}
-                      {resolvedAnns.length > 0 && (
-                        <>
-                          <Box
-                            onClick={() => setShowResolvedAnnos(v => !v)}
-                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}
-                          >
-                            <LuCircleCheck size={12} color="#2f9e44" />
-                            <Text size="xs" c="green" fw={600} style={{ textDecoration: 'underline' }}>
-                              {showResolvedAnnos ? 'Hide' : 'Show'} resolved ({resolvedAnns.length})
-                            </Text>
-                          </Box>
-
-                          {showResolvedAnnos && (
-                            <Stack gap={6}>
-                              {resolvedAnns.map((ann, idx) => (
-                                <Paper key={ann.id} withBorder p="sm" radius="md"
-                                  style={{ borderLeft: '3px solid #ced4da', background: '#f8f9fa', opacity: 0.6 }}
-                                >
-                                  <Group justify="space-between" mb={4} wrap="nowrap">
-                                    <Group gap={6} wrap="nowrap">
-                                      <Box style={{ width: 14, height: 14, borderRadius: 3, background: '#ced4da', border: '1px solid #ddd', flexShrink: 0 }} />
-                                      <Text size="10px" fw={700} c="dimmed">Note {idx + 1}</Text>
-                                      <Badge size="xs" color="green" variant="light" radius="xl">Resolved</Badge>
-                                    </Group>
-                                    <LuCircleCheck size={12} color="#2f9e44" />
-                                  </Group>
-                                  <Text size="xs" fs="italic" c="dimmed" mb={4} lineClamp={2}
-                                    style={{ textDecoration: 'line-through' }}>
-                                    "{ann.selectedText}"
-                                  </Text>
-                                  <Text size="xs" c="dimmed" lh={1.5}>{ann.comment}</Text>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          )}
-                        </>
-                      )}
-
-                      {/* Empty state after all resolved */}
-                      {activeAnns.length === 0 && resolvedAnns.length === 0 && sub.status !== 'pending' && !sub.supervisorComment && (
-                        <Text size="xs" c="dimmed" ta="center" py={12}>No annotations left by your supervisor.</Text>
-                      )}
-                      {activeAnns.length === 0 && resolvedAnns.length > 0 && (
-                        <Paper withBorder p="sm" radius="md" style={{ background: '#ebfbee', borderColor: '#b2f2bb' }}>
-                          <Group gap={6}>
-                            <LuCircleCheck size={14} color="#2f9e44" />
-                            <Text size="xs" fw={600} c="green">All annotations resolved — great work!</Text>
-                          </Group>
-                        </Paper>
-                      )}
-
-                    </Stack>
-                  );
-                })()}
-              </Tabs.Panel>
-            </Tabs>
+            <Box px={12} pt={10} pb={6} style={{ flexShrink: 0, borderBottom: '1px solid #f1f3f5' }}>
+              <Button size="xs" variant="subtle" leftSection={<LuArrowLeft size={13} />}
+                onClick={() => setMobilePanel('editor')}>
+                Back to Editor
+              </Button>
+            </Box>
+            {renderRightTabs()}
           </Box>
         )}
+
+        {/* â”€â”€ ICON STRIP (tablet / desktop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {!focusMode && !isMobile && (
+          <Box style={{
+            width: 44, flexShrink: 0, borderLeft: '1px solid #f1f3f5', background: '#fff',
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            paddingTop: 8, paddingBottom: 8, gap: 2,
+          }}>
+            {([
+              { tab: 'chat',      Icon: LuBot,            label: 'AI Chat',   badgeColor: 'brand',  badge: 0 },
+              { tab: 'reviewer',  Icon: LuActivity,       label: 'Reviewer',  badgeColor: 'brand',  badge: 0 },
+              { tab: 'citations', Icon: LuQuote,          label: 'Citations', badgeColor: 'brand',  badge: 0 },
+              { tab: 'comments',  Icon: LuMessageSquare,  label: 'Comments',  badgeColor: 'brand',
+                badge: collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length },
+              { tab: 'review',    Icon: LuEye,            label: 'Review',    badgeColor: 'orange',
+                badge: getActiveSub()?.annotations.filter(a => !a.resolved).length ?? 0 },
+            ] as { tab: string; Icon: React.ElementType; label: string; badge: number; badgeColor: string }[]).map(({ tab, Icon, label, badge, badgeColor }) => (
+              <Tooltip key={tab} label={label} position="left" withArrow>
+                <Box style={{ position: 'relative', display: 'flex' }}>
+                  <ActionIcon
+                    size="lg"
+                    variant={drawerTab === tab ? 'light' : 'subtle'}
+                    color={drawerTab === tab ? 'brand' : 'gray'}
+                    onClick={() => {
+                      if (drawerTab === tab) { setDrawerTab(null); }
+                      else { setDrawerTab(tab); setRightTab(tab); }
+                    }}
+                  >
+                    <Icon size={17} />
+                  </ActionIcon>
+                  {badge > 0 && (
+                    <Box style={{ position: 'absolute', top: -3, right: -3, zIndex: 1 }}>
+                      <Badge size="xs" color={badgeColor} variant="filled" circle>{badge}</Badge>
+                    </Box>
+                  )}
+                </Box>
+              </Tooltip>
+            ))}
+          </Box>
+        )}
+
+        {/* â”€â”€ DRAWER (tablet / desktop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {!isMobile && (
+          <Drawer
+            opened={drawerTab !== null && !focusMode}
+            onClose={() => setDrawerTab(null)}
+            position="right"
+            size={380}
+            withOverlay={false}
+            withCloseButton={false}
+            trapFocus={false}
+            lockScroll={false}
+            zIndex={98}
+            styles={{
+              inner:   { top: 64, height: 'calc(100vh - 64px)' },
+              content: { height: '100%', display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 20px rgba(0,0,0,0.1)', borderRadius: 0 },
+              body:    { padding: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+            }}
+          >
+            <Box style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 6px 0', flexShrink: 0 }}>
+              <Tooltip label="Close panel" withArrow>
+                <ActionIcon size="sm" variant="subtle" color="gray" onClick={() => setDrawerTab(null)}>
+                  <LuX size={14} />
+                </ActionIcon>
+              </Tooltip>
+            </Box>
+            {renderRightTabs()}
+          </Drawer>
+        )}
+
       </Box>
 
-      {/* ════════════════ MOBILE BOTTOM TAB BAR ══════════════════════════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• MOBILE BOTTOM TAB BAR â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       {isMobile && !focusMode && (
         <Box style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-around',
@@ -1340,7 +1433,7 @@ export default function StudentEditor() {
         </Box>
       )}
 
-      {/* ════════════════ SWITCH PROJECT TYPE MODAL ══════════════════════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• SWITCH PROJECT TYPE MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         opened={switchModal.open}
         onClose={() => setSwitchModal({ open: false, pending: null })}
@@ -1383,7 +1476,7 @@ export default function StudentEditor() {
         </Stack>
       </Modal>
 
-      {/* ════════════════ ADD SECTION MODAL ══════════════════════════════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• ADD SECTION MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         opened={addModal}
         onClose={() => { setAddModal(false); setNewSecTitle(''); }}
@@ -1413,21 +1506,21 @@ export default function StudentEditor() {
         </Stack>
       </Modal>
 
-      {/* ════════════════ CITATION MODAL ═════════════════════════════════════ */}
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CITATION MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         opened={citeModalOpen}
         onClose={() => { setCiteModalOpen(false); setCiteSearch(''); }}
         title={<Text fw={700} size="sm" style={{ fontFamily: 'Playfair Display, serif' }}>Insert Citation</Text>}
         size="lg" centered
       >
-        <TextInput placeholder="Search by title or author…" leftSection={<LuSearch size={15} />}
+        <TextInput placeholder="Search by title or authorâ€¦" leftSection={<LuSearch size={15} />}
           mb={12} value={citeSearch} onChange={e => setCiteSearch(e.currentTarget.value)} />
         <Stack gap={8}>
           {filteredModalRefs.map(ref => (
             <Group key={ref.id} justify="space-between" align="flex-start">
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <Text size="sm" fw={500} lineClamp={2}>{ref.title}</Text>
-                <Text size="xs" c="dimmed">{ref.authors[0]}{ref.authors.length > 1 ? ' et al.' : ''} · {ref.year} · {ref.journal}</Text>
+                <Text size="xs" c="dimmed">{ref.authors[0]}{ref.authors.length > 1 ? ' et al.' : ''} Â· {ref.year} Â· {ref.journal}</Text>
               </Box>
               <Button size="xs" color="brand" variant="filled" style={{ flexShrink: 0 }} onClick={() => insertCitation(ref.id)}>Insert</Button>
             </Group>

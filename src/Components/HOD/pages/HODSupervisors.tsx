@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActionIcon, Alert, Avatar, Badge, Box, Button, CopyButton,
-  Divider, Group, Modal, Paper, SimpleGrid, Stack,
+  Divider, Group, Modal, Pagination, Paper, SimpleGrid, Stack,
   Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import {
@@ -151,6 +151,9 @@ export default function HODSupervisors() {
   const myId = user?.id ?? '';
   useEffect(() => { loadSupervisorRows(); }, [institutionId, institutionName, myId]);
 
+  const [page,     setPage]  = useState(1);
+  const PAGE_SIZE = 15;
+
   const filtered = search
     ? rows.filter(s =>
         s.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -158,6 +161,11 @@ export default function HODSupervisors() {
         s.email.toLowerCase().includes(search.toLowerCase())
       )
     : rows;
+
+  useEffect(() => { setPage(1); }, [search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const closeModal = () => {
     setShowModal(false);
@@ -264,44 +272,55 @@ export default function HODSupervisors() {
       {loading ? (
         <Box ta="center" py="xl"><LuRefreshCw size={24} color="#adb5bd" style={{ animation: 'spin 1s linear infinite' }} /></Box>
       ) : (
-        <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-          <Table highlightOnHover verticalSpacing="md">
-            <Table.Thead>
-              <Table.Tr style={{ background: '#f8f9fa' }}>
-                {['Supervisor', 'Email', 'Specialisation', 'Department', 'Role', 'Phone', 'Added'].map(h => (
-                  <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
+        <>
+          <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+            <Table highlightOnHover verticalSpacing="md">
+              <Table.Thead>
+                <Table.Tr style={{ background: '#f8f9fa' }}>
+                  {['Supervisor', 'Email', 'Specialisation', 'Department', 'Role', 'Phone', 'Added'].map(h => (
+                    <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {paginated.map((sv: SBUser) => (
+                  <Table.Tr key={sv.id}>
+                    <Table.Td>
+                      <Group gap="sm" wrap="nowrap">
+                        <Avatar color="blue" radius="xl" size="md">{getInitials(sv.name)}</Avatar>
+                        <Text size="sm" fw={600}>{sv.name}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td><Text size="sm" c="dimmed">{sv.email}</Text></Table.Td>
+                    <Table.Td><Text size="sm">{sv.specialty || '—'}</Text></Table.Td>
+                    <Table.Td><Text size="sm">{sv.department || '—'}</Text></Table.Td>
+                    <Table.Td>
+                      <Badge color={ROLE_COLOR[sv.role] ?? 'gray'} variant="light" size="sm">{sv.role}</Badge>
+                    </Table.Td>
+                    <Table.Td><Text size="sm" c="dimmed">{sv.phone || '—'}</Text></Table.Td>
+                    <Table.Td><Text size="xs" c="dimmed">{new Date(sv.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
+                  </Table.Tr>
                 ))}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {filtered.map((sv: SBUser) => (
-                <Table.Tr key={sv.id}>
-                  <Table.Td>
-                    <Group gap="sm" wrap="nowrap">
-                      <Avatar color="blue" radius="xl" size="md">{getInitials(sv.name)}</Avatar>
-                      <Text size="sm" fw={600}>{sv.name}</Text>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td><Text size="sm" c="dimmed">{sv.email}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{sv.specialty || '—'}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{sv.department || '—'}</Text></Table.Td>
-                  <Table.Td>
-                    <Badge color={ROLE_COLOR[sv.role] ?? 'gray'} variant="light" size="sm">{sv.role}</Badge>
-                  </Table.Td>
-                  <Table.Td><Text size="sm" c="dimmed">{sv.phone || '—'}</Text></Table.Td>
-                  <Table.Td><Text size="xs" c="dimmed">{new Date(sv.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
-                </Table.Tr>
-              ))}
-              {filtered.length === 0 && (
-                <Table.Tr>
-                  <Table.Td colSpan={6}>
-                    <Text ta="center" c="dimmed" py="xl" size="sm">No supervisors found. Add one above or create via Faculty & Depts.</Text>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
-        </Paper>
+                {paginated.length === 0 && (
+                  <Table.Tr>
+                    <Table.Td colSpan={6}>
+                      <Text ta="center" c="dimmed" py="xl" size="sm">No supervisors found. Add one above or create via Faculty & Depts.</Text>
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+              </Table.Tbody>
+            </Table>
+          </Paper>
+
+          {totalPages > 1 && (
+            <Group justify="space-between" mt="md" align="center">
+              <Text size="xs" c="dimmed">
+                Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} supervisors
+              </Text>
+              <Pagination value={page} onChange={setPage} total={totalPages} size="sm" color="brand" />
+            </Group>
+          )}
+        </>
       )}
 
       {/* Add Supervisor Modal */}

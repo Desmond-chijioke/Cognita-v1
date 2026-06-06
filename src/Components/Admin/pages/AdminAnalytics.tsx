@@ -1,22 +1,16 @@
+import { useEffect, useState } from 'react';
 import {
-  Box, Group, Paper, Progress, RingProgress,
+  Box, Group, Loader, Paper, Progress, RingProgress,
   SimpleGrid, Stack, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import {
   LuBookOpen, LuTrendingUp, LuActivity, LuBrain, LuAward,
 } from 'react-icons/lu';
+import { useAppSelector } from '../../../Redux/hooks';
+import { fetchAnalyticsData } from '../../../supabase/adminStats';
+import type { AnalyticsData } from '../../../supabase/adminStats';
 
-// ── Static data ────────────────────────────────────────────────────────────────
-
-const PUB_DATA = [
-  { dept: 'Computer Sci', pubs: 12 },
-  { dept: 'Medicine',     pubs: 9  },
-  { dept: 'Env Science',  pubs: 6  },
-  { dept: 'Engineering',  pubs: 4  },
-  { dept: 'Chemistry',    pubs: 3  },
-  { dept: 'Social Sci',   pubs: 3  },
-  { dept: 'Biology',      pubs: 1  },
-];
+// ── Static data (not yet in DB) ────────────────────────────────────────────────
 
 const GRANT_DATA = [
   { year: '2022', rate: 28 },
@@ -24,15 +18,6 @@ const GRANT_DATA = [
   { year: '2024', rate: 41 },
   { year: '2025', rate: 45 },
   { year: '2026', rate: 52 },
-];
-
-const INTEGRITY_DATA = [
-  { faculty: 'Chemistry',    score: 95 },
-  { faculty: 'Env Science',  score: 92 },
-  { faculty: 'Social Sci',   score: 89 },
-  { faculty: 'Medicine',     score: 88 },
-  { faculty: 'Engineering',  score: 81 },
-  { faculty: 'Computer Sci', score: 79 },
 ];
 
 const AI_ADOPTION = [
@@ -44,31 +29,33 @@ const AI_ADOPTION = [
 
 // ── Inline SVG Charts ──────────────────────────────────────────────────────────
 
-function HBarChart() {
+function HBarChart({ data }: { data: { dept: string; pubs: number }[] }) {
+  if (!data.length) return <Text size="sm" c="dimmed" ta="center" py={40}>No approved submissions yet.</Text>;
+
   const BAR_START = 108;
   const BAR_MAX   = 228;
-  const MAX_VAL   = 12;
+  const maxVal    = Math.max(...data.map(d => d.pubs), 1);
+  const rowH      = 32;
+  const totalH    = data.length * rowH + 20;
 
   return (
-    <svg viewBox="0 0 390 252" width="100%" height="252">
-      {/* vertical gridlines */}
-      {[0, 4, 8, 12].map(v => {
-        const x = BAR_START + (v / MAX_VAL) * BAR_MAX;
+    <svg viewBox={`0 0 390 ${totalH}`} width="100%" height={totalH}>
+      {[0, Math.round(maxVal * 0.5), maxVal].map(v => {
+        const x = BAR_START + (v / maxVal) * BAR_MAX;
         return (
           <g key={v}>
-            <line x1={x} y1={8} x2={x} y2={244} stroke="#f1f3f5" strokeWidth={1} />
+            <line x1={x} y1={8} x2={x} y2={totalH - 8} stroke="#f1f3f5" strokeWidth={1} />
             <text x={x} y={6} textAnchor="middle" fontSize={10} fill="#adb5bd">{v}</text>
           </g>
         );
       })}
-      {/* bars */}
-      {PUB_DATA.map((item, i) => {
-        const y    = 14 + i * 32;
-        const barW = Math.max((item.pubs / MAX_VAL) * BAR_MAX, 4);
+      {data.map((item, i) => {
+        const y    = 14 + i * rowH;
+        const barW = Math.max((item.pubs / maxVal) * BAR_MAX, 4);
         return (
           <g key={item.dept}>
             <text x={102} y={y + 14} textAnchor="end" fontSize={11} fill="#495057">{item.dept}</text>
-            <rect x={BAR_START} y={y} width={barW} height={20} fill="#3b5bdb" rx={4} opacity={0.7 + (item.pubs / MAX_VAL) * 0.3} />
+            <rect x={BAR_START} y={y} width={barW} height={20} fill="#3b5bdb" rx={4} opacity={0.7 + (item.pubs / maxVal) * 0.3} />
             <text x={BAR_START + barW + 6} y={y + 14} fontSize={11} fill="#868e96">{item.pubs}</text>
           </g>
         );
@@ -92,7 +79,6 @@ function LineChart() {
 
   return (
     <svg viewBox="0 0 420 178" width="100%" height="178">
-      {/* horizontal gridlines */}
       {[0, 20, 40, 60].map(v => {
         const y = cy(v);
         return (
@@ -102,18 +88,14 @@ function LineChart() {
           </g>
         );
       })}
-      {/* area fill */}
       <path d={areaPath} fill="rgba(59,91,219,0.07)" />
-      {/* line */}
       <polyline points={linePts} fill="none" stroke="#3b5bdb" strokeWidth={2.5} strokeLinejoin="round" />
-      {/* dots + value labels */}
       {pts.map(p => (
         <g key={p.year}>
           <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize={10} fill="#3b5bdb" fontWeight="600">{p.rate}%</text>
           <circle cx={p.x} cy={p.y} r={5} fill="white" stroke="#3b5bdb" strokeWidth={2.5} />
         </g>
       ))}
-      {/* x-axis labels */}
       {pts.map(p => (
         <text key={`xl-${p.year}`} x={p.x} y={168} textAnchor="middle" fontSize={11} fill="#868e96">{p.year}</text>
       ))}
@@ -124,10 +106,24 @@ function LineChart() {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function AdminAnalytics() {
-  const totalPubs    = PUB_DATA.reduce((a, d) => a + d.pubs, 0);
-  const latestGrant  = GRANT_DATA[GRANT_DATA.length - 1].rate;
-  const avgIntegrity = Math.round(INTEGRITY_DATA.reduce((a, d) => a + d.score, 0) / INTEGRITY_DATA.length);
-  const topDept      = PUB_DATA[0].dept;
+  const user          = useAppSelector(s => s.auth.user);
+  const institutionId = user?.institutionId;
+
+  const [data,    setData]    = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchAnalyticsData(institutionId)
+      .then(setData)
+      .finally(() => setLoading(false));
+  }, [institutionId]);
+
+  const latestGrant = GRANT_DATA[GRANT_DATA.length - 1].rate;
+
+  // Avg integrity from real data
+  const avgIntegrity = data?.integrityData.length
+    ? Math.round(data.integrityData.reduce((a, d) => a + d.score, 0) / data.integrityData.length)
+    : 0;
 
   return (
     <Box p="xl">
@@ -140,99 +136,110 @@ export default function AdminAnalytics() {
         </Text>
       </Box>
 
-      {/* ── KPI cards ── */}
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} mb="xl">
-        {[
-          { icon: LuBookOpen,   label: 'Total Publications',  value: totalPubs,          color: 'brand',  sub: 'This academic year'       },
-          { icon: LuTrendingUp, label: 'Grant Success Rate',  value: `${latestGrant}%`,  color: 'teal',   sub: '↑ from 45% last year'     },
-          { icon: LuBrain,      label: 'Avg Integrity Score', value: `${avgIntegrity}%`, color: 'violet', sub: 'Across all faculties'      },
-          { icon: LuAward,      label: 'Top Department',      value: topDept,            color: 'green',  sub: `${PUB_DATA[0].pubs} publications` },
-        ].map(({ icon: Icon, label, value, color, sub }) => (
-          <Paper key={label} withBorder p="lg" radius="md" bg="white">
-            <Group justify="space-between" mb="sm">
-              <ThemeIcon size={42} radius="md" color={color} variant="light">
-                <Icon size={20} />
-              </ThemeIcon>
-              <LuActivity size={14} color="#ced4da" />
-            </Group>
-            <Text fw={800} lh={1} mb={4} style={{ fontSize: 28 }}>{value}</Text>
-            <Text size="sm" c="dimmed" fw={500}>{label}</Text>
-            <Text size="xs" c="dimmed" mt={4}>{sub}</Text>
-          </Paper>
-        ))}
-      </SimpleGrid>
-
-      {/* ── Charts grid ── */}
-      <SimpleGrid cols={{ base: 1, md: 2 }}>
-
-        {/* Publications by Department */}
-        <Paper withBorder p="lg" radius="md" bg="white">
-          <Text fw={600} mb="md">Publications by Department</Text>
-          <HBarChart />
-        </Paper>
-
-        {/* Grant Success Rate */}
-        <Paper withBorder p="lg" radius="md" bg="white">
-          <Group justify="space-between" mb="md">
-            <Text fw={600}>Grant Success Rate (%)</Text>
-            <Text size="xs" c="green.7" fw={600}>↑ 24 pts over 4 yrs</Text>
-          </Group>
-          <LineChart />
-        </Paper>
-
-        {/* Avg Integrity Score by Faculty */}
-        <Paper withBorder p="lg" radius="md" bg="white">
-          <Text fw={600} mb="lg">Avg Integrity Score by Faculty</Text>
-          <Stack gap="md">
-            {INTEGRITY_DATA.map(({ faculty, score }) => {
-              const color     = score >= 85 ? 'green'   : score >= 70 ? 'orange'   : 'red';
-              const textColor = score >= 85 ? '#2f9e44' : score >= 70 ? '#f08c00' : '#e03131';
-              return (
-                <Box key={faculty}>
-                  <Group justify="space-between" mb={5}>
-                    <Text size="sm">{faculty}</Text>
-                    <Text size="sm" fw={700} style={{ color: textColor }}>{score}%</Text>
-                  </Group>
-                  <Progress value={score} color={color} size="sm" radius="xl" />
-                </Box>
-              );
-            })}
-          </Stack>
-        </Paper>
-
-        {/* AI Adoption Rate */}
-        <Paper withBorder p="lg" radius="md" bg="white">
-          <Text fw={600} mb="lg">AI Adoption Rate</Text>
-          <Group justify="center" align="center" gap="xl">
-            <RingProgress
-              size={168}
-              thickness={28}
-              roundCaps
-              sections={AI_ADOPTION.map(d => ({
-                value:   d.value,
-                color:   d.color,
-                tooltip: `${d.name}: ${d.value}%`,
-              }))}
-              label={
-                <Box ta="center">
-                  <Text fw={800} size="xl" lh={1}>92%</Text>
-                  <Text size="xs" c="dimmed">AI enabled</Text>
-                </Box>
-              }
-            />
-            <Stack gap="md">
-              {AI_ADOPTION.map(({ name, value, color }) => (
-                <Group key={name} gap="xs" wrap="nowrap">
-                  <Box style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                  <Text size="sm" c="dimmed" style={{ minWidth: 150 }}>{name}</Text>
-                  <Text size="sm" fw={700}>{value}%</Text>
+      {loading ? (
+        <Group justify="center" py={80}><Loader size="md" /></Group>
+      ) : (
+        <>
+          {/* ── KPI cards ── */}
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} mb="xl">
+            {[
+              { icon: LuBookOpen,   label: 'Total Publications',  value: data?.totalPubs ?? 0,         color: 'brand',  sub: 'Approved sections'        },
+              { icon: LuTrendingUp, label: 'Grant Success Rate',  value: `${latestGrant}%`,            color: 'teal',   sub: '↑ from 45% last year'     },
+              { icon: LuBrain,      label: 'Avg Approval Rate',   value: avgIntegrity > 0 ? `${avgIntegrity}%` : '—', color: 'violet', sub: 'Across all departments' },
+              { icon: LuAward,      label: 'Top Department',      value: data?.topDept ?? '—',         color: 'green',  sub: `${data?.pubData[0]?.pubs ?? 0} publications` },
+            ].map(({ icon: Icon, label, value, color, sub }) => (
+              <Paper key={label} withBorder p="lg" radius="md" bg="white">
+                <Group justify="space-between" mb="sm">
+                  <ThemeIcon size={42} radius="md" color={color} variant="light">
+                    <Icon size={20} />
+                  </ThemeIcon>
+                  <LuActivity size={14} color="#ced4da" />
                 </Group>
-              ))}
-            </Stack>
-          </Group>
-        </Paper>
+                <Text fw={800} lh={1} mb={4} style={{ fontSize: 28 }}>{value}</Text>
+                <Text size="sm" c="dimmed" fw={500}>{label}</Text>
+                <Text size="xs" c="dimmed" mt={4}>{sub}</Text>
+              </Paper>
+            ))}
+          </SimpleGrid>
 
-      </SimpleGrid>
+          {/* ── Charts grid ── */}
+          <SimpleGrid cols={{ base: 1, md: 2 }}>
+
+            {/* Publications by Department */}
+            <Paper withBorder p="lg" radius="md" bg="white">
+              <Text fw={600} mb="md">Approved Sections by Department</Text>
+              <HBarChart data={data?.pubData ?? []} />
+            </Paper>
+
+            {/* Grant Success Rate (static) */}
+            <Paper withBorder p="lg" radius="md" bg="white">
+              <Group justify="space-between" mb="md">
+                <Text fw={600}>Grant Success Rate (%)</Text>
+                <Text size="xs" c="green.7" fw={600}>↑ 24 pts over 4 yrs</Text>
+              </Group>
+              <LineChart />
+            </Paper>
+
+            {/* Approval Rate by Department (real) */}
+            <Paper withBorder p="lg" radius="md" bg="white">
+              <Text fw={600} mb="lg">Approval Rate by Department</Text>
+              {(data?.integrityData ?? []).length === 0 ? (
+                <Text size="sm" c="dimmed" ta="center" py={40}>No submission data yet.</Text>
+              ) : (
+                <Stack gap="md">
+                  {(data?.integrityData ?? []).map(({ faculty, score }) => {
+                    const color     = score >= 85 ? 'green'   : score >= 70 ? 'orange'   : 'red';
+                    const textColor = score >= 85 ? '#2f9e44' : score >= 70 ? '#f08c00' : '#e03131';
+                    return (
+                      <Box key={faculty}>
+                        <Group justify="space-between" mb={5}>
+                          <Text size="sm">{faculty}</Text>
+                          <Text size="sm" fw={700} style={{ color: textColor }}>{score}%</Text>
+                        </Group>
+                        <Progress value={score} color={color} size="sm" radius="xl" />
+                      </Box>
+                    );
+                  })}
+                </Stack>
+              )}
+            </Paper>
+
+            {/* AI Adoption Rate (static) */}
+            <Paper withBorder p="lg" radius="md" bg="white">
+              <Text fw={600} mb="lg">AI Adoption Rate</Text>
+              <Group justify="center" align="center" gap="xl">
+                <RingProgress
+                  size={168}
+                  thickness={28}
+                  roundCaps
+                  sections={AI_ADOPTION.map(d => ({
+                    value:   d.value,
+                    color:   d.color,
+                    tooltip: `${d.name}: ${d.value}%`,
+                  }))}
+                  label={
+                    <Box ta="center">
+                      <Text fw={800} size="xl" lh={1}>92%</Text>
+                      <Text size="xs" c="dimmed">AI enabled</Text>
+                    </Box>
+                  }
+                />
+                <Stack gap="md">
+                  {AI_ADOPTION.map(({ name, value, color }) => (
+                    <Group key={name} gap="xs" wrap="nowrap">
+                      <Box style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                      <Text size="sm" c="dimmed" style={{ minWidth: 150 }}>{name}</Text>
+                      <Text size="sm" fw={700}>{value}%</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              </Group>
+            </Paper>
+
+          </SimpleGrid>
+        </>
+      )}
+
     </Box>
   );
 }

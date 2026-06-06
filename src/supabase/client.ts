@@ -9,4 +9,10 @@ if (!supabaseUrl || !supabaseAnon) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnon);
+export const supabase = createClient(supabaseUrl, supabaseAnon, {
+  auth: {
+    persistSession:     true,   // store session in localStorage (default, explicit)
+    autoRefreshToken:   true,   // auto-refresh access token before expiry (default, explicit)
+    detectSessionInUrl: false,  // not using OAuth / magic-link flows
+  },
+});

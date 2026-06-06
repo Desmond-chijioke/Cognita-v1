@@ -136,24 +136,19 @@ export default function HODOverview() {
 
   // ── Fetch students + supervisors on mount so overview always has live counts ──
   useEffect(() => {
+    if (!institutionId) return;   // never fetch without an institution anchor
+
     const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
     const CT = ['orange', 'indigo', 'blue', 'red', 'green', 'grape'];
 
+    // Strict institution_id filter only — no name fallback, no unscoped last-resort
     const query = async (roles: string[], select: string) => {
       type Row = Record<string, unknown>;
-      // Try institution_id → institution_name → all (same 3-strategy as other pages)
-      for (const filter of [
-        institutionId   ? { institution_id:   institutionId }   : null,
-        institutionName ? { institution_name: institutionName } : null,
-        {},   // last resort: no filter
-      ]) {
-        if (filter === null) continue;
-        let q = supabase.from('users').select(select).in('role', roles).order('created_at');
-        for (const [k, v] of Object.entries(filter)) q = q.eq(k, v as string);
-        const { data } = await q;
-        if (data && data.length > 0) return (data ?? []) as Row[];
-      }
-      return [] as Row[];
+      const { data } = await supabase.from('users').select(select)
+        .eq('institution_id', institutionId)
+        .in('role', roles)
+        .order('created_at');
+      return (data ?? []) as Row[];
     };
 
     Promise.all([
@@ -182,7 +177,7 @@ export default function HODOverview() {
         addedOn:          new Date(String(s.created_at)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
       }))));
     });
-  }, [institutionId, institutionName, dispatch]);
+  }, [institutionId, user?.departmentName, dispatch]);
 
   // Student splits
   const assigned   = students.filter(s => s.supervisorId);

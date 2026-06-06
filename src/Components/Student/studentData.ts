@@ -184,121 +184,15 @@ export const PROJECT = {
 // ── Sections ────────────────────────────────────────────────────────────────────
 
 export const STUDENT_SECTIONS: Section[] = [
-  {
-    id: 's1', key: 'abstract', title: 'Abstract', order: 1,
-    mandatory: true, enabled: true, approved: true,
-    status: 'completed', wordCount: 312,
-    supervisorComment: 'Well structured abstract. Please tighten the contribution list to three bullet points in the final version.',
-    content: `This thesis investigates the application of federated learning paradigms to clinical prediction tasks in resource-constrained healthcare environments across sub-Saharan Africa. Existing machine learning solutions for clinical decision support rely on centralised data repositories that are incompatible with patient privacy regulations and institutional data-sharing constraints prevalent across the region.
-
-We propose FedCliniq, a privacy-preserving federated learning framework designed to enable collaborative model training across geographically distributed hospitals without transmitting raw patient data. The framework integrates differential privacy noise injection, secure aggregation protocols, and an adaptive communication scheduler that reduces bandwidth consumption by up to 62% compared to baseline FedAvg implementations.
-
-Experimental evaluation across three hospitals in Lagos, Accra, and Nairobi demonstrates that FedCliniq achieves a diagnostic accuracy of 91.3% for sepsis prediction, within 2.1 percentage points of a centralised baseline trained on pooled data. The framework introduces a novel heterogeneous aggregation strategy that accommodates significant differences in local dataset size, class distribution, and data quality — challenges specific to African healthcare contexts.
-
-This work contributes (i) a domain-adapted federated architecture for clinical NLP and tabular data, (ii) a benchmark dataset of de-identified patient records from three participating institutions, and (iii) a reproducible experimental pipeline released as open-source software.`,
-  },
-  {
-    id: 's2', key: 'chapter1', title: 'Chapter 1: Introduction', order: 2,
-    mandatory: true, enabled: true, approved: false,
-    status: 'completed', wordCount: 1840,
-    content: `1.1 Background and Motivation
-
-Artificial intelligence and machine learning have transformed clinical decision support across high-income healthcare settings, enabling early detection of conditions ranging from sepsis to diabetic retinopathy with accuracy exceeding that of specialist clinicians. However, the deployment of such systems in sub-Saharan Africa remains disproportionately limited — not primarily due to algorithmic deficiencies, but due to structural barriers surrounding clinical data access, privacy governance, and institutional interoperability.
-
-Hospitals across Lagos, Accra, Nairobi, and Johannesburg generate millions of patient records annually, yet these datasets remain siloed within individual institutions. Data-sharing agreements across hospitals are rare, and where they exist, they are constrained by national health data regulations, patient consent frameworks, and the technical overhead of securely transferring sensitive records. The consequence is that model developers are unable to assemble the large, diverse datasets required to train robust clinical predictors for the African patient population.
-
-1.2 Problem Statement
-
-The central problem addressed by this thesis is the tension between two imperatives that are individually well-established but mutually conflicting in practice: (i) the need for large, diverse training datasets to build generalisable clinical machine learning models, and (ii) the legal and ethical obligation to protect patient data privacy and prevent institutional data sovereignty violations.
-
-Centralised learning — wherein all training data is aggregated into a single repository before model training — resolves the data diversity problem but violates privacy obligations. Conversely, purely local model training protects privacy but produces models that overfit to local data distributions and fail to generalise across patient populations.
-
-1.3 Research Objectives
-
-This thesis pursues four primary objectives:
-
-1. To design and implement a federated learning framework adapted to the clinical and infrastructural constraints of African hospitals, with explicit support for heterogeneous data distributions, intermittent connectivity, and differential privacy guarantees.
-
-2. To develop a novel aggregation strategy — Heterogeneous Federated Aggregation (HFA) — that accounts for unequal dataset sizes, class imbalances, and data quality disparities across participating institutions.
-
-3. To evaluate the proposed framework against centralised and baseline federated baselines across three real-world hospital datasets, measuring diagnostic accuracy, communication overhead, and privacy leakage.
-
-4. To release the framework, benchmark datasets, and experimental code as open-source resources to facilitate reproducibility and adoption by the African AI research community.
-
-1.4 Significance of the Study
-
-This work advances the state of the art in three respects. First, it addresses a gap in the federated learning literature: existing frameworks (FedAvg, FedProx, SCAFFOLD) have been designed and benchmarked primarily on datasets from North American and European healthcare systems, and perform poorly under the non-IID conditions characteristic of African hospital data. Second, the proposed differential privacy integration is calibrated to the sensitivity of clinical tabular data. Third, the multi-institutional benchmark dataset introduced by this work represents the first publicly available federated clinical dataset from sub-Saharan Africa.`,
-  },
-  {
-    id: 's3', key: 'chapter2', title: 'Chapter 2: Literature Review', order: 3,
-    mandatory: true, enabled: true, approved: false,
-    status: 'in-progress', wordCount: 1240,
-    supervisorComment: 'Good coverage. You need to discuss DP-FL for tabular data specifically — the imaging literature dominates your review but your work is on tabular clinical records.',
-    content: `2.1 Federated Learning: Foundations and Evolution
-
-Federated learning was formally introduced by McMahan et al. (2017) as a communication-efficient approach to training deep neural networks across distributed mobile devices without centralising user data. The canonical FedAvg algorithm proceeds by selecting a random subset of clients at each global round, broadcasting the current global model weights to selected clients, allowing each client to perform several steps of local stochastic gradient descent on their private data, and aggregating the resulting local model updates via weighted averaging.
-
-Subsequent work has extended this foundation in several directions. Li et al. (2020) introduced FedProx, which adds a proximal term to the local objective to limit the divergence between local and global models — a critical correction for heterogeneous (non-IID) data distributions. Karimireddy et al. (2020) proposed SCAFFOLD, which addresses client drift through variance reduction via control variates. Both methods demonstrate improved convergence under data heterogeneity, though at the cost of increased communication and memory overhead.
-
-2.2 Privacy-Preserving Federated Learning
-
-While federated learning avoids raw data transmission, it does not provide formal privacy guarantees: gradient updates can leak sensitive information about training examples through gradient inversion attacks (Geiping et al., 2020) and membership inference attacks (Shokri et al., 2017). Two primary countermeasures have emerged:
-
-Differential privacy (DP) adds calibrated Gaussian or Laplacian noise to gradient updates, providing a formal (ε, δ)-DP guarantee. Abadi et al. (2016) proposed the DP-SGD algorithm, which clips per-sample gradients before noise addition to bound sensitivity. The privacy-utility tradeoff is governed by the noise multiplier σ: higher σ provides stronger privacy at the cost of model accuracy.
-
-Secure aggregation protocols (Bonawitz et al., 2017) use cryptographic masking to ensure that the server learns only the aggregate of client updates, not individual client contributions. This provides protection against a semi-honest server without the accuracy cost of DP, but introduces significant communication and computation overhead.
-
-2.3 Clinical Applications of Federated Learning
-
-Several recent works have applied federated learning to clinical prediction tasks. Rieke et al. (2020) provide a comprehensive survey of federated learning in medical imaging, demonstrating competitive performance with centralised baselines on brain tumour segmentation and COVID-19 chest X-ray classification. Dayan et al. (2021) report a federated model for COVID-19 prognosis trained across 20 hospitals in five countries, achieving a mean AUC of 0.82 — within 3% of a centralised model trained on pooled data.
-
-Tabular clinical data presents distinct challenges not addressed by the imaging literature. Missing values, heterogeneous feature distributions, and class imbalance require specialised preprocessing and modelling strategies. Silva et al. (2022) address missing data in federated clinical tabular learning through locally-trained imputation models, though their approach requires homogeneous feature spaces across clients — an assumption that does not hold in our multi-institutional African context.`,
-  },
-  {
-    id: 's4', key: 'chapter3', title: 'Chapter 3: Methodology', order: 4,
-    mandatory: true, enabled: true, approved: false,
-    status: 'in-progress', wordCount: 890,
-    content: `3.1 Research Design
-
-This thesis adopts a design science research (DSR) methodology (Hevner et al., 2004), which frames the research as the iterative design, implementation, and evaluation of an artefact — in this case, the FedCliniq framework — intended to solve a real-world problem in a defined application domain. The DSR approach is appropriate because the primary contribution of this work is not a theoretical proposition but a working technical system, and its evaluation is conducted through both technical benchmarking and contextual assessment.
-
-The framework development proceeds in three phases: (i) requirements elicitation through structured interviews with clinical informatics staff at the three participating hospitals; (ii) iterative prototyping and internal evaluation against synthetic federated datasets; and (iii) final evaluation against real de-identified patient data under a data-sharing agreement approved by all three institutional ethics boards.
-
-3.2 Dataset Description
-
-The primary evaluation dataset comprises de-identified patient records from three hospitals: Lagos University Teaching Hospital (LUTH, n = 4,820), Korle-Bu Teaching Hospital, Accra (KBTH, n = 3,140), and Kenyatta National Hospital, Nairobi (KNH, n = 2,670). Each dataset contains 47 clinical features (vital signs, laboratory values, comorbidities) and a binary sepsis label (Sepsis-3 criteria, Singer et al., 2016).
-
-The three datasets exhibit significant distribution shift: mean patient age at LUTH (38.2 years) differs substantially from KNH (44.7 years); class prevalence (sepsis positive) ranges from 11.3% at KBTH to 18.7% at LUTH. Missing data rates range from 8.2% (KNH) to 23.4% (LUTH), reflecting differences in data entry practices and available equipment.
-
-3.3 FedCliniq Architecture
-
-FedCliniq consists of four components: a central aggregation server, hospital-side client agents, a differential privacy module, and an adaptive communication scheduler. The aggregation server coordinates training rounds and performs Heterogeneous Federated Aggregation (HFA). Each client agent runs local training, applies DP noise, and communicates compressed gradient updates to the server.`,
-  },
-  {
-    id: 's5', key: 'chapter4', title: 'Chapter 4: Results & Analysis', order: 5,
-    mandatory: true, enabled: true, approved: false,
-    status: 'not-started', wordCount: 0, content: '',
-  },
-  {
-    id: 's6', key: 'chapter5', title: 'Chapter 5: Discussion', order: 6,
-    mandatory: true, enabled: true, approved: false,
-    status: 'not-started', wordCount: 0, content: '',
-  },
-  {
-    id: 's7', key: 'chapter6', title: 'Chapter 6: Conclusion', order: 7,
-    mandatory: true, enabled: true, approved: false,
-    status: 'not-started', wordCount: 0, content: '',
-  },
-  {
-    id: 's8', key: 'bibliography', title: 'Bibliography', order: 8,
-    mandatory: true, enabled: true, approved: false,
-    status: 'not-started', wordCount: 0, content: '',
-  },
-  {
-    id: 's9', key: 'appendix', title: 'Appendix', order: 9,
-    mandatory: false, enabled: true, approved: false,
-    status: 'not-started', wordCount: 0, content: '',
-  },
+  { id: 's1', key: 'abstract',     title: 'Abstract',                    order: 1, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's2', key: 'chapter1',     title: 'Chapter 1: Introduction',     order: 2, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's3', key: 'chapter2',     title: 'Chapter 2: Literature Review',order: 3, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's4', key: 'chapter3',     title: 'Chapter 3: Methodology',      order: 4, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's5', key: 'chapter4',     title: 'Chapter 4: Results & Analysis',order: 5,mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's6', key: 'chapter5',     title: 'Chapter 5: Discussion',       order: 6, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's7', key: 'chapter6',     title: 'Chapter 6: Conclusion',       order: 7, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's8', key: 'bibliography', title: 'Bibliography',                order: 8, mandatory: true,  enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
+  { id: 's9', key: 'appendix',     title: 'Appendix',                    order: 9, mandatory: false, enabled: true, approved: false, status: 'not-started', wordCount: 0, content: '' },
 ];
 
 // ── References ─────────────────────────────────────────────────────────────────

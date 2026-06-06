@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActionIcon, Alert, Avatar, Badge, Box, Button, CopyButton,
-  Divider, Group, Modal, Paper, Select, SimpleGrid, Stack,
+  Divider, Group, Modal, Pagination, Paper, Select, SimpleGrid, Stack,
   Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import {
@@ -86,9 +86,9 @@ interface SBSup    { id: string; name: string; role: string; }
 export default function HODStudents() {
   const dispatch        = useAppDispatch();
   const user            = useAppSelector(s => s.auth.user);
-  const institutionId   = user?.institutionId   ?? '';
+  const institutionId  = user?.institutionId  ?? '';
   const institutionName = user?.institutionName ?? '';
-  const departmentName  = user?.departmentName  ?? '';
+  const departmentName = user?.departmentName  ?? '';
 
   // Local state — direct from Supabase
   const [rows,          setRows]          = useState<SBStudent[]>([]);
@@ -100,6 +100,8 @@ export default function HODStudents() {
   const [creds,         setCreds]         = useState<GeneratedCreds | null>(null);
   const [assignTarget,  setAssignTarget]  = useState<string | null>(null);
   const [newSupId,      setNewSupId]      = useState<string | null>(null);
+  const [page,          setPage]          = useState(1);
+  const PAGE_SIZE = 8;
 
   const [name,    setName]    = useState('');
   const [email,   setEmail]   = useState('');
@@ -112,28 +114,15 @@ export default function HODStudents() {
   const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
   const SUP_ROLES    = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
 
-  // ── Helper: query users with institution_id → institution_name fallback ──────
+  // ── Helper: strict institution_id filter — no name fallback, no unscoped query ─
   const queryByInstitution = async (select: string, roles: string[]) => {
     type Row = Record<string, unknown>;
-    let data: Row[] = [];
-
-    if (institutionId) {
-      const { data: d } = await supabase.from('users').select(select)
-        .eq('institution_id', institutionId).in('role', roles).order('created_at');
-      data = (d ?? []) as unknown as Row[];
-    }
-    if (!data.length && institutionName) {
-      const { data: d } = await supabase.from('users').select(select)
-        .eq('institution_name', institutionName).in('role', roles).order('created_at');
-      data = (d ?? []) as unknown as Row[];
-    }
-    // Last resort: all accessible users with matching roles (RLS limits to institution)
-    if (!data.length) {
-      const { data: d } = await supabase.from('users').select(select)
-        .in('role', roles).order('created_at');
-      data = (d ?? []) as unknown as Row[];
-    }
-    return data;
+    if (!institutionId) return [] as Row[];
+    const { data } = await supabase.from('users').select(select)
+      .eq('institution_id', institutionId)
+      .in('role', roles)
+      .order('created_at');
+    return (data ?? []) as unknown as Row[];
   };
 
   // ── Load supervisors for the Add Student dropdown ─────────────────────────
@@ -147,6 +136,7 @@ export default function HODStudents() {
     setLoading(true);
     try {
       const [studs, sups] = await Promise.all([
+        // All students in the institution regardless of department
         queryByInstitution(
           'id, name, email, phone, role, created_at, matric_no, project_title, supervisor_id',
           STUDENT_ROLES,
@@ -192,9 +182,10 @@ export default function HODStudents() {
   };
 
   const myId = user?.id ?? '';
-  useEffect(() => { loadAll(); }, [institutionId, institutionName, myId]);
+  useEffect(() => { loadAll(); }, [institutionId, myId]);
+  useEffect(() => { setPage(1); }, [search]);
 
-  const supervisorOptions = supRows.map(s => ({ value: s.id, label: `${s.name} — ${s.role}` }));
+  const supervisorOptions = supRows.map(s => ({ value: s.id, label: `${s.name}` }));
   const supervisorInfo = (id: string | null) => id ? (supRows.find(s => s.id === id) ?? null) : null;
   const supervisorName = (id: string | null) =>
     id ? (supRows.find(s => s.id === id)?.name ?? '—') : null;
@@ -206,6 +197,9 @@ export default function HODStudents() {
         (s.project_title ?? '').toLowerCase().includes(search.toLowerCase())
       )
     : rows;
+
+  const totalPages   = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const closeAddModal = () => {
     setShowModal(false);
@@ -334,7 +328,7 @@ export default function HODStudents() {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {filtered.map((st: SBStudent) => (
+            {paginated.map((st: SBStudent) => (
               <Table.Tr key={st.id}>
                 <Table.Td>
                   <Group gap="sm" wrap="nowrap">
@@ -373,7 +367,7 @@ export default function HODStudents() {
                 </Table.Td>
               </Table.Tr>
             ))}
-            {filtered.length === 0 && (
+            {paginated.length === 0 && (
               <Table.Tr>
                 <Table.Td colSpan={7}><Text ta="center" c="dimmed" py="xl" size="sm">No students found.</Text></Table.Td>
               </Table.Tr>
@@ -381,6 +375,15 @@ export default function HODStudents() {
           </Table.Tbody>
         </Table>
       </Paper>
+
+      {totalPages > 1 && (
+        <Group justify="space-between" mt="md" align="center">
+          <Text size="xs" c="dimmed">
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} students
+          </Text>
+          <Pagination value={page} onChange={setPage} total={totalPages} size="sm" color="brand" />
+        </Group>
+      )}
 
       {/* Add Student Modal */}
       <Modal opened={showModal} onClose={closeAddModal} centered size="lg"

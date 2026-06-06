@@ -374,7 +374,7 @@ export default function AdminFacultyDepts() {
 
   const handleDeleteCollege = async (id: string) => {
     try {
-      await dbDeleteCollege(id);
+      await dbDeleteCollege(id, institutionId);
       setColleges(prev => prev.filter(c => c.id !== id));
       if (selectedCollegeId === id) { setSelectedCollegeId(null); setSelectedFacultyId(null); }
     } catch (err: unknown) {
@@ -384,7 +384,7 @@ export default function AdminFacultyDepts() {
 
   const handleDeleteFaculty = async (id: string) => {
     try {
-      await dbDeleteFaculty(id);
+      await dbDeleteFaculty(id, institutionId);
       setFaculties(prev => prev.filter(f => f.id !== id));
       if (selectedFacultyId === id) setSelectedFacultyId(null);
     } catch (err: unknown) {
@@ -394,7 +394,7 @@ export default function AdminFacultyDepts() {
 
   const handleDeleteDepartment = async (id: string) => {
     try {
-      await dbDeleteDepartment(id);
+      await dbDeleteDepartment(id, institutionId);
       setDepartments(prev => prev.filter(d => d.id !== id));
     } catch (err: unknown) {
       notifications.show({ title: 'Error', message: err instanceof Error ? err.message : 'Delete failed', color: 'red' });
@@ -608,7 +608,7 @@ export default function AdminFacultyDepts() {
           <Text size="xs" c="dimmed">A login account will be created for the Provost using the email above.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={() => setShowCollegeModal(false)}>Cancel</Button>
-            <Button color="violet" loading={savingCol} onClick={saveCollege}
+            <Button color="brand" loading={savingCol} onClick={saveCollege}
               disabled={!colName.trim() || !colDeanName.trim()}>
               Save &amp; Generate Credentials
             </Button>
@@ -630,7 +630,7 @@ export default function AdminFacultyDepts() {
           {/* Institution context */}
           <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
             <Group gap={6}>
-              <LuInfo size={13} color="#3b5bdb" />
+              <LuInfo size={13} color="brand" />
               <Text size="xs" c="brand.7" fw={600}>Institution</Text>
             </Group>
             <Text size="sm" fw={600} mt={2}>{institutionName}</Text>
@@ -656,7 +656,7 @@ export default function AdminFacultyDepts() {
 
           <Text size="xs" c="dimmed">A login account will be created for the Dean using the email above.</Text>
           <Group justify="flex-end" mt="xs">
-            <Button variant="subtle" color="gray" onClick={() => setShowFacultyModal(false)}>Cancel</Button>
+            <Button variant="subtle" color="brand" onClick={() => setShowFacultyModal(false)}>Cancel</Button>
             <Button color="brand" loading={savingFac} onClick={saveFaculty}
               disabled={!facName.trim() || !facDeanName.trim()}>
               Save &amp; Generate Credentials
@@ -705,8 +705,8 @@ export default function AdminFacultyDepts() {
 
           <Text size="xs" c="dimmed">A login account will be created for the HoD using the email above.</Text>
           <Group justify="flex-end" mt="xs">
-            <Button variant="subtle" color="gray" onClick={() => setShowDeptModal(false)}>Cancel</Button>
-            <Button color="green" loading={savingDept} onClick={saveDepartment}
+            <Button variant="subtle" color="brand " onClick={() => setShowDeptModal(false)}>Cancel</Button>
+            <Button color="brand.7" loading={savingDept} onClick={saveDepartment}
               disabled={!deptName.trim() || !deptHodName.trim()}>
               Save &amp; Generate Credentials
             </Button>

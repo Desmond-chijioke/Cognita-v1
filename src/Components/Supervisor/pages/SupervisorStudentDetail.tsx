@@ -418,7 +418,9 @@ export default function SupervisorStudentDetail() {
     if (txt.length < 3) { setSelPopup(null); return; }
     const range = sel!.getRangeAt(0);
     const rect  = range.getBoundingClientRect();
-    setSelPopup({ text: txt, x: rect.left + rect.width / 2, y: rect.top });
+    const half = 165; // half of popup min-width (330px) + padding
+    const clampedX = Math.max(half, Math.min(window.innerWidth - half, rect.left + rect.width / 2));
+    setSelPopup({ text: txt, x: clampedX, y: rect.top });
     setSelComment('');
   }, []);
 
@@ -1112,7 +1114,9 @@ export default function SupervisorStudentDetail() {
                             if (txt.length < 2) { setSubAnnoPopup(null); return; }
                             const range = sel!.getRangeAt(0);
                             const rect  = range.getBoundingClientRect();
-                            setSubAnnoPopup({ subId: sub.id, text: txt, x: rect.left + rect.width / 2, y: rect.top });
+                            const half = 150; // half of popup min-width (280px) + padding
+                            const clampedX = Math.max(half, Math.min(window.innerWidth - half, rect.left + rect.width / 2));
+                            setSubAnnoPopup({ subId: sub.id, text: txt, x: clampedX, y: rect.top });
                             setSubAnnoColor('#ffd43b');
                             setSubAnnoComment('');
                           }}

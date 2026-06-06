@@ -83,8 +83,8 @@ export default function SupervisorLayout() {
               rightSection={
                 item.label === 'Messages' && unreadCount > 0
                   ? <Badge size="xs" color="brand" variant="filled" circle>{unreadCount}</Badge>
-                  : item.label === 'Notifications' && pendingNotifs > 0
-                  ? <Badge size="xs" color="red" variant="filled" circle>{pendingNotifs}</Badge>
+                  : item.label === 'Reviews' && pendingNotifs > 0
+                  ? <Badge size="xs" color="orange" variant="filled" circle>{pendingNotifs}</Badge>
                   : undefined
               }
               active={location.pathname === item.path}

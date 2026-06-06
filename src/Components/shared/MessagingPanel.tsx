@@ -54,10 +54,9 @@ function roleColor(role: string) {
 
 export default function MessagingPanel() {
   const user            = useAppSelector(s => s.auth.user);
-  const myId            = user?.id            ?? '';
-  const myName          = user?.name          ?? 'Me';
-  const institutionId   = user?.institutionId  ?? '';
-  const institutionName = user?.institutionName ?? '';
+  const myId          = user?.id           ?? '';
+  const myName        = user?.name         ?? 'Me';
+  const institutionId = user?.institutionId ?? '';
 
   const [contacts,        setContacts]        = useState<Contact[]>([]);
   const [messages,        setMessages]        = useState<Message[]>([]);
@@ -77,34 +76,21 @@ export default function MessagingPanel() {
   // ── 1. Load contacts — all users in same institution except self ──────────
 
   const loadContacts = useCallback(async () => {
-    if (!myId) return;
+    if (!myId || !institutionId) return;
     setLoadingContacts(true);
 
     type UserRow = { id: string; name: string; email: string; role: string };
 
-    const queryUsers = async (filter: Record<string, string>) => {
-      let q = supabase.from('users').select('id, name, email, role')
-        .neq('id', myId).neq('role', 'Director of Research').order('name');
-      for (const [key, val] of Object.entries(filter)) q = q.eq(key, val);
-      const { data } = await q;
-      return (data ?? []) as unknown as UserRow[];
-    };
-
     try {
-      let users: UserRow[] = [];
-
-      // Strategy 1: by institution_id
-      if (institutionId) users = await queryUsers({ institution_id: institutionId });
-      // Strategy 2: by institution_name (handles COG mismatch)
-      if (!users.length && institutionName) users = await queryUsers({ institution_name: institutionName });
-      // Strategy 3: all users visible to this auth user — RLS read_users policy
-      // limits results to the institution anyway, so this is safe
-      if (!users.length) {
-        const { data } = await supabase
-          .from('users').select('id, name, email, role')
-          .neq('id', myId).neq('role', 'Director of Research').order('name');
-        users = (data ?? []) as unknown as UserRow[];
-      }
+      // Only return users that share the same institution_id — no fallbacks
+      const { data } = await supabase
+        .from('users')
+        .select('id, name, email, role')
+        .eq('institution_id', institutionId)
+        .neq('id', myId)
+        .neq('role', 'Director of Research')
+        .order('name');
+      const users = (data ?? []) as unknown as UserRow[];
 
       if (!users.length) return;
 
@@ -131,13 +117,11 @@ export default function MessagingPanel() {
       }));
 
       setContacts(enriched);
-      if (!activeIdRef.current && enriched.length > 0) {
-        setActiveId(enriched[0].id);
-      }
+      // No auto-select — user must click a contact to open a chat
     } finally {
       setLoadingContacts(false);
     }
-  }, [institutionId, institutionName, myId]);
+  }, [institutionId, myId]);
 
   // ── 2. Load messages for the active conversation ──────────────────────────
 

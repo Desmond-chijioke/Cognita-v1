@@ -1,99 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Badge, Box, Drawer, Group, Paper, Select, SimpleGrid,
+  Badge, Box, Drawer, Group, Loader, Paper, Select, SimpleGrid,
   Stack, Table, Text, TextInput, Title,
 } from '@mantine/core';
 import {
   LuFolder, LuClock, LuClipboardCheck,
   LuSearch, LuBot, LuFileCheck, LuCircleCheck,
 } from 'react-icons/lu';
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-interface DocSection { name: string; words: number; }
-
-interface Project {
-  id: string;
-  title: string;
-  researcher: string;
-  department: string;
-  status: string;
-  aiUsage: string;
-  integrity: number;
-  lastUpdated: string;
-  dataset: string;
-  aiMode: string;
-  sections: DocSection[];
-}
-
-// ── Static data ────────────────────────────────────────────────────────────────
-
-const PROJECTS: Project[] = [
-  {
-    id: '1',
-    title: 'AI-Based Early Detection of Crop Diseases Using Computer Vision',
-    researcher: 'Dr. Fatima Hassan', department: 'Computer Science',
-    status: 'In-Progress', aiUsage: 'Moderate', integrity: 84,
-    lastUpdated: '2026-02-14', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 210 }, { name: 'Introduction', words: 1450 }, { name: 'Methodology', words: 980 }],
-  },
-  {
-    id: '2',
-    title: 'Microplastic Contamination in Freshwater Ecosystems',
-    researcher: 'Dr. Sarah Chen', department: 'Environmental Science',
-    status: 'Review', aiUsage: 'Low', integrity: 92,
-    lastUpdated: '2026-02-12', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 195 }, { name: 'Introduction', words: 1600 }, { name: 'Results', words: 2100 }],
-  },
-  {
-    id: '3',
-    title: 'CRISPR-Cas9 Gene Editing for Sickle Cell Disease Therapy',
-    researcher: 'Dr. Kwame Asante', department: 'Medicine',
-    status: 'In-Progress', aiUsage: 'High', integrity: 68,
-    lastUpdated: '2026-02-11', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 220 }, { name: 'Introduction', words: 1300 }],
-  },
-  {
-    id: '4',
-    title: 'Quantum Computing Approaches to Drug Discovery',
-    researcher: 'Prof. Elena Vasquez', department: 'Chemistry',
-    status: 'Draft', aiUsage: 'None', integrity: 95,
-    lastUpdated: '2026-02-09', dataset: 'Not Uploaded', aiMode: 'Disabled',
-    sections: [{ name: 'Abstract', words: 180 }, { name: 'Introduction', words: 1200 }],
-  },
-  {
-    id: '5',
-    title: 'Social Media Misinformation and Public Health Outcomes',
-    researcher: 'Dr. Amina Yusuf', department: 'Social Sciences',
-    status: 'Submitted', aiUsage: 'Low', integrity: 89,
-    lastUpdated: '2026-02-06', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 200 }, { name: 'Introduction', words: 1100 }, { name: 'Discussion', words: 1800 }, { name: 'Conclusion', words: 650 }],
-  },
-  {
-    id: '6',
-    title: 'Renewable Energy Integration in Smart Grid Systems',
-    researcher: 'Dr. Michael Obi', department: 'Engineering',
-    status: 'In-Progress', aiUsage: 'Moderate', integrity: 81,
-    lastUpdated: '2026-02-08', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 190 }, { name: 'Introduction', words: 1350 }, { name: 'Methodology', words: 1100 }],
-  },
-  {
-    id: '7',
-    title: 'Antibiotic Resistance Patterns in Hospital-Acquired Infections',
-    researcher: 'Dr. Grace Ndegwa', department: 'Medicine',
-    status: 'Exported', aiUsage: 'Low', integrity: 91,
-    lastUpdated: '2026-01-30', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 205 }, { name: 'Introduction', words: 1500 }, { name: 'Results', words: 2200 }, { name: 'Conclusion', words: 700 }],
-  },
-  {
-    id: '8',
-    title: 'Neural Machine Translation for Low-Resource African Languages',
-    researcher: 'Dr. Ibrahim Musa', department: 'Computer Science',
-    status: 'In-Progress', aiUsage: 'High', integrity: 73,
-    lastUpdated: '2026-02-13', dataset: 'Uploaded', aiMode: 'Enabled',
-    sections: [{ name: 'Abstract', words: 215 }, { name: 'Introduction', words: 1400 }, { name: 'Methodology', words: 1050 }],
-  },
-];
+import { useAppSelector } from '../../../Redux/hooks';
+import { fetchAdminProjects } from '../../../supabase/adminStats';
+import type { AdminProject } from '../../../supabase/adminStats';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -115,27 +31,39 @@ function integrityColor(n: number) {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function AdminProjects() {
-  const [search, setSearch]           = useState('');
-  const [deptFilter, setDeptFilter]   = useState<string | null>(null);
+  const user          = useAppSelector(s => s.auth.user);
+  const institutionId = user?.institutionId;
+
+  const [projects, setProjects] = useState<AdminProject[]>([]);
+  const [loading,  setLoading]  = useState(true);
+
+  useEffect(() => {
+    fetchAdminProjects(institutionId)
+      .then(setProjects)
+      .finally(() => setLoading(false));
+  }, [institutionId]);
+
+  const [search,       setSearch]       = useState('');
+  const [deptFilter,   setDeptFilter]   = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
-  const [selected, setSelected]       = useState<Project | null>(null);
+  const [selected,     setSelected]     = useState<AdminProject | null>(null);
 
-  const departments = [...new Set(PROJECTS.map(p => p.department))].sort();
-  const statuses    = [...new Set(PROJECTS.map(p => p.status))];
+  const departments = useMemo(() => [...new Set(projects.map(p => p.department))].sort(), [projects]);
+  const statuses    = useMemo(() => [...new Set(projects.map(p => p.status))], [projects]);
 
-  const filtered = useMemo(() => PROJECTS.filter(p => {
+  const filtered = useMemo(() => projects.filter(p => {
     const q = search.toLowerCase();
-    const matchSearch  = !q || p.title.toLowerCase().includes(q) || p.researcher.toLowerCase().includes(q);
-    const matchDept    = !deptFilter   || p.department === deptFilter;
-    const matchStatus  = !statusFilter || p.status === statusFilter;
-    return matchSearch && matchDept && matchStatus;
-  }), [search, deptFilter, statusFilter]);
+    return (
+      (!q          || p.title.toLowerCase().includes(q) || p.researcher.toLowerCase().includes(q)) &&
+      (!deptFilter   || p.department === deptFilter) &&
+      (!statusFilter || p.status     === statusFilter)
+    );
+  }), [projects, search, deptFilter, statusFilter]);
 
-  // Summary counts
-  const total      = PROJECTS.length;
-  const inProgress = PROJECTS.filter(p => p.status === 'In-Progress').length;
-  const inReview   = PROJECTS.filter(p => p.status === 'Review').length;
-  const submitted  = PROJECTS.filter(p => p.status === 'Submitted').length;
+  const total      = projects.length;
+  const inProgress = projects.filter(p => p.status === 'In-Progress').length;
+  const inReview   = projects.filter(p => p.status === 'Review').length;
+  const submitted  = projects.filter(p => p.status === 'Submitted').length;
 
   const SUMMARY = [
     { label: 'Total Projects', value: total,      icon: LuFolder,         color: '#228be6' },
@@ -194,54 +122,66 @@ export default function AdminProjects() {
       </Group>
 
       {/* ── Table ── */}
-      <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-        <Table highlightOnHover striped={false} verticalSpacing="sm">
-          <Table.Thead>
-            <Table.Tr style={{ background: '#f8f9fa' }}>
-              {['Project Title', 'Researcher', 'Department', 'Status', 'AI Usage', 'Integrity', 'Last Updated'].map(h => (
-                <Table.Th key={h}>
-                  <Text size="sm" c="dimmed" fw={500}>{h}</Text>
-                </Table.Th>
-              ))}
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {filtered.map(p => (
-              <Table.Tr
-                key={p.id}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelected(p)}
-              >
-                <Table.Td style={{ maxWidth: 340 }}>
-                  <Text size="sm" fw={500} lineClamp={2}>{p.title}</Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="sm" c="dimmed">{p.researcher}</Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="sm">{p.department}</Text>
-                </Table.Td>
-                <Table.Td>
-                  <Badge color={STATUS_COLOR[p.status] ?? 'gray'} variant="light" radius="sm">
-                    {p.status}
-                  </Badge>
-                </Table.Td>
-                <Table.Td>
-                  <Badge color={AI_COLOR[p.aiUsage] ?? 'gray'} variant="light" radius="sm">
-                    {p.aiUsage}
-                  </Badge>
-                </Table.Td>
-                <Table.Td>
-                  <Text fw={700} style={{ color: integrityColor(p.integrity) }}>{p.integrity}</Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="sm" c="dimmed">{p.lastUpdated}</Text>
-                </Table.Td>
+      {loading ? (
+        <Group justify="center" py={80}><Loader size="md" /></Group>
+      ) : (
+        <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+          <Table highlightOnHover striped={false} verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr style={{ background: '#f8f9fa' }}>
+                {['Project Title', 'Researcher', 'Department', 'Status', 'AI Usage', 'Approval', 'Last Updated'].map(h => (
+                  <Table.Th key={h}>
+                    <Text size="sm" c="dimmed" fw={500}>{h}</Text>
+                  </Table.Th>
+                ))}
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Paper>
+            </Table.Thead>
+            <Table.Tbody>
+              {filtered.length === 0 ? (
+                <Table.Tr>
+                  <Table.Td colSpan={7}>
+                    <Text size="sm" c="dimmed" ta="center" py={32}>
+                      {projects.length === 0 ? 'No student projects found for this institution.' : 'No projects match your filters.'}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ) : (
+                filtered.map(p => (
+                  <Table.Tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => setSelected(p)}>
+                    <Table.Td style={{ maxWidth: 340 }}>
+                      <Text size="sm" fw={500} lineClamp={2}>{p.title}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">{p.researcher}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{p.department}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge color={STATUS_COLOR[p.status] ?? 'gray'} variant="light" radius="sm">
+                        {p.status}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge color={AI_COLOR[p.aiUsage] ?? 'gray'} variant="light" radius="sm">
+                        {p.aiUsage}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text fw={700} style={{ color: integrityColor(p.integrity) }}>
+                        {p.integrity > 0 ? `${p.integrity}%` : '—'}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">{p.lastUpdated}</Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))
+              )}
+            </Table.Tbody>
+          </Table>
+        </Paper>
+      )}
 
       {/* ── Project detail drawer ── */}
       <Drawer
@@ -276,9 +216,9 @@ export default function AdminProjects() {
                 </Badge>
               </Box>
               <Box>
-                <Text size="xs" c="dimmed" mb={2}>Integrity Score</Text>
+                <Text size="xs" c="dimmed" mb={2}>Approval Rate</Text>
                 <Text fw={800} size="xl" style={{ color: integrityColor(selected.integrity) }}>
-                  {selected.integrity}
+                  {selected.integrity > 0 ? `${selected.integrity}%` : '—'}
                 </Text>
               </Box>
               <Box>
@@ -310,23 +250,26 @@ export default function AdminProjects() {
               <Group gap="xs" mb="sm">
                 <LuFileCheck size={15} color="#868e96" />
                 <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                  Document Sections
+                  Submitted Sections
                 </Text>
               </Group>
-              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-                {selected.sections.map((sec, i) => (
-                  <Group
-                    key={sec.name}
-                    justify="space-between"
-                    px="md"
-                    py="sm"
-                    style={{ borderTop: i > 0 ? '1px solid #f1f3f5' : undefined }}
-                  >
-                    <Text size="sm">{sec.name}</Text>
-                    <Text size="sm" c="dimmed">{sec.words.toLocaleString()} words</Text>
-                  </Group>
-                ))}
-              </Paper>
+              {selected.sections.length === 0 ? (
+                <Text size="sm" c="dimmed">No sections submitted yet.</Text>
+              ) : (
+                <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                  {selected.sections.map((sec, i) => (
+                    <Group
+                      key={`${sec.name}-${i}`}
+                      justify="space-between"
+                      px="md" py="sm"
+                      style={{ borderTop: i > 0 ? '1px solid #f1f3f5' : undefined }}
+                    >
+                      <Text size="sm">{sec.name}</Text>
+                      <Text size="sm" c="dimmed">{sec.words.toLocaleString()} words</Text>
+                    </Group>
+                  ))}
+                </Paper>
+              )}
             </Box>
 
           </Stack>

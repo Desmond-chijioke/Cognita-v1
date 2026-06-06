@@ -46,19 +46,30 @@ export interface DBDepartment {
 // ── Fetch all hierarchy data (2-step: entities → then batch-fetch leaders) ────
 // Avoids PostgREST FK join syntax which requires schema cache refresh and can hang.
 
+const STUDENT_ROLES = ['Student', 'PhD Student', "Master's Student", 'Undergraduate Student', 'Researcher'];
+
 export async function fetchHierarchy(institutionId: string) {
-  // Step 1: Fetch the three entity tables independently
-  const [colRes, facRes, deptRes] = await Promise.all([
+  // Step 1: Fetch the three entity tables + institution students in parallel
+  const [colRes, facRes, deptRes, studentRes] = await Promise.all([
     supabase.from('colleges')   .select('id, institution_id, name, dean_id, created_at').eq('institution_id', institutionId).order('created_at'),
     supabase.from('faculties')  .select('id, institution_id, college_id, name, dean_id, created_at').eq('institution_id', institutionId).order('created_at'),
     supabase.from('departments').select('id, institution_id, faculty_id, name, hod_id, students, created_at').eq('institution_id', institutionId).order('created_at'),
+    // Live student count per department — scoped to this institution only
+    supabase.from('users').select('department').eq('institution_id', institutionId).in('role', STUDENT_ROLES),
   ]);
 
   const colleges    = (colRes.data  ?? []) as (Omit<DBCollege,    'dean'>)[];
   const faculties   = (facRes.data  ?? []) as (Omit<DBFaculty,    'dean'>)[];
   const departments = (deptRes.data ?? []) as (Omit<DBDepartment, 'hod'>)[];
 
-  // Step 2: Collect all unique leader UUIDs and batch-fetch from users
+  // Build a live count map: department name → number of students in this institution
+  const studentCountMap = new Map<string, number>();
+  for (const u of (studentRes.data ?? []) as { department: string | null }[]) {
+    if (!u.department) continue;
+    studentCountMap.set(u.department, (studentCountMap.get(u.department) ?? 0) + 1);
+  }
+
+  // Step 2: Collect all unique leader UUIDs and batch-fetch from users (institution-scoped)
   const leaderIds = [
     ...colleges.map(c => c.dean_id),
     ...faculties.map(f => f.dean_id),
@@ -70,15 +81,20 @@ export async function fetchHierarchy(institutionId: string) {
     const { data: users } = await supabase
       .from('users')
       .select('id, name, email, phone, role')
-      .in('id', [...new Set(leaderIds)]);
+      .in('id', [...new Set(leaderIds)])
+      .eq('institution_id', institutionId);  // only leaders from this institution
     users?.forEach(u => { usersMap[u.id] = u as UserStub; });
   }
 
-  // Step 3: Merge leader info back into each entity
+  // Step 3: Merge leader info + live student counts back into each entity
   return {
-    colleges:    colleges.map(c => ({ ...c, dean: c.dean_id ? (usersMap[c.dean_id] ?? null) : null }))    as DBCollege[],
-    faculties:   faculties.map(f => ({ ...f, dean: f.dean_id ? (usersMap[f.dean_id] ?? null) : null }))  as DBFaculty[],
-    departments: departments.map(d => ({ ...d, hod: d.hod_id ? (usersMap[d.hod_id]  ?? null) : null })) as DBDepartment[],
+    colleges:    colleges.map(c => ({ ...c, dean: c.dean_id ? (usersMap[c.dean_id] ?? null) : null })) as DBCollege[],
+    faculties:   faculties.map(f => ({ ...f, dean: f.dean_id ? (usersMap[f.dean_id] ?? null) : null })) as DBFaculty[],
+    departments: departments.map(d => ({
+      ...d,
+      hod:      d.hod_id ? (usersMap[d.hod_id] ?? null) : null,
+      students: studentCountMap.get(d.name) ?? 0,  // live count, not stale DB column
+    })) as DBDepartment[],
   };
 }
 
@@ -122,18 +138,21 @@ export async function insertDepartment(data: {
 
 // ── Delete helpers ────────────────────────────────────────────────────────────
 
-export async function deleteCollege(id: string) {
-  const { error } = await supabase.from('colleges').delete().eq('id', id);
+export async function deleteCollege(id: string, institutionId: string) {
+  const { error } = await supabase.from('colleges').delete()
+    .eq('id', id).eq('institution_id', institutionId);
   if (error) throw new Error(error.message);
 }
 
-export async function deleteFaculty(id: string) {
-  const { error } = await supabase.from('faculties').delete().eq('id', id);
+export async function deleteFaculty(id: string, institutionId: string) {
+  const { error } = await supabase.from('faculties').delete()
+    .eq('id', id).eq('institution_id', institutionId);
   if (error) throw new Error(error.message);
 }
 
-export async function deleteDepartment(id: string) {
-  const { error } = await supabase.from('departments').delete().eq('id', id);
+export async function deleteDepartment(id: string, institutionId: string) {
+  const { error } = await supabase.from('departments').delete()
+    .eq('id', id).eq('institution_id', institutionId);
   if (error) throw new Error(error.message);
 }
 

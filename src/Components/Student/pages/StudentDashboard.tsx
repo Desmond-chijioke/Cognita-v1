@@ -9,7 +9,6 @@ import {
   LuActivity, LuBot, LuShield, LuDownload, LuTarget,
   LuFileText, LuHash, LuTrendingUp, LuBookOpen,
 } from 'react-icons/lu';
-import { CHECKLIST } from '../studentData';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions, type DBSubmission } from '../../../supabase/submissions';
 import { supabase } from '../../../supabase/client';
@@ -84,9 +83,6 @@ export default function StudentDashboard() {
   const [submissions,  setSubmissions]  = useState<DBSubmission[]>([]);
   const [loading,      setLoading]      = useState(true);
 
-  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>(
-    Object.fromEntries(CHECKLIST.map(c => [c.id, c.checked]))
-  );
 
   // ── Fetch profile + submissions ────────────────────────────────────────────
   useEffect(() => {
@@ -186,8 +182,7 @@ export default function StudentDashboard() {
     return acts.sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 8);
   }, [submissions, authUser?.name, supName]);
 
-  const completedCount = Object.values(checkedItems).filter(Boolean).length;
-  const displayTitle   = projectTitle || authUser?.name ? `${authUser?.name ?? ''}'s Research Project` : 'Research Project';
+  const displayTitle = projectTitle || authUser?.name ? `${authUser?.name ?? ''}'s Research Project` : 'Research Project';
 
   if (loading) {
     return (
@@ -356,31 +351,47 @@ export default function StudentDashboard() {
               )}
             </Paper>
 
-            {/* Project Checklist */}
+            {/* Project Checklist — driven by submitted chapters */}
             <Paper withBorder radius="md" p="lg" bg="white">
               <Group justify="space-between" mb="md">
                 <Text fw={700} size="md">Project Checklist</Text>
-                <Badge color="brand" variant="light" size="sm">
-                  {completedCount} / {CHECKLIST.length} completed
+                <Badge color="green" variant="light" size="sm">
+                  {approved.length} / {submissions.length} approved
                 </Badge>
               </Group>
-              <Stack gap="xs">
-                {CHECKLIST.map(item => (
-                  <Checkbox
-                    key={item.id}
-                    checked={checkedItems[item.id] ?? false}
-                    onChange={e => setCheckedItems(prev => ({ ...prev, [item.id]: e.currentTarget.checked }))}
-                    color="brand"
-                    label={
-                      <Text size="sm" style={checkedItems[item.id]
-                        ? { textDecoration: 'line-through', color: '#adb5bd' }
-                        : undefined}>
-                        {item.label}
-                      </Text>
-                    }
-                  />
-                ))}
-              </Stack>
+              {submissions.length === 0 ? (
+                <Text size="sm" c="dimmed" ta="center" py="sm">
+                  No chapters submitted yet. Each chapter you submit will appear here as a checklist item.
+                </Text>
+              ) : (
+                <Stack gap="xs">
+                  {sorted.map(sub => {
+                    const isApproved = sub.status === 'approved';
+                    const isRevision = sub.status === 'needs-revision';
+                    return (
+                      <Group key={sub.id} justify="space-between" wrap="nowrap" py={2}>
+                        <Checkbox
+                          readOnly
+                          checked={isApproved}
+                          color={isApproved ? 'green' : isRevision ? 'orange' : 'brand'}
+                          label={
+                            <Text size="sm" style={isApproved ? { textDecoration: 'line-through', color: '#adb5bd' } : undefined}>
+                              {sub.section_title}
+                            </Text>
+                          }
+                        />
+                        <Badge
+                          variant="light" size="xs" radius="sm"
+                          color={isApproved ? 'green' : isRevision ? 'orange' : 'blue'}
+                          style={{ flexShrink: 0 }}
+                        >
+                          {isApproved ? 'Approved' : isRevision ? 'Revision' : 'Pending'}
+                        </Badge>
+                      </Group>
+                    );
+                  })}
+                </Stack>
+              )}
             </Paper>
 
           </Stack>

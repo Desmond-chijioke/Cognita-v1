@@ -142,6 +142,8 @@ const EMPTY_FORM = {
 
 const SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Dean', 'Head of Department'];
 const STUDENT_ROLES    = ['Student', 'PhD Student', "Master's Student", 'Undergraduate Student', 'Researcher'];
+// Only roles that have access to the Supervisor dashboard (can review student work)
+const ASSIGNABLE_SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
 
 interface SupabaseUser {
   id:             string;
@@ -240,6 +242,11 @@ export default function AdminResearchers() {
     ...sbSupervisors.map(sbToDisplay),
     ...reduxUsers.filter(u => SUPERVISOR_ROLES.includes(u.role)).map(storedToDisplay),
   ], [sbSupervisors, reduxUsers]);
+
+  const assignableSupervisors = useMemo(
+    () => allSupervisors.filter(s => ASSIGNABLE_SUPERVISOR_ROLES.includes(s.role)),
+    [allSupervisors],
+  );
 
   const filtered = useMemo(() => {
     setPage(1);
@@ -677,7 +684,7 @@ export default function AdminResearchers() {
                         <Select
                           label="Assign Supervisor" placeholder="Select supervisor"
                           size="md"
-                          data={allSupervisors.map(s => ({ value: s.id, label: s.name }))}
+                          data={assignableSupervisors.map(s => ({ value: s.id, label: `${s.name} (${s.role})` }))}
                           value={form.supervisorId}
                           onChange={v => setForm(f => ({ ...f, supervisorId: v ?? '' }))}
                           clearable leftSection={<LuLink size={14} />}
@@ -825,7 +832,7 @@ export default function AdminResearchers() {
                   <Group gap="sm">
                     <Select
                       placeholder="Select supervisor"
-                      data={allSupervisors.map(s => ({ value: s.id, label: s.name }))}
+                      data={assignableSupervisors.map(s => ({ value: s.id, label: `${s.name} ` }))}
                       value={assignSupId}
                       onChange={v => setAssignSupId(v ?? '')}
                       clearable
