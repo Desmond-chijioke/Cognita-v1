@@ -247,6 +247,8 @@ export default function StudentAnalysis() {
     }
   };
 
+  const handleRunAnalysis = () => setStep('review');
+
   const handleReviewChapter = async () => {
     if (!user?.id) return;
     if (!isGeminiConfigured()) {
