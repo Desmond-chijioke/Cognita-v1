@@ -63,6 +63,7 @@ async function fetchNotifications(user: {
       .order('submitted_at', { ascending: false })
       .limit(30);
 
+      
     for (const s of data ?? []) {
       if (s.status === 'approved') {
         notifs.push({
