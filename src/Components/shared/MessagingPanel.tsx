@@ -467,39 +467,45 @@ export default function MessagingPanel() {
           }}>
 
           {/* Header */}
-          <Box style={{ padding: '12px 20px', borderBottom: '1px solid #f1f3f5', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Box style={{ padding: isMobile ? '10px 10px' : '12px 20px', borderBottom: '1px solid #f1f3f5', display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12 }}>
             {isMobile && (
-              <ActionIcon variant="subtle" color="gray" radius="xl" size="lg"
-                onClick={() => { setActiveId(null); setMobileView('contacts'); }}>
-                <LuArrowLeft size={18} />
+              <ActionIcon variant="subtle" color="gray" radius="xl" size="md"
+                onClick={() => { setActiveId(null); setMobileView('contacts'); }}
+                style={{ flexShrink: 0 }}>
+                <LuArrowLeft size={16} />
               </ActionIcon>
             )}
-            <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={40}>
+            <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={isMobile ? 34 : 40} style={{ flexShrink: 0 }}>
               {getInitials(activeContact.name)}
             </Avatar>
-            <Box style={{ flex: 1 }}>
-              <Text fw={700} size="sm">{activeContact.name}</Text>
-              <Group gap={4}>
-                <LuCircle size={8} color="#adb5bd" fill="#adb5bd" />
-                <Text size="xs" c="dimmed">{activeContact.role} · {activeContact.email}</Text>
-              </Group>
+            <Box style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <Text fw={700} size="sm" truncate>{activeContact.name}</Text>
+              {!isMobile && (
+                <Group gap={4} wrap="nowrap">
+                  <LuCircle size={8} color="#adb5bd" fill="#adb5bd" style={{ flexShrink: 0 }} />
+                  <Text size="xs" c="dimmed" truncate>{activeContact.role} · {activeContact.email}</Text>
+                </Group>
+              )}
+              {isMobile && (
+                <Text size="xs" c="dimmed" truncate>{activeContact.role}</Text>
+              )}
             </Box>
-            <Group gap={4}>
+            <Group gap={isMobile ? 2 : 4} wrap="nowrap" style={{ flexShrink: 0 }}>
               <ActionIcon
-                variant="subtle" color="green" radius="xl" size="lg"
+                variant="subtle" color="green" radius="xl" size={isMobile ? 'md' : 'lg'}
                 onClick={() => startCall('voice', { id: activeContact.id, name: activeContact.name, avatar: activeContact.avatar_url })}
                 loading={creatingCall}
                 title="Voice call"
               >
-                <LuPhone size={17} />
+                <LuPhone size={isMobile ? 15 : 17} />
               </ActionIcon>
               <ActionIcon
-                variant="subtle" color="brand" radius="xl" size="lg"
+                variant="subtle" color="brand" radius="xl" size={isMobile ? 'md' : 'lg'}
                 onClick={() => startCall('video', { id: activeContact.id, name: activeContact.name, avatar: activeContact.avatar_url })}
                 loading={creatingCall}
                 title="Video call"
               >
-                <LuVideo size={17} />
+                <LuVideo size={isMobile ? 15 : 17} />
               </ActionIcon>
             </Group>
           </Box>

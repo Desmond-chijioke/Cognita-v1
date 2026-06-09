@@ -104,6 +104,46 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
   const [duration, setDuration] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Draggable window ─────────────────────────────────────────────────────
+  const posRef     = useRef({ x: window.innerWidth - 380, y: window.innerHeight - 500 });
+  const [pos, setPos] = useState(posRef.current);
+  const isDragging  = useRef(false);
+  const dragOffset  = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const next = {
+        x: Math.max(0, Math.min(window.innerWidth  - 360, e.clientX - dragOffset.current.x)),
+        y: Math.max(0, Math.min(window.innerHeight - 480, e.clientY - dragOffset.current.y)),
+      };
+      posRef.current = next;
+      setPos(next);
+    };
+    const onUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup',   onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup',   onUp);
+      document.body.style.cursor = '';
+    };
+  }, []);
+
+  const onDragStart = (e: React.MouseEvent) => {
+    isDragging.current = true;
+    document.body.style.cursor = 'grabbing';
+    dragOffset.current = {
+      x: e.clientX - posRef.current.x,
+      y: e.clientY - posRef.current.y,
+    };
+    e.preventDefault();
+  };
+
   // Join room on mount
   useEffect(() => {
     if (daily && meetingState === 'new') {
@@ -159,7 +199,7 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
 
   return (
     <Box style={{
-      position: 'fixed', bottom: 20, right: 20, zIndex: 9000,
+      position: 'fixed', top: pos.y, left: pos.x, zIndex: 9000,
       width: 360, height: 480,
       background: '#0e0e0e',
       borderRadius: 16,
@@ -169,15 +209,20 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
       fontFamily: 'inherit',
     }}>
 
-      {/* ── Header bar ── */}
-      <Box style={{
-        padding: '10px 14px',
-        background: '#1a1a1a',
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
-        display: 'flex', alignItems: 'center', gap: 10,
-        flexShrink: 0,
-        zIndex: 3,
-      }}>
+      {/* ── Header bar — drag handle ── */}
+      <Box
+        onMouseDown={onDragStart}
+        style={{
+          padding: '10px 14px',
+          background: '#1a1a1a',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex', alignItems: 'center', gap: 10,
+          flexShrink: 0,
+          zIndex: 3,
+          cursor: 'grab',
+          userSelect: 'none',
+        }}
+      >
         <Avatar src={contactAvatar} size={30} radius="50%" color="brand" style={{ flexShrink: 0 }}>
           {getInitials(contactName)}
         </Avatar>
