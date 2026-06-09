@@ -47,7 +47,7 @@ const CTRL_BTN: React.CSSProperties = {
   borderRadius: '50%',
   border: 'none',
   cursor: 'pointer',
-  background: 'rgba(255,255,255,0.12)',
+  background: 'rgba(255,255,255,0.15)',
 };
 const CTRL_BTN_ACTIVE: React.CSSProperties = { ...CTRL_BTN, background: '#e03131' };
 const CTRL_BTN_SCREEN: React.CSSProperties = { ...CTRL_BTN, background: 'var(--mantine-color-brand-6)' };
@@ -119,13 +119,16 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [meetingState]);
 
-  // Leave on unmount + stop all tones
-  useEffect(() => () => { daily?.leave(); stopAll(); }, [daily]);
+  // Leave Daily room when the call object changes or on unmount
+  useEffect(() => () => { daily?.leave(); }, [daily]);
 
-  // Outgoing "calling…" tone — play until remote participant joins
+  // Stop all audio ONLY on final unmount — not when daily reference changes
+  useEffect(() => () => stopAll(), []);
+
+  // Outgoing "calling…" tone — plays on loop until remote participant joins
   useEffect(() => {
     startOutgoingTone();
-    return () => stopOutgoingTone();
+    return stopOutgoingTone;
   }, []);
 
   useEffect(() => {
@@ -156,38 +159,48 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
 
   return (
     <Box style={{
-      position: 'fixed', inset: 0, zIndex: 9000,
+      position: 'fixed', bottom: 20, right: 20, zIndex: 9000,
+      width: 360, height: 480,
       background: '#0e0e0e',
+      borderRadius: 16,
+      overflow: 'hidden',
+      boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
       display: 'flex', flexDirection: 'column',
       fontFamily: 'inherit',
     }}>
 
-      {/* ── Header ── */}
+      {/* ── Header bar ── */}
       <Box style={{
-        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3,
-        padding: '24px 28px 60px',
-        background: 'linear-gradient(180deg,rgba(0,0,0,0.75) 0%,transparent 100%)',
-        pointerEvents: 'none',
+        padding: '10px 14px',
+        background: '#1a1a1a',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        display: 'flex', alignItems: 'center', gap: 10,
+        flexShrink: 0,
+        zIndex: 3,
       }}>
-        <Text fw={700} c="white" size="xl">{contactName}</Text>
-        <Text size="sm" c="rgba(255,255,255,0.5)" mt={4}>
-          {isConnecting
-            ? 'Connecting…'
-            : !remoteId
-            ? 'Waiting for them to join…'
-            : fmtDuration(duration)}
-        </Text>
+        <Avatar src={contactAvatar} size={30} radius="50%" color="brand" style={{ flexShrink: 0 }}>
+          {getInitials(contactName)}
+        </Avatar>
+        <Box style={{ flex: 1, minWidth: 0 }}>
+          <Text fw={700} c="white" size="sm" truncate>{contactName}</Text>
+          <Text size="xs" c="rgba(255,255,255,0.45)">
+            {isConnecting
+              ? 'Connecting…'
+              : !remoteId
+              ? 'Waiting to join…'
+              : fmtDuration(duration)}
+          </Text>
+        </Box>
       </Box>
 
       {/* ── Main video area ── */}
       <Box style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
 
-        {/* Priority: screen share → remote video → waiting */}
+        {/* Priority: screen share → remote video → waiting avatar */}
         {screenTile ? (
           <DailyVideo
             sessionId={screenTile.session_id}
             type="screenVideo"
-      
             style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
           />
         ) : remoteId ? (
@@ -200,19 +213,19 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
           <Box style={{
             height: '100%',
             display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 16,
+            alignItems: 'center', justifyContent: 'center', gap: 12,
           }}>
             <Avatar
               src={contactAvatar}
-              size={110}
+              size={80}
               radius="50%"
               color="brand"
-              style={{ border: '3px solid rgba(255,255,255,0.14)', fontSize: 36 }}
+              style={{ border: '2px solid rgba(255,255,255,0.14)' }}
             >
               {getInitials(contactName)}
             </Avatar>
-            <Text c="rgba(255,255,255,0.45)" size="sm">
-              {isConnecting ? 'Connecting…' : `Waiting for ${contactName} to join`}
+            <Text c="rgba(255,255,255,0.4)" size="xs">
+              {isConnecting ? 'Connecting…' : `Waiting for ${contactName}`}
             </Text>
           </Box>
         )}
@@ -220,18 +233,17 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
         {/* ── Local PiP — video on ── */}
         {localId && !camOff && (
           <Box style={{
-            position: 'absolute', bottom: 96, right: 20,
-            width: 168, height: 112,
-            borderRadius: 14, overflow: 'hidden',
-            border: '2px solid rgba(255,255,255,0.18)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+            position: 'absolute', bottom: 8, right: 8,
+            width: 96, height: 64,
+            borderRadius: 10, overflow: 'hidden',
+            border: '1.5px solid rgba(255,255,255,0.18)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
             zIndex: 2,
           }}>
             <DailyVideo
               sessionId={localId}
               type="video"
               mirror
-        
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
           </Box>
@@ -240,91 +252,86 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
         {/* ── Local PiP — camera off ── */}
         {camOff && (
           <Box style={{
-            position: 'absolute', bottom: 96, right: 20,
-            width: 168, height: 112,
-            borderRadius: 14, overflow: 'hidden',
-            border: '2px solid rgba(255,255,255,0.1)',
+            position: 'absolute', bottom: 8, right: 8,
+            width: 96, height: 64,
+            borderRadius: 10, overflow: 'hidden',
+            border: '1.5px solid rgba(255,255,255,0.1)',
             background: '#1a1a2e',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             zIndex: 2,
           }}>
-            <Avatar src={myAvatar} size={52} radius="50%" color="brand">
+            <Avatar src={myAvatar} size={36} radius="50%" color="brand">
               {getInitials(myName)}
             </Avatar>
           </Box>
         )}
 
-        {/* Screen share indicator badge */}
+        {/* Screen share badge */}
         {isSharingScreen && (
           <Box style={{
-            position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)',
+            position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)',
             background: 'var(--mantine-color-brand-6)',
-            color: '#fff', borderRadius: 20, padding: '4px 14px',
-            fontSize: 12, fontWeight: 600, zIndex: 3,
+            color: '#fff', borderRadius: 20, padding: '3px 10px',
+            fontSize: 11, fontWeight: 600, zIndex: 3, whiteSpace: 'nowrap',
           }}>
-            You are sharing your screen
+            Sharing your screen
           </Box>
         )}
 
-        {/* Remote audio playback */}
         <DailyAudio />
       </Box>
 
       {/* ── Controls bar ── */}
       <Box style={{
-        padding: '20px 0 32px',
-        background: 'linear-gradient(0deg,rgba(0,0,0,0.85) 0%,transparent 100%)',
-        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 20,
+        padding: '10px 0 14px',
+        background: '#1a1a1a',
+        borderTop: '1px solid rgba(255,255,255,0.08)',
+        display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12,
+        flexShrink: 0,
         zIndex: 3,
       }}>
 
-        <Tooltip label={muted ? 'Unmute mic' : 'Mute mic'} withArrow color="dark">
+        <Tooltip label={muted ? 'Unmute' : 'Mute'} withArrow color="dark">
           <ActionIcon
-            size={60} radius="50%"
+            size={44} radius="50%"
             style={muted ? CTRL_BTN_ACTIVE : CTRL_BTN}
             onClick={toggleMic}
             aria-label={muted ? 'Unmute' : 'Mute'}
           >
-            {muted
-              ? <LuMicOff size={24} color="white" />
-              : <LuMic    size={24} color="white" />}
+            {muted ? <LuMicOff size={18} color="white" /> : <LuMic size={18} color="white" />}
           </ActionIcon>
         </Tooltip>
 
-        <Tooltip label={camOff ? 'Turn camera on' : 'Turn camera off'} withArrow color="dark">
+        <Tooltip label={camOff ? 'Camera on' : 'Camera off'} withArrow color="dark">
           <ActionIcon
-            size={60} radius="50%"
+            size={44} radius="50%"
             style={camOff ? CTRL_BTN_ACTIVE : CTRL_BTN}
             onClick={toggleCam}
             aria-label={camOff ? 'Camera on' : 'Camera off'}
           >
-            {camOff
-              ? <LuVideoOff size={24} color="white" />
-              : <LuVideo    size={24} color="white" />}
+            {camOff ? <LuVideoOff size={18} color="white" /> : <LuVideo size={18} color="white" />}
           </ActionIcon>
         </Tooltip>
 
-        <Tooltip label={isSharingScreen ? 'Stop sharing screen' : 'Share screen'} withArrow color="dark">
+        <Tooltip label={isSharingScreen ? 'Stop sharing' : 'Share screen'} withArrow color="dark">
           <ActionIcon
-            size={60} radius="50%"
+            size={44} radius="50%"
             style={isSharingScreen ? CTRL_BTN_SCREEN : CTRL_BTN}
             onClick={toggleScreen}
             aria-label={isSharingScreen ? 'Stop share' : 'Share screen'}
           >
-            {isSharingScreen
-              ? <LuMonitorOff size={24} color="white" />
-              : <LuMonitor    size={24} color="white" />}
+            {isSharingScreen ? <LuMonitorOff size={18} color="white" /> : <LuMonitor size={18} color="white" />}
           </ActionIcon>
         </Tooltip>
 
         <Tooltip label="End call" withArrow color="dark">
           <ActionIcon
-            size={60} radius="50%"
+            size={44} radius="50%"
             style={{ ...CTRL_BTN, background: '#e03131' }}
             onClick={endCall}
             aria-label="End call"
           >
-            <LuPhoneOff size={24} color="white" />
+            <LuPhoneOff size={18} color="white" />
           </ActionIcon>
         </Tooltip>
 

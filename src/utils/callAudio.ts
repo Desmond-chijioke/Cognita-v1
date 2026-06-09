@@ -41,7 +41,7 @@ function scheduleTone(
 }
 
 // ── Outgoing "calling…" tone ──────────────────────────────────────────────────
-// Classic dual-tone ring: two short rings then a long pause (UK/EU cadence)
+// Ring-ring cadence: two beeps, 2-second cycle total so silence never feels like it stopped.
 
 export function startOutgoingTone() {
   stopAll();
@@ -51,10 +51,10 @@ export function startOutgoingTone() {
   const play = () => {
     const t = ctx.currentTime;
     scheduleTone(ctx, [440, 480], t,       0.4);
-    scheduleTone(ctx, [440, 480], t + 0.6, 0.4);
+    scheduleTone(ctx, [440, 480], t + 0.55, 0.4);
   };
   play();
-  outgoingTimer = setInterval(play, 3000);
+  outgoingTimer = setInterval(play, 2000);
 }
 
 export function stopOutgoingTone() {

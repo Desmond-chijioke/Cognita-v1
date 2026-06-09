@@ -3,9 +3,9 @@ import {
   ActionIcon, Avatar, Badge, Box, Button, Group, Loader,
   Paper, ScrollArea, Stack, Text, TextInput,
 } from '@mantine/core';
-import { LuSearch, LuSend, LuCircle, LuMessageSquare, LuMic, LuX, LuPhone, LuVideo } from 'react-icons/lu';
-import CallModal, { type CallType } from './CallModal';
-import { startIncomingRing, stopIncomingRing } from '../../utils/callAudio';
+import { useMediaQuery } from '@mantine/hooks';
+import { LuSearch, LuSend, LuCircle, LuMessageSquare, LuMic, LuX, LuPhone, LuVideo, LuArrowLeft } from 'react-icons/lu';
+import { useGlobalCall } from '../../context/GlobalCallProvider';
 import { useAppSelector } from '../../Redux/hooks';
 import { supabase } from '../../supabase/client';
 import { showerrornotification } from '../../helper/notificationhelper';
@@ -30,7 +30,7 @@ interface DBMessage {
   receiver_id:   string;
   text:          string;
   audio_url?:    string;
-  message_type?: 'text' | 'voice' | 'call-invite';
+  message_type?: 'text' | 'voice' | 'call-invite' | 'call-ended';
   created_at:    string;
   read_at:       string | null;
 }
@@ -94,9 +94,15 @@ export default function MessagingPanel() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending,         setSending]         = useState(false);
 
-  // Call state
-  const [callState,    setCallState]    = useState<{ type: CallType; roomUrl: string } | null>(null);
-  const [creatingCall, setCreatingCall] = useState(false);
+  // Responsive
+  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
+  const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
+
+  const { startCall, joinCall, endedCallUrls, creatingCall } = useGlobalCall();
+
+  // Keep a ref to contacts so the realtime handler can read the latest value
+  const contactsRef = useRef<Contact[]>([]);
+  useEffect(() => { contactsRef.current = contacts; }, [contacts]);
 
   // Voice recording
   const [recording,    setRecording]  = useState(false);
@@ -214,57 +220,7 @@ export default function MessagingPanel() {
     }
   };
 
-  // ── 4. Start a video/voice call ──────────────────────────────────────────
-
-  const startCall = async (type: CallType) => {
-    if (!activeId || !myId || !institutionId) return;
-    setCreatingCall(true);
-    try {
-      const apiKey = import.meta.env.VITE_DAILY_API_KEY as string | undefined;
-      if (!apiKey) throw new Error('VITE_DAILY_API_KEY is not set in your .env file');
-
-      const res = await fetch('https://api.daily.co/v1/rooms', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type':  'application/json',
-        },
-        body: JSON.stringify({
-          properties: {
-            exp:               Math.round(Date.now() / 1000) + 7200,
-            enable_screenshare: true,
-            max_participants:  10,
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `Daily API ${res.status}`);
-      }
-
-      const room = await res.json() as { url: string; name: string };
-
-      await supabase.from('messages').insert({
-        institution_id: institutionId,
-        sender_id:      myId,
-        receiver_id:    activeId,
-        text:           type === 'voice' ? '📞 Voice call started' : '📹 Video call started',
-        audio_url:      room.url,
-        message_type:   'call-invite',
-      });
-
-      setCallState({ type, roomUrl: room.url });
-    } catch (err: unknown) {
-      const detail = err instanceof Error ? err.message : JSON.stringify(err);
-      showerrornotification({ message: `Call failed: ${detail}` });
-      console.error('[call]', err);
-    } finally {
-      setCreatingCall(false);
-    }
-  };
-
-  // ── 5. Voice recording ────────────────────────────────────────────────────
+  // ── 4. Voice recording ───────────────────────────────────────────────────
 
   const sendVoiceNote = async (blob: Blob, mimeType: string) => {
     if (!activeId || !myId || !institutionId) return;
@@ -365,11 +321,6 @@ export default function MessagingPanel() {
       }, payload => {
         const msg = payload.new as DBMessage;
 
-        // Ring for incoming call invites regardless of which conversation is active
-        if (msg.message_type === 'call-invite') {
-          startIncomingRing();
-        }
-
         if (msg.sender_id === activeIdRef.current) {
           // Currently viewing this conversation — append and mark read
           setMessages(prev => [...prev, { ...msg, isOwn: false }]);
@@ -393,7 +344,6 @@ export default function MessagingPanel() {
 
   // Clean up timers and sounds on unmount
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
-  useEffect(() => () => stopIncomingRing(), []);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
@@ -429,11 +379,17 @@ export default function MessagingPanel() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <Box style={{ display: 'flex', height: 'calc(100vh - 96px)', gap: 0 }}>
+    <Box style={{ display: 'flex', height: 'calc(100vh - 96px)', gap: 0, position: 'relative' }}>
 
       {/* ── Left: contact list ── */}
       <Paper withBorder radius="md"
-        style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        style={{
+          width: isMobile ? '100%' : 300,
+          flexShrink: 0,
+          display: isMobile && mobileView === 'chat' ? 'none' : 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}>
 
         <Box p="sm" style={{ borderBottom: '1px solid #f1f3f5' }}>
           <Group justify="space-between" mb="xs">
@@ -462,7 +418,7 @@ export default function MessagingPanel() {
             filtered.map(contact => (
               <Box
                 key={contact.id}
-                onClick={() => setActiveId(contact.id)}
+                onClick={() => { setActiveId(contact.id); if (isMobile) setMobileView('chat'); }}
                 style={{
                   padding: '10px 14px', cursor: 'pointer',
                   background: activeId === contact.id ? 'var(--mantine-color-brand-0)' : 'transparent',
@@ -502,10 +458,22 @@ export default function MessagingPanel() {
       {/* ── Right: chat thread ── */}
       {activeContact ? (
         <Paper withBorder radius="md"
-          style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', marginLeft: 12 }}>
+          style={{
+            flex: 1,
+            display: isMobile && mobileView === 'contacts' ? 'none' : 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            marginLeft: isMobile ? 0 : 12,
+          }}>
 
           {/* Header */}
           <Box style={{ padding: '12px 20px', borderBottom: '1px solid #f1f3f5', display: 'flex', alignItems: 'center', gap: 12 }}>
+            {isMobile && (
+              <ActionIcon variant="subtle" color="gray" radius="xl" size="lg"
+                onClick={() => { setActiveId(null); setMobileView('contacts'); }}>
+                <LuArrowLeft size={18} />
+              </ActionIcon>
+            )}
             <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={40}>
               {getInitials(activeContact.name)}
             </Avatar>
@@ -519,7 +487,7 @@ export default function MessagingPanel() {
             <Group gap={4}>
               <ActionIcon
                 variant="subtle" color="green" radius="xl" size="lg"
-                onClick={() => startCall('voice')}
+                onClick={() => startCall('voice', { id: activeContact.id, name: activeContact.name, avatar: activeContact.avatar_url })}
                 loading={creatingCall}
                 title="Voice call"
               >
@@ -527,7 +495,7 @@ export default function MessagingPanel() {
               </ActionIcon>
               <ActionIcon
                 variant="subtle" color="brand" radius="xl" size="lg"
-                onClick={() => startCall('video')}
+                onClick={() => startCall('video', { id: activeContact.id, name: activeContact.name, avatar: activeContact.avatar_url })}
                 loading={creatingCall}
                 title="Video call"
               >
@@ -580,7 +548,12 @@ export default function MessagingPanel() {
                         fontSize: '0.875rem',
                         lineHeight: 1.5,
                       }}>
-                        {msg.message_type === 'call-invite' && msg.audio_url ? (
+                        {msg.message_type === 'call-ended' ? (
+                          <Group gap={8} wrap="nowrap">
+                            <LuPhone size={14} />
+                            <Text size="sm" c="dimmed">Call ended</Text>
+                          </Group>
+                        ) : msg.message_type === 'call-invite' && msg.audio_url ? (
                           <Box>
                             <Group gap={8} wrap="nowrap" mb={msg.isOwn ? 0 : 8}>
                               <Box style={{
@@ -593,13 +566,21 @@ export default function MessagingPanel() {
                               <Text size="sm" fw={600}>{msg.text}</Text>
                             </Group>
                             {!msg.isOwn && (
-                              <Button
-                                size="xs" color="green" radius="xl"
-                                leftSection={<LuPhone size={12} />}
-                                onClick={() => { stopIncomingRing(); setCallState({ type: 'video', roomUrl: msg.audio_url! }); }}
-                              >
-                                Join Call
-                              </Button>
+                              endedCallUrls.has(msg.audio_url) ? (
+                                <Badge size="sm" color="gray" variant="light">Call Ended</Badge>
+                              ) : (
+                                <Button
+                                  size="xs" color="green" radius="xl"
+                                  leftSection={<LuPhone size={12} />}
+                                  onClick={() => joinCall(msg.audio_url!, {
+                                    id:     activeContact.id,
+                                    name:   activeContact.name,
+                                    avatar: activeContact.avatar_url,
+                                  })}
+                                >
+                                  Join Call
+                                </Button>
+                              )
                             )}
                           </Box>
                         ) : msg.message_type === 'voice' && msg.audio_url ? (
@@ -618,18 +599,6 @@ export default function MessagingPanel() {
               </Stack>
             )}
           </ScrollArea>
-
-          {callState && (
-            <CallModal
-              type={callState.type}
-              roomUrl={callState.roomUrl}
-              contactName={activeContact.name}
-              contactAvatar={activeContact.avatar_url}
-              myName={myName}
-              myAvatar={myAvatarUrl}
-              onClose={() => setCallState(null)}
-            />
-          )}
 
           {/* Input */}
           <Box style={{ padding: '12px 16px', borderTop: '1px solid #f1f3f5' }}>
@@ -678,7 +647,7 @@ export default function MessagingPanel() {
             )}
           </Box>
         </Paper>
-      ) : (
+      ) : !isMobile ? (
         <Paper withBorder radius="md"
           style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 12 }}>
           <Stack align="center" gap="xs">
@@ -687,7 +656,7 @@ export default function MessagingPanel() {
             <Text size="xs" c="dimmed">Messages are end-to-end within your institution</Text>
           </Stack>
         </Paper>
-      )}
+      ) : null}
     </Box>
   );
 }

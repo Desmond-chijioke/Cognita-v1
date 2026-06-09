@@ -7,6 +7,7 @@ import { useAppDispatch } from './Redux/hooks';
 import { loginSuccess, logout, authInitialized } from './Redux/slices/authSlice';
 import type { AppRole } from './Redux/slices/authSlice';
 import { loadSession, saveSession, clearSession } from './helper/storage';
+import { GlobalCallProvider } from './context/GlobalCallProvider';
 
 // ── Why this approach ─────────────────────────────────────────────────────────
 //
@@ -203,7 +204,11 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
-  return <RouterProvider router={router} />;
+  return (
+    <GlobalCallProvider>
+      <RouterProvider router={router} />
+    </GlobalCallProvider>
+  );
 }
 
 export default function App() {

@@ -4,6 +4,7 @@ import {
   Box, Button, Group, Text, Title, Image, Modal,
   Center, ThemeIcon, Stack,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { FiArrowRight, FiPlay } from 'react-icons/fi';
 import { BsStars } from 'react-icons/bs';
 
@@ -21,7 +22,8 @@ import cognitaLogo from '../../assets/cognita-logo.png';
 import heroBg from '../../assets/hero-bg.jpg';
 
 export default function LandingPage() {
-  const navigate = useNavigate();
+  const navigate  = useNavigate();
+  const isMobile  = useMediaQuery('(max-width: 600px)') ?? false;
   const [demoOpen, setDemoOpen] = useState(false);
 
   return (
@@ -48,12 +50,23 @@ export default function LandingPage() {
           <Image src={cognitaLogo} alt="Cognita" w={36} h={36} style={{ objectFit: 'contain' }} />
           <Text fw={700} size="lg" style={{ fontFamily: 'Playfair Display, serif' }}>Cognita</Text>
         </Group>
-        <Group gap="xs">
-          <Button variant="subtle" color="brand" size="sm" onClick={() => navigate('/login')}>
+        <Group gap={isMobile ? 6 : 'xs'} wrap="nowrap">
+          <Button
+            variant="subtle" color="brand"
+            size={isMobile ? 'xs' : 'sm'}
+            onClick={() => navigate('/login')}
+            style={{ paddingLeft: isMobile ? 8 : undefined, paddingRight: isMobile ? 8 : undefined }}
+          >
             Log in
           </Button>
-          <Button color="brand" size="sm" onClick={() => navigate('/signup')}>
-            Get Started
+          <Button
+            color="brand"
+            size={isMobile ? 'xs' : 'sm'}
+            radius="md"
+            onClick={() => navigate('/signup')}
+            style={{ paddingLeft: isMobile ? 10 : undefined, paddingRight: isMobile ? 10 : undefined }}
+          >
+            {isMobile ? 'Sign up' : 'Get Started'}
           </Button>
         </Group>
       </Box>
@@ -82,7 +95,7 @@ export default function LandingPage() {
         <Box style={{ position: 'absolute', bottom: 40, right: -128, height: 480, width: 480, borderRadius: '50%', background: 'rgba(140,80,220,0.22)', filter: 'blur(80px)' }} />
         <Box style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 60%, rgba(30,58,138,0.4) 100%)' }} />
 
-        <Box style={{ position: 'relative', maxWidth: 860, margin: '0 auto', textAlign: 'center', padding: '8rem 1.5rem 9rem' }}>
+        <Box style={{ position: 'relative', maxWidth: 860, margin: '0 auto', textAlign: 'center', padding: isMobile ? '5rem 1.25rem 5.5rem' : '8rem 1.5rem 9rem' }}>
 
           {/* Badge */}
           <Box
@@ -138,56 +151,61 @@ export default function LandingPage() {
             Cognita unifies research intelligence, statistical analysis, and plagiarism checking into one academic-grade system — from idea to publication.
           </Text>
 
-          <Group justify="center" gap="md">
+          <Box style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            justifyContent: 'center',
+            alignItems: 'stretch',
+            gap: 12,
+            padding: isMobile ? '0 0.5rem' : 0,
+          }}>
             <Button
-              size="lg"
+              size={isMobile ? 'md' : 'lg'}
               radius="md"
               style={{
                 background: 'white',
                 color: 'var(--mantine-color-brand-8)',
                 fontWeight: 700,
-                fontSize: '1rem',
-                padding: '0 2rem',
-                height: 48,
+                fontSize: isMobile ? '0.9375rem' : '1rem',
+                height: isMobile ? 44 : 48,
                 boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
               }}
               rightSection={<FiArrowRight />}
               onClick={() => navigate('/signup')}
             >
-              Get Started
+              Get Started — It's Free
             </Button>
             <Button
-              size="lg"
+              size={isMobile ? 'md' : 'lg'}
               radius="md"
               variant="outline"
               style={{
                 borderColor: 'rgba(255,255,255,0.4)',
                 color: 'white',
                 fontWeight: 600,
-                fontSize: '1rem',
-                padding: '0 2rem',
-                height: 48,
+                fontSize: isMobile ? '0.9375rem' : '1rem',
+                height: isMobile ? 44 : 48,
               }}
-              leftSection={<FiPlay />}
+              leftSection={<FiPlay size={14} />}
               onClick={() => setDemoOpen(true)}
             >
               See How It Works
             </Button>
-          </Group>
+          </Box>
 
           {/* Trust row */}
-          <Box style={{ marginTop: '3.5rem', paddingTop: '2rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          <Box style={{ marginTop: isMobile ? '2.5rem' : '3.5rem', paddingTop: '2rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
             <Text size="xs" tt="uppercase" style={{ letterSpacing: '0.12em', color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
               Trusted by researchers across
             </Text>
-            <Group justify="center" gap="lg" style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.875rem', fontWeight: 500 }}>
+            <Group justify="center" gap={isMobile ? 'xs' : 'lg'} style={{ color: 'rgba(255,255,255,0.65)', fontSize: isMobile ? '0.8125rem' : '0.875rem', fontWeight: 500, flexWrap: 'wrap' }}>
               <span>Universities</span>
               <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
               <span>Research Institutes</span>
-              <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
-              <span>Postgraduate Programs</span>
-              <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
-              <span>Academic Journals</span>
+              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>}
+              {!isMobile && <span>Postgraduate Programs</span>}
+              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>}
+              {!isMobile && <span>Academic Journals</span>}
             </Group>
           </Box>
         </Box>
@@ -235,7 +253,7 @@ export default function LandingPage() {
       {/* ── Final CTA ── */}
       <Box
         component="section"
-        style={{ maxWidth: 760, margin: '0 auto', padding: '6rem 1.5rem', textAlign: 'center' }}
+        style={{ maxWidth: 760, margin: '0 auto', padding: isMobile ? '4rem 1.25rem' : '6rem 1.5rem', textAlign: 'center' }}
       >
         <Title order={2} style={{ fontSize: 'clamp(1.5rem, 4vw, 2.5rem)', letterSpacing: '-0.02em', marginBottom: '1rem' }}>
           Stop Switching Tools. Start Finishing Research.
@@ -244,14 +262,19 @@ export default function LandingPage() {
           Join thousands of researchers using Cognita to write better, faster.
         </Text>
         <Button
-          size="lg"
+          size={isMobile ? 'md' : 'lg'}
           color="brand"
           radius="md"
+          fullWidth={isMobile}
           rightSection={<FiArrowRight />}
-          style={{ padding: '0 2.5rem', height: 48, fontSize: '1rem' }}
+          style={{
+            maxWidth: isMobile ? 360 : undefined,
+            height: isMobile ? 44 : 48,
+            fontSize: isMobile ? '0.9375rem' : '1rem',
+          }}
           onClick={() => navigate('/signup')}
         >
-          Build Your Research in Cognita
+          {isMobile ? 'Get Started Free' : 'Build Your Research in Cognita'}
         </Button>
       </Box>
 
