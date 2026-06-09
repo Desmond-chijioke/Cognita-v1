@@ -136,8 +136,9 @@ export const cognitaTheme = createTheme({
         radius: 'lg',
         centered: true,
         overlayProps: {
+          color: 'var(--mantine-color-brand-9)',
+          backgroundOpacity: 0.55,
           blur: 3,
-          opacity: 0.4,
         },
       },
     },

@@ -152,6 +152,11 @@ export default function StudentEditor() {
   const [sections,    setSections]        = useState<EditorSection[]>(buildInitialSections);
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? '');
 
+  // Per-project-type cache (in-memory) â€” lets switching back to a previously
+  // visited type restore its content exactly, with nothing dropped, even for
+  // sections that have no equivalent in whatever template sits in between.
+  const sectionsByType = useRef<Partial<Record<ProjectType, EditorSection[]>>>({});
+
   // â”€â”€ Switch-type modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [switchModal, setSwitchModal]     = useState<{ open: boolean; pending: ProjectType | null }>({ open: false, pending: null });
 
@@ -222,10 +227,25 @@ export default function StudentEditor() {
     ]).then(([drafts, dbSubs]) => {
 
       setSections(prev => {
-        // Update standard sections with saved draft or submission content
+        // Drafts consumed by a section below must not also be re-attached as
+        // "custom sections" further down (would otherwise duplicate content
+        // that came from an older save under a different section_id).
+        const consumedDraftIds = new Set<string>();
+
+        // Update standard sections with saved draft or submission content.
+        // Match by id first (current scheme); fall back to matching by title
+        // so drafts saved under an older/legacy section_id (e.g. before ids
+        // were made stable per project type) are still recovered correctly.
         const updated = prev.map(sec => {
-          const draft = drafts.find(d => d.section_id === sec.id);
+          let draft = drafts.find(d => d.section_id === sec.id);
+          if (!draft) {
+            draft = drafts.find(d =>
+              !consumedDraftIds.has(d.section_id) &&
+              d.section_title.trim().toLowerCase() === sec.title.trim().toLowerCase(),
+            );
+          }
           if (draft && draft.content.trim()) {
+            consumedDraftIds.add(draft.section_id);
             return { ...sec, content: draft.content, wordCount: countWords(draft.content), status: 'in-progress' as SectionStatus };
           }
           // No draft yet â€” seed from submitted content so student sees their work
@@ -236,10 +256,11 @@ export default function StudentEditor() {
           return sec;
         });
 
-        // Re-attach any custom sections saved as drafts
+        // Re-attach any custom sections saved as drafts (excluding ones already
+        // matched into a standard section above)
         const existingIds = new Set(prev.map(s => s.id));
         const customSections: EditorSection[] = drafts
-          .filter(d => !existingIds.has(d.section_id))
+          .filter(d => !existingIds.has(d.section_id) && !consumedDraftIds.has(d.section_id))
           .map(d => ({
             id:          d.section_id,
             key:         d.section_id,
@@ -251,7 +272,11 @@ export default function StudentEditor() {
             wordCount:   countWords(d.content),
           }));
 
-        return [...updated, ...customSections];
+        const merged = [...updated, ...customSections];
+        // Seed the per-type cache so switching away and back to this (the
+        // starting) type restores this freshly-loaded content losslessly.
+        sectionsByType.current[projectType] = merged;
+        return merged;
       });
 
       // Sync submissions to Redux for status + annotation tracking
@@ -408,8 +433,8 @@ export default function StudentEditor() {
   const lineCount     = content.split('\n').length;
   const pageCount     = Math.max(1, Math.ceil(lineCount / linesPerPage));
 
-  const approvedCount  = sections.filter(s => s.status === 'completed').length;
-  const inProgressCount = sections.filter(s => s.status === 'in-progress').length;
+  const approvedCount  = sections.filter(s => s.status === 'completed' || getSubStatus(s.id) === 'approved').length;
+  const inProgressCount = sections.filter(s => s.status === 'in-progress' && getSubStatus(s.id) !== 'approved').length;
   const notStartedMandatory = sections.filter(s => s.status === 'not-started' && s.mandatory).length;
 
   const totalScore    = REVIEW_SCORES.reduce((acc, r) => acc + r.score, 0);
@@ -445,12 +470,36 @@ export default function StudentEditor() {
 
   const confirmSwitch = () => {
     if (!switchModal.pending) return;
-    const newSecs = mapSections(sections, switchModal.pending);
+    const newType = switchModal.pending;
+    const oldType = projectType;
+
+    // Cache the outgoing type's sections (with content) so switching back to
+    // it later restores EXACTLY what was there â€” including sections that have
+    // no equivalent in the new template and would otherwise be discarded.
+    sectionsByType.current[oldType] = sections;
+
+    // Persist the outgoing type's content to the database too, so it survives
+    // a reload even if the student never switches back to it in this session.
+    if (user?.id) {
+      const toSave = sections
+        .filter(s => s.content.trim() || s.id.startsWith('custom_'))
+        .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
+      if (toSave.length) saveSectionDrafts(user.id, toSave).catch(() => {});
+    }
+
+    // Restore from cache if we've visited the new type before in this session
+    // (lossless); otherwise build fresh from its template, carrying over
+    // matching content as a starting point â€” the outgoing type's full data
+    // stays safely cached above and in the database either way.
+    const cached = sectionsByType.current[newType];
+    const newSecs = cached ?? mapSections(sections, newType);
+    sectionsByType.current[newType] = newSecs;
+
     setSections(newSecs);
-    setProjectType(switchModal.pending);
+    setProjectType(newType);
     setActiveSectionId(newSecs[0]?.id ?? '');
     setSwitchModal({ open: false, pending: null });
-    notifications.show({ title: 'Project type changed', message: `Template updated to ${switchModal.pending}. Matching content has been preserved.`, color: 'blue' });
+    notifications.show({ title: 'Project type changed', message: `Template updated to ${newType}. Your ${oldType} content was saved â€” switch back anytime to see it.`, color: 'blue' });
   };
 
   // Section content insert (citations)
@@ -1093,15 +1142,15 @@ export default function StudentEditor() {
                     }}
                     className="section-row"
                   >
-                    {/* Status icon */}
+                    {/* Status icon â€” show as checked once the supervisor approves it */}
                     <Box style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                      {sectionStatusIcon(sec.status)}
+                      {sectionStatusIcon(getSubStatus(sec.id) === 'approved' ? 'completed' : sec.status)}
                     </Box>
                     {/* Submission status dot */}
                     {(() => {
                       const st = getSubStatus(sec.id);
                       if (!st) return null;
-                      const dotColor = st === 'approved' ? '#2f9e44' : st === 'needs-revision' ? '#e67700' : '#228be6';
+                      const dotColor = st === 'approved' ? '#2f9e44' : st === 'needs-revision' ? '#e67700' : '#4c6ef5';
                       const tipLabel = st === 'approved' ? 'Approved by supervisor' : st === 'needs-revision' ? `Revision needed: ${getSubComment(sec.id)}` : 'Awaiting supervisor review';
                       return (
                         <Tooltip label={tipLabel} multiline maw={200} withArrow>

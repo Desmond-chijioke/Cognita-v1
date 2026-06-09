@@ -2,18 +2,21 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActionIcon, Alert, Avatar, Badge, Box, Button, CopyButton,
   Divider, Group, Loader, Modal, Pagination, Paper, PasswordInput, Progress,
-  Select, SimpleGrid, Stack, Table, Text, TextInput, Title, Tooltip,
+  Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import {
-  LuSearch, LuMail, LuBuilding2, LuFolder,
+  LuSearch, LuMail, LuBuilding2, LuFolder, LuLandmark, LuLayers,
   LuUsers, LuUserCheck, LuTrendingUp, LuUserPlus, LuKey,
   LuRefreshCw, LuCopy, LuCheck, LuLink,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
-import { createUser, assignToSupervisor as assignSupervisor } from '../../../Redux/slices/usersSlice';
+import { assignToSupervisor as assignSupervisor } from '../../../Redux/slices/usersSlice';
 import type { StoredUser } from '../../../Redux/slices/usersSlice';
 import type { AppRole } from '../../../Redux/slices/authSlice';
 import { supabase } from '../../../supabase/client';
+import { createStaffUser, fetchHierarchy } from '../../../supabase/hierarchy';
+import type { DBCollege, DBFaculty, DBDepartment } from '../../../supabase/hierarchy';
+import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -32,6 +35,7 @@ interface DisplayResearcher {
   bio: string;
   recentProjects: { title: string; status: string }[];
   isRedux: boolean;
+  createdAt: string;
   supervisorId?: string;
   matricNo?: string;
   degreeLevel?: string;
@@ -65,6 +69,7 @@ function storedToDisplay(u: StoredUser): DisplayResearcher {
     bio: `${u.role} registered via the admin portal.`,
     recentProjects: u.projectTitle ? [{ title: u.projectTitle, status: 'Draft' }] : [],
     isRedux: true,
+    createdAt: u.createdAt,
     supervisorId: u.supervisorId,
     matricNo: u.matricNo,
     degreeLevel: u.degreeLevel,
@@ -175,6 +180,7 @@ function sbToDisplay(u: SupabaseUser): DisplayResearcher {
     bio: '',
     recentProjects: u.project_title ? [{ title: u.project_title, status: 'Draft' }] : [],
     isRedux: false,
+    createdAt: u.created_at,
     supervisorId: u.supervisor_id,
     matricNo: u.matric_no,
     projectTitle: u.project_title,
@@ -212,15 +218,45 @@ export default function AdminResearchers() {
 
   useEffect(() => { loadFromSupabase(); }, [institutionId]);
 
+  // ── Institution hierarchy (for College → Faculty → Department cascading picks) ─
+  const [hColleges,    setHColleges]    = useState<DBCollege[]>([]);
+  const [hFaculties,   setHFaculties]   = useState<DBFaculty[]>([]);
+  const [hDepartments, setHDepartments] = useState<DBDepartment[]>([]);
+
+  useEffect(() => {
+    if (!institutionId) return;
+    fetchHierarchy(institutionId)
+      .then(({ colleges: c, faculties: f, departments: d }) => {
+        setHColleges(c); setHFaculties(f); setHDepartments(d);
+      })
+      .catch(err => showerrornotification({ message: err.message || 'Failed to load institution structure.' }));
+  }, [institutionId]);
+
+  // Cascading selection for the "Add User" form — College is optional,
+  // Faculty/Department narrow down based on the level above (mirrors AdminFacultyDepts).
+  const [pickedCollegeId, setPickedCollegeId] = useState<string | null>(null);
+  const [pickedFacultyId, setPickedFacultyId] = useState<string | null>(null);
+
+  const pickerFaculties = hFaculties.filter(f =>
+    pickedCollegeId ? f.college_id === pickedCollegeId : f.college_id === null,
+  );
+  const pickerDepartments = hDepartments.filter(d => d.faculty_id === pickedFacultyId);
+
+  const [tab, setTab]               = useState<string>('students');
+
   const [search, setSearch]         = useState('');
   const [selected, setSelected]     = useState<DisplayResearcher | null>(null);
   const [page, setPage]             = useState(1);
+
+  const [supSearch, setSupSearch]   = useState('');
+  const [supPage, setSupPage]       = useState(1);
 
   // Add User modal
   const [addOpen, setAddOpen]       = useState(false);
   const [form, setForm]             = useState({ ...EMPTY_FORM });
   const [showPassword, setShowPassword] = useState(false);
   const [created, setCreated]       = useState<{ email: string; password: string } | null>(null);
+  const [creating, setCreating]     = useState(false);
 
   // Supervisor assignment inside detail modal
   const [assignSupId, setAssignSupId] = useState('');
@@ -231,7 +267,7 @@ export default function AdminResearchers() {
   const allResearchers = useMemo<DisplayResearcher[]>(() => [
     ...sbStudents.map(sbToDisplay),
     ...reduxUsers.filter(u => STUDENT_ROLES.includes(u.role)).map(storedToDisplay),
-  ], [sbStudents, reduxUsers]);
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [sbStudents, reduxUsers]);
 
   const allDepartments = useMemo(
     () => [...new Set(allResearchers.map(r => r.department).filter(Boolean))],
@@ -241,7 +277,7 @@ export default function AdminResearchers() {
   const allSupervisors = useMemo<DisplayResearcher[]>(() => [
     ...sbSupervisors.map(sbToDisplay),
     ...reduxUsers.filter(u => SUPERVISOR_ROLES.includes(u.role)).map(storedToDisplay),
-  ], [sbSupervisors, reduxUsers]);
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [sbSupervisors, reduxUsers]);
 
   const assignableSupervisors = useMemo(
     () => allSupervisors.filter(s => ASSIGNABLE_SUPERVISOR_ROLES.includes(s.role)),
@@ -261,34 +297,72 @@ export default function AdminResearchers() {
   const paginated  = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
 
+  const filteredSupervisors = useMemo(() => {
+    setSupPage(1);
+    const q = supSearch.toLowerCase();
+    return !q ? allSupervisors : allSupervisors.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.email.toLowerCase().includes(q) ||
+      s.department.toLowerCase().includes(q),
+    );
+  }, [supSearch, allSupervisors]);
+
+  const paginatedSupervisors = filteredSupervisors.slice((supPage - 1) * PER_PAGE, supPage * PER_PAGE);
+  const totalSupPages        = Math.ceil(filteredSupervisors.length / PER_PAGE);
+
   // ── Add User handlers ──────────────────────────────────────────────────────
 
   function openAdd() {
     setForm({ ...EMPTY_FORM, password: genPassword() });
+    setPickedCollegeId(null);
+    setPickedFacultyId(null);
     setCreated(null);
     setAddOpen(true);
   }
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!form.name.trim() || !form.email.trim() || !form.password.trim()) return;
-    dispatch(createUser({
-      name:        form.name.trim(),
-      email:       form.email.trim().toLowerCase(),
-      password:    form.password,
-      role:        form.role,
-      department:  form.department || undefined,
-      matricNo:    form.matricNo   || undefined,
-      degreeLevel: form.degreeLevel || undefined,
-      projectTitle: form.projectTitle || undefined,
-      supervisorId: form.supervisorId || undefined,
-    }));
-    setCreated({ email: form.email.trim().toLowerCase(), password: form.password });
-    setTimeout(() => loadFromSupabase(), 1500);
+    if (!institutionId) {
+      showerrornotification({ message: 'Could not determine your institution. Please reload and try again.' });
+      return;
+    }
+    if (isStudentRole && (!pickedFacultyId || !form.department)) {
+      showerrornotification({ message: 'Select a Faculty and Department for this student.' });
+      return;
+    }
+
+    const email = form.email.trim().toLowerCase();
+    setCreating(true);
+    try {
+      await createStaffUser({
+        name:            form.name.trim(),
+        email,
+        password:        form.password,
+        role:            form.role,
+        institutionId,
+        institutionName: authUser?.institutionName ?? '',
+        department:      form.department   || undefined,
+        matricNo:        form.matricNo     || undefined,
+        degreeLevel:     form.degreeLevel  || undefined,
+        projectTitle:    form.projectTitle || undefined,
+        supervisorId:    form.supervisorId || undefined,
+      });
+
+      setCreated({ email, password: form.password });
+      showsucessnotification({ message: `${form.name.trim()} added with login credentials.` });
+      loadFromSupabase();
+    } catch (err: unknown) {
+      showerrornotification({ message: err instanceof Error ? err.message : 'Failed to create user.' });
+    } finally {
+      setCreating(false);
+    }
   }
 
   function closeAdd() {
     setAddOpen(false);
     setCreated(null);
+    setPickedCollegeId(null);
+    setPickedFacultyId(null);
     setForm({ ...EMPTY_FORM });
   }
 
@@ -340,7 +414,7 @@ export default function AdminResearchers() {
       {/* ── Summary cards ── */}
       <SimpleGrid cols={{ base: 2, md: 4 }} mb="xl">
         {[
-          { label: 'Total Students',  value: allResearchers.length,    icon: LuUsers,      color: '#228be6' },
+          { label: 'Total Students',  value: allResearchers.length,    icon: LuUsers,      color: '#4c6ef5' },
           { label: 'Departments',     value: allDepartments.length,    icon: LuBuilding2,  color: '#7950f2' },
           { label: 'Supervisors',     value: allSupervisors.length,    icon: LuUserCheck,  color: '#2f9e44' },
           { label: 'With Projects',   value: allResearchers.filter(r => !!r.projectTitle).length, icon: LuTrendingUp, color: '#f59f00' },
@@ -355,81 +429,172 @@ export default function AdminResearchers() {
         ))}
       </SimpleGrid>
 
-      {/* ── Search ── */}
-      <TextInput
-        placeholder="Search by name, department, or email..."
-        leftSection={<LuSearch size={16} />}
-        value={search}
-        onChange={e => setSearch(e.currentTarget.value)}
-        mb="md"
-        size="md"
-      />
+      {/* ── Students / Supervisors tabs ── */}
+      <Tabs value={tab} onChange={v => setTab(v ?? 'students')} mb="md" variant="pills">
+        <Tabs.List>
+          <Tabs.Tab value="students"
+            rightSection={<Badge size="xs" variant="filled" radius="xl" color="brand">{allResearchers.length}</Badge>}
+          >
+            Students &amp; Researchers
+          </Tabs.Tab>
+          <Tabs.Tab value="supervisors"
+            rightSection={<Badge size="xs" variant="filled" radius="xl" color="green">{allSupervisors.length}</Badge>}
+          >
+            Supervisors
+          </Tabs.Tab>
+        </Tabs.List>
 
-      {/* ── Table ── */}
-      {sbLoading ? (
-        <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
-      ) : allResearchers.length === 0 ? (
-        <Paper withBorder p="xl" radius="md" ta="center">
-          <LuUsers size={28} color="#ced4da" style={{ marginBottom: 8 }} />
-          <Text c="dimmed" size="sm">No students or researchers registered for this institution yet.</Text>
-          <Text size="xs" c="dimmed" mt={4}>Use Add User or the HOD Students page to create accounts.</Text>
-        </Paper>
-      ) : (
-        <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-          <Table highlightOnHover verticalSpacing="md">
-            <Table.Thead>
-              <Table.Tr style={{ background: '#f8f9fa' }}>
-                {['Student / Researcher', 'Department', 'Role', 'Matric No', 'Project Title', 'Joined'].map(h => (
-                  <Table.Th key={h}>
-                    <Text size="sm" c="dimmed" fw={500}>{h}</Text>
-                  </Table.Th>
-                ))}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {paginated.map(r => (
-                <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(r)}>
-                  <Table.Td>
-                    <Group gap="sm" wrap="nowrap">
-                      <Avatar color={r.color} radius="xl" size="md">
-                        {getInitials(r.name)}
-                      </Avatar>
-                      <Box>
-                        <Group gap={6}>
-                          <Text size="sm" fw={600}>{r.name}</Text>
-                          {r.isRedux && (
-                            <Badge size="xs" color="teal" variant="dot" radius="xl">New</Badge>
-                          )}
+        {/* ── Students & Researchers panel ── */}
+        <Tabs.Panel value="students" pt="md">
+          <TextInput
+            placeholder="Search by name, department, or email..."
+            leftSection={<LuSearch size={16} />}
+            value={search}
+            onChange={e => setSearch(e.currentTarget.value)}
+            mb="md"
+            size="md"
+          />
+
+          {sbLoading ? (
+            <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
+          ) : allResearchers.length === 0 ? (
+            <Paper withBorder p="xl" radius="md" ta="center">
+              <LuUsers size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+              <Text c="dimmed" size="sm">No students or researchers registered for this institution yet.</Text>
+              <Text size="xs" c="dimmed" mt={4}>Use Add User or the HOD Students page to create accounts.</Text>
+            </Paper>
+          ) : (
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+              <Table highlightOnHover verticalSpacing="md">
+                <Table.Thead>
+                  <Table.Tr style={{ background: '#f8f9fa' }}>
+                    {['Student / Researcher', 'Department', 'Role', 'Matric No', 'Project Title', 'Joined'].map(h => (
+                      <Table.Th key={h}>
+                        <Text size="sm" c="dimmed" fw={500}>{h}</Text>
+                      </Table.Th>
+                    ))}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {paginated.map(r => (
+                    <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(r)}>
+                      <Table.Td>
+                        <Group gap="sm" wrap="nowrap">
+                          <Avatar color={r.color} radius="xl" size="md">
+                            {getInitials(r.name)}
+                          </Avatar>
+                          <Box>
+                            <Group gap={6}>
+                              <Text size="sm" fw={600}>{r.name}</Text>
+                              {r.isRedux && (
+                                <Badge size="xs" color="teal" variant="dot" radius="xl">New</Badge>
+                              )}
+                            </Group>
+                            <Text size="xs" c="dimmed">{r.email}</Text>
+                          </Box>
                         </Group>
-                        <Text size="xs" c="dimmed">{r.email}</Text>
-                      </Box>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td><Text size="sm">{r.department}</Text></Table.Td>
-                  <Table.Td>
-                    <Badge color={ROLE_COLOR[r.role] ?? 'gray'} variant="light" radius="sm" size="sm">
-                      {r.role}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td><Text size="sm" ff="monospace" c="dimmed">{r.matricNo || '—'}</Text></Table.Td>
-                  <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 200 }}>{r.projectTitle || '—'}</Text></Table.Td>
-                  <Table.Td><Text size="sm" c="dimmed">{r.lastActive}</Text></Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Paper>
-      )}
+                      </Table.Td>
+                      <Table.Td><Text size="sm">{r.department}</Text></Table.Td>
+                      <Table.Td>
+                        <Badge color={ROLE_COLOR[r.role] ?? 'gray'} variant="light" radius="sm" size="sm">
+                          {r.role}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td><Text size="sm" ff="monospace" c="dimmed">{r.matricNo || '—'}</Text></Table.Td>
+                      <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 200 }}>{r.projectTitle || '—'}</Text></Table.Td>
+                      <Table.Td><Text size="sm" c="dimmed">{r.lastActive}</Text></Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          )}
 
-      {/* ── Pagination ── */}
-      {totalPages > 1 && (
-        <Group justify="space-between" mt="md">
-          <Text size="sm" c="dimmed">
-            Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} researchers
-          </Text>
-          <Pagination total={totalPages} value={page} onChange={setPage} color="brand" radius="md" size="sm" />
-        </Group>
-      )}
+          {totalPages > 1 && (
+            <Group justify="space-between" mt="md">
+              <Text size="sm" c="dimmed">
+                Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} researchers
+              </Text>
+              <Pagination total={totalPages} value={page} onChange={setPage} color="brand" radius="md" size="sm" />
+            </Group>
+          )}
+        </Tabs.Panel>
+
+        {/* ── Supervisors panel ── */}
+        <Tabs.Panel value="supervisors" pt="md">
+          <TextInput
+            placeholder="Search by name, department, or email..."
+            leftSection={<LuSearch size={16} />}
+            value={supSearch}
+            onChange={e => setSupSearch(e.currentTarget.value)}
+            mb="md"
+            size="md"
+          />
+
+          {sbLoading ? (
+            <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
+          ) : allSupervisors.length === 0 ? (
+            <Paper withBorder p="xl" radius="md" ta="center">
+              <LuUserCheck size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+              <Text c="dimmed" size="sm">No supervisors registered for this institution yet.</Text>
+              <Text size="xs" c="dimmed" mt={4}>Use Add User to create a Supervisor or Head of Department account.</Text>
+            </Paper>
+          ) : (
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+              <Table highlightOnHover verticalSpacing="md">
+                <Table.Thead>
+                  <Table.Tr style={{ background: '#f8f9fa' }}>
+                    {['Supervisor', 'Department', 'Role', 'Specialization', 'Joined'].map(h => (
+                      <Table.Th key={h}>
+                        <Text size="sm" c="dimmed" fw={500}>{h}</Text>
+                      </Table.Th>
+                    ))}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {paginatedSupervisors.map(s => (
+                    <Table.Tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(s)}>
+                      <Table.Td>
+                        <Group gap="sm" wrap="nowrap">
+                          <Avatar color={s.color} radius="xl" size="md">
+                            {getInitials(s.name)}
+                          </Avatar>
+                          <Box>
+                            <Group gap={6}>
+                              <Text size="sm" fw={600}>{s.name}</Text>
+                              {s.isRedux && (
+                                <Badge size="xs" color="teal" variant="dot" radius="xl">New</Badge>
+                              )}
+                            </Group>
+                            <Text size="xs" c="dimmed">{s.email}</Text>
+                          </Box>
+                        </Group>
+                      </Table.Td>
+                      <Table.Td><Text size="sm">{s.department}</Text></Table.Td>
+                      <Table.Td>
+                        <Badge color={ROLE_COLOR[s.role] ?? 'gray'} variant="light" radius="sm" size="sm">
+                          {s.role}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 200 }}>{s.specializations.join(', ') || '—'}</Text></Table.Td>
+                      <Table.Td><Text size="sm" c="dimmed">{s.lastActive}</Text></Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          )}
+
+          {totalSupPages > 1 && (
+            <Group justify="space-between" mt="md">
+              <Text size="sm" c="dimmed">
+                Showing {(supPage - 1) * PER_PAGE + 1}–{Math.min(supPage * PER_PAGE, filteredSupervisors.length)} of {filteredSupervisors.length} supervisors
+              </Text>
+              <Pagination total={totalSupPages} value={supPage} onChange={setSupPage} color="brand" radius="md" size="sm" />
+            </Group>
+          )}
+        </Tabs.Panel>
+      </Tabs>
 
 
       {/* ════════════════════════════════════════════════════════════════════
@@ -442,7 +607,7 @@ export default function AdminResearchers() {
         size="lg"
         padding={0}
         centered
-        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.7, blur: 2 }}
+        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
         styles={{
           content: { borderRadius: 16, overflow: 'hidden', maxHeight: '90vh', display: 'flex', flexDirection: 'column' },
           body:    { padding: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -575,11 +740,36 @@ export default function AdminResearchers() {
                       size="md" data={ADD_ROLE_OPTIONS} value={form.role}
                       onChange={v => setForm(f => ({ ...f, role: (v ?? 'Researcher') as AppRole, supervisorId: '' }))}
                     />
-                    <TextInput
-                      label="Department" placeholder="e.g. Computer Science"
-                      size="md" leftSection={<LuBuilding2 size={15} />}
-                      value={form.department}
-                      onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, department: v })); }}
+                    <Select
+                      label="College" placeholder="Select a college (optional)"
+                      size="md" clearable leftSection={<LuLandmark size={15} />}
+                      data={hColleges.map(c => ({ value: c.id, label: c.name }))}
+                      value={pickedCollegeId}
+                      onChange={v => {
+                        setPickedCollegeId(v);
+                        setPickedFacultyId(null);
+                        setForm(f => ({ ...f, department: '' }));
+                      }}
+                    />
+                    <Select
+                      label="Faculty" placeholder={pickedCollegeId ? 'Select a faculty in this college' : 'Select a faculty (no college)'}
+                      size="md" required={isStudentRole} leftSection={<LuLayers size={15} />}
+                      data={pickerFaculties.map(f => ({ value: f.id, label: f.name }))}
+                      value={pickedFacultyId}
+                      onChange={v => {
+                        setPickedFacultyId(v);
+                        setForm(f => ({ ...f, department: '' }));
+                      }}
+                      nothingFoundMessage={pickedCollegeId ? 'No faculties under this college yet.' : 'No faculties directly under the institution yet.'}
+                    />
+                    <Select
+                      label="Department" placeholder="Select a department"
+                      size="md" required={isStudentRole} leftSection={<LuBuilding2 size={15} />}
+                      data={pickerDepartments.map(d => ({ value: d.name, label: d.name }))}
+                      value={form.department || null}
+                      onChange={v => setForm(f => ({ ...f, department: v ?? '' }))}
+                      disabled={!pickedFacultyId}
+                      nothingFoundMessage="No departments under this faculty yet."
                     />
                   </Stack>
                 </Box>
@@ -684,7 +874,7 @@ export default function AdminResearchers() {
                         <Select
                           label="Assign Supervisor" placeholder="Select supervisor"
                           size="md"
-                          data={assignableSupervisors.map(s => ({ value: s.id, label: `${s.name} (${s.role})` }))}
+                          data={assignableSupervisors.map(s => ({ value: s.id, label: `${s.name}` }))}
                           value={form.supervisorId}
                           onChange={v => setForm(f => ({ ...f, supervisorId: v ?? '' }))}
                           clearable leftSection={<LuLink size={14} />}
@@ -702,6 +892,7 @@ export default function AdminResearchers() {
                   <Button
                     style={{ flex: 2 }} color="brand" radius="md" size="md"
                     leftSection={<LuKey size={15} />}
+                    loading={creating}
                     disabled={!form.name.trim() || !form.email.trim() || !form.password.trim()}
                     onClick={handleCreate}
                   >
@@ -725,7 +916,7 @@ export default function AdminResearchers() {
         centered
         padding="xl"
         title={null}
-        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.7, blur: 2 }}
+        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
       >
         {selected && (
           <Stack gap="lg">
@@ -785,7 +976,7 @@ export default function AdminResearchers() {
                 <SectionLabel>Specialisations</SectionLabel>
                 <Group gap="xs">
                   {selected.specializations.map(s => (
-                    <Badge key={s} variant="light" color="blue" radius="sm">{s}</Badge>
+                    <Badge key={s} variant="light" color="brand" radius="sm">{s}</Badge>
                   ))}
                 </Group>
               </Box>

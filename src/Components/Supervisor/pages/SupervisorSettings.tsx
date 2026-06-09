@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Avatar, Box, Button, Divider, Group, NumberInput, Paper,
   Select, SimpleGrid, Stack, Switch, Text, TextInput, ThemeIcon, Title,
@@ -9,7 +9,10 @@ import {
   LuSave, LuMail, LuPhone, LuTag,
   LuBot, LuFileSearch, LuCamera, LuLock,
 } from 'react-icons/lu';
-import { useAppSelector } from '../../../Redux/hooks';
+import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
+import { updateUser } from '../../../Redux/slices/authSlice';
+import { supabase } from '../../../supabase/client';
+import { fetchMyProfile, updateMyProfile, fileToAvatarDataUrl } from '../../../supabase/profile';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -63,19 +66,39 @@ function ToggleRow({ label, description, checked, onChange, last = false }: {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function SupervisorSettings() {
-  const user = useAppSelector(s => s.auth.user);
+  const dispatch = useAppDispatch();
+  const user     = useAppSelector(s => s.auth.user);
 
   const fileInputRef              = useRef<HTMLInputElement>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [hovered, setHovered]     = useState(false);
+  const [saving, setSaving]       = useState(false);
 
   const [profile, setProfile] = useState({
-    name:           user?.name || 'Dr. Adebayo Ogundimu',
-    title:          'Senior Lecturer & Research Supervisor',
-    phone:          '+234 80 123 4567',
-    department:     'Computer Science',
-    specialization: 'Machine Learning & Distributed Systems',
+    name:           user?.name || '',
+    title:          'Research Supervisor',
+    phone:          '',
+    department:     user?.departmentName ?? '',
+    specialization: '',
   });
+
+  // ── Fetch real profile data (name / phone / department / specialty / avatar) ─
+  useEffect(() => {
+    if (!user?.id) return;
+    Promise.all([
+      fetchMyProfile(user.id),
+      supabase.from('users').select('department, specialty').eq('id', user.id).maybeSingle(),
+    ]).then(([p, { data }]) => {
+      setProfile(prev => ({
+        ...prev,
+        name:           p?.name ?? prev.name,
+        phone:          p?.phone ?? '',
+        department:     data?.department ?? prev.department,
+        specialization: data?.specialty  ?? '',
+      }));
+      setAvatarUrl(p?.avatar_url ?? null);
+    });
+  }, [user?.id]);
 
   const [notifPrefs, setNotifPrefs] = useState({
     submissionAlerts:  true,
@@ -92,21 +115,35 @@ export default function SupervisorSettings() {
     reminderFrequency:   '7',
   });
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setAvatarUrl(reader.result as string);
-    reader.readAsDataURL(file);
-    notifications.show({ title: 'Photo updated', message: 'Your profile photo has been changed.', color: 'brand' });
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarUrl(dataUrl);
+      notifications.show({ title: 'Photo selected', message: 'Click "Save Settings" to apply your new profile photo.', color: 'brand' });
+    } catch (err) {
+      notifications.show({ title: 'Upload failed', message: err instanceof Error ? err.message : 'Could not process the image.', color: 'red' });
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const handleSave = () =>
-    notifications.show({
-      title:   'Settings saved',
-      message: 'Your settings have been updated successfully.',
-      color:   'green',
-    });
+  const handleSave = async () => {
+    if (!user?.id) return;
+    setSaving(true);
+    try {
+      await updateMyProfile(user.id, { name: profile.name.trim(), phone: profile.phone.trim(), avatarUrl });
+      const { error } = await supabase.from('users').update({ specialty: profile.specialization.trim() || null }).eq('id', user.id);
+      if (error) throw new Error(error.message);
+      dispatch(updateUser({ name: profile.name.trim(), avatar: avatarUrl ?? undefined }));
+      notifications.show({ title: 'Settings saved', message: 'Your profile has been updated successfully.', color: 'green' });
+    } catch (err) {
+      notifications.show({ title: 'Save failed', message: err instanceof Error ? err.message : 'Could not save your settings.', color: 'red' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Box p="xl">
@@ -219,7 +256,7 @@ export default function SupervisorSettings() {
                 description="Managed by your institution"
                 leftSection={<LuMail size={14} color="#adb5bd" />}
                 rightSection={<LuLock size={13} color="#adb5bd" />}
-                value={user?.email || 'a.ogundimu@university.ac'}
+                value={user?.email ?? ''}
                 disabled
                 styles={{ input: { cursor: 'not-allowed', color: '#868e96', background: '#f8f9fa' }, description: { color: '#adb5bd' } }}
               />
@@ -333,7 +370,7 @@ export default function SupervisorSettings() {
               <Text size="sm" fw={600}>Ready to apply changes?</Text>
               <Text size="xs" c="dimmed" mt={2}>All updates take effect immediately.</Text>
             </Box>
-            <Button color="brand" size="md" leftSection={<LuSave size={15} />} onClick={handleSave} px="xl">
+            <Button color="brand" size="md" leftSection={<LuSave size={15} />} loading={saving} onClick={handleSave} px="xl">
               Save Settings
             </Button>
           </Group>

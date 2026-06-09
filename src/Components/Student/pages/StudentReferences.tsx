@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Box,
   Title,
@@ -27,11 +27,55 @@ import {
   LuExternalLink,
   LuTrash,
   LuTriangleAlert,
+  LuInfo,
+  LuRefreshCw,
 } from 'react-icons/lu';
-import { STUDENT_REFERENCES } from '../studentData';
 import type { Reference } from '../studentData';
+import { useAppSelector } from '../../../Redux/hooks';
+import { fetchStudentSubmissions } from '../../../supabase/submissions';
+import type { DBSubmission } from '../../../supabase/submissions';
+import { fetchAIReport, saveAIReport } from '../../../supabase/aiReports';
+import { generateJSON, isGeminiConfigured, GeminiError } from '../../../helper/gemini';
+import ChapterPicker from '../ChapterPicker';
+
+// ── Report shape produced by Gemini ───────────────────────────────────────────
+
+interface ReferenceFinding { severity: 'warning' | 'info'; message: string }
+interface ReferencesReport { summary: string; findings: ReferenceFinding[] }
+
+function isReferencesReport(v: unknown): v is ReferencesReport {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.summary === 'string' && Array.isArray(r.findings);
+}
+
+function buildIntegrityPrompt(
+  refs: Reference[],
+  sections: { id: string; title: string; content: string }[],
+): string {
+  return `You are a citation-integrity assistant helping a student cross-check their reference library against the chapters they've written.
+
+REFERENCE LIBRARY (one per line â€” title, authors, year):
+${refs.map(r => `- "${r.title}" â€” ${r.authors.join(', ') || 'Unknown author'} (${r.year})`).join('\n') || '(empty)'}
+
+SUBMITTED CHAPTERS:
+${sections.map(s => `\n--- ${s.title} (id: ${s.id}) ---\n${s.content.slice(0, 4000)}`).join('\n') || '(none submitted yet)'}
+
+Identify citation-integrity issues such as:
+- Reference library entries that do not appear to be cited anywhere in the chapters (match by author surname and/or year mentioned in-text)
+- In-text citations or sources mentioned in the chapters that have no matching entry in the reference library
+- Any other consistency concerns worth flagging (e.g. inconsistent citation formats, likely duplicate entries)
+
+Classify each finding as "warning" (needs the student's attention before submission) or "info" (minor, worth noting).
+Then write a one or two sentence "summary" of the overall citation health.
+
+Respond with ONLY JSON in exactly this shape (no markdown fences, no extra commentary):
+{ "summary": string, "findings": [{ "severity": "warning" | "info", "message": string }] }`;
+}
 
 export default function StudentReferences() {
+  const user = useAppSelector(s => s.auth.user);
+
   const [search, setSearch] = useState('');
   const [showIntegrity, setShowIntegrity] = useState(false);
   const [doiOpen, { open: openDoi, close: closeDoi }] = useDisclosure(false);
@@ -47,7 +91,66 @@ export default function StudentReferences() {
   }>(null);
 
   const [bibtexInput, setBibtexInput] = useState('');
-  const [refs, setRefs] = useState<Reference[]>(STUDENT_REFERENCES);
+  const [refs, setRefs] = useState<Reference[]>([]);
+
+  // â”€â”€ AI-driven integrity check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [integrityReport, setIntegrityReport] = useState<ReferencesReport | null>(null);
+  const [integrityCheckedAt, setIntegrityCheckedAt] = useState<string | null>(null);
+  const [checkingIntegrity, setCheckingIntegrity] = useState(false);
+
+  const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!user?.id) return;
+    Promise.all([
+      fetchAIReport<ReferencesReport>(user.id, 'references'),
+      fetchStudentSubmissions(user.id),
+    ]).then(([row, subs]) => {
+      if (row && isReferencesReport(row.data)) {
+        setIntegrityReport(row.data);
+        setIntegrityCheckedAt(row.created_at);
+      }
+      const withContent = subs.filter(s => s.content.trim().length > 0);
+      setSubmissions(withContent);
+      setSelected(new Set(withContent.map(s => s.section_id)));
+    });
+  }, [user?.id]);
+
+  const runIntegrityCheck = async () => {
+    if (!user?.id) return;
+    if (!isGeminiConfigured()) {
+      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing â€” ask an admin to add it to the environment.', color: 'red' });
+      return;
+    }
+    if (refs.length === 0) {
+      notifications.show({ title: 'Reference library is empty', message: 'Add references via DOI or BibTeX before running an integrity check.', color: 'orange' });
+      return;
+    }
+    const chosen = submissions.filter(s => selected.has(s.section_id));
+    if (chosen.length === 0) {
+      notifications.show({ title: 'Nothing selected', message: 'Choose at least one chapter to cross-check against your reference library.', color: 'orange' });
+      return;
+    }
+
+    setCheckingIntegrity(true);
+    try {
+      const prompt = buildIntegrityPrompt(refs, chosen.map(s => ({ id: s.section_id, title: s.section_title, content: s.content })));
+      const result = await generateJSON<ReferencesReport>(prompt);
+      if (!isReferencesReport(result)) throw new GeminiError('Unexpected response shape from Gemini.');
+
+      setIntegrityReport(result);
+      const now = new Date().toISOString();
+      setIntegrityCheckedAt(now);
+      await saveAIReport(user.id, 'references', result);
+      notifications.show({ title: 'Integrity check complete', message: 'Citation report updated.', color: 'green' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not complete the integrity check.';
+      notifications.show({ title: 'Check failed', message, color: 'red' });
+    } finally {
+      setCheckingIntegrity(false);
+    }
+  };
 
   const filtered = refs.filter(r => {
     const q = search.toLowerCase();
@@ -150,26 +253,77 @@ export default function StudentReferences() {
         </Group>
       </Group>
 
-      {/* Integrity Panel */}
+      {/* Integrity Panel (AI-driven) */}
       {showIntegrity && (
-        <Paper
-          withBorder
-          p="md"
-          mb="lg"
-          style={{ borderLeft: '4px solid #fd7e14' }}
-        >
-          <Stack gap="xs">
-            <Group gap="xs">
-              <LuTriangleAlert size={16} color="#fd7e14" />
-              <Text size="sm" fw={500}>2 uncited references</Text>
+        <Paper withBorder p="md" mb="lg" style={{ borderLeft: '4px solid #fd7e14' }}>
+          <Stack gap="sm">
+            <Box>
+              <Text size="sm" fw={600}>AI Citation Integrity Check</Text>
+              <Text size="xs" c="dimmed">
+                Gemini cross-checks your reference library against the chapters you select below â€”
+                flagging references that look uncited and citations with no matching entry. This is a
+                linguistic best-effort check, not a guarantee of correctness; always verify manually.
+              </Text>
+            </Box>
+
+            <ChapterPicker
+              submissions={submissions}
+              selected={selected}
+              onChange={setSelected}
+              title="Choose chapters to cross-check"
+              description="Gemini will compare your reference library against the chapters selected here."
+            />
+
+            <Group justify="flex-end">
+              <Button
+                size="xs"
+                variant="light"
+                color="brand"
+                leftSection={checkingIntegrity ? <Loader size={12} color="currentColor" /> : <LuRefreshCw size={14} />}
+                onClick={runIntegrityCheck}
+                loading={checkingIntegrity}
+                disabled={submissions.length === 0 || selected.size === 0 || refs.length === 0}
+              >
+                {integrityReport ? 'Re-run Check' : 'Run Check'}
+              </Button>
             </Group>
-            <Group gap="xs">
-              <LuTriangleAlert size={16} color="#fd7e14" />
-              <Text size="sm" fw={500}>1 reference with missing DOI</Text>
-            </Group>
-            <Text size="xs" c="dimmed">
-              All references should be cited in the document and have a valid DOI.
-            </Text>
+
+            {integrityCheckedAt && (
+              <Text size="xs" c="dimmed">Last checked {new Date(integrityCheckedAt).toLocaleString()}</Text>
+            )}
+
+            {!integrityReport ? (
+              <Text size="xs" c="dimmed" fs="italic">
+                {checkingIntegrity
+                  ? 'Analyzing your references and selected chapters…'
+                  : refs.length === 0
+                    ? 'Add references to your library (via DOI or BibTeX) before running a check.'
+                    : 'Select chapters above and click "Run Check" to cross-check your library against them.'}
+              </Text>
+            ) : (
+              <>
+                <Text size="sm">{integrityReport.summary}</Text>
+                {integrityReport.findings.length === 0 ? (
+                  <Group gap="xs">
+                    <LuShield size={16} color="#2f9e44" />
+                    <Text size="sm" fw={500}>No citation-integrity issues found.</Text>
+                  </Group>
+                ) : (
+                  <Stack gap="xs">
+                    {integrityReport.findings.map((f, idx) => {
+                      const Icon = f.severity === 'warning' ? LuTriangleAlert : LuInfo;
+                      const color = f.severity === 'warning' ? '#fd7e14' : '#3b5bdb';
+                      return (
+                        <Group key={idx} gap="xs" align="flex-start" wrap="nowrap">
+                          <Icon size={16} color={color} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <Text size="sm" fw={500}>{f.message}</Text>
+                        </Group>
+                      );
+                    })}
+                  </Stack>
+                )}
+              </>
+            )}
           </Stack>
         </Paper>
       )}

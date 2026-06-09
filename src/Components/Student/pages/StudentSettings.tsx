@@ -6,10 +6,12 @@ import {
 import { notifications } from '@mantine/notifications';
 import {
   LuUser, LuBuilding2, LuBot, LuBell, LuSave, LuMail,
-  LuLock, LuFileText, LuCamera, LuTag, LuShield,
+  LuLock, LuFileText, LuCamera, LuTag, LuShield, LuPhone,
 } from 'react-icons/lu';
-import { useAppSelector } from '../../../Redux/hooks';
+import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
+import { updateUser } from '../../../Redux/slices/authSlice';
 import { supabase } from '../../../supabase/client';
+import { fetchMyProfile, updateMyProfile, fileToAvatarDataUrl } from '../../../supabase/profile';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -53,11 +55,17 @@ function ToggleRow({ label, description, checked, onChange, last = false }: {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function StudentSettings() {
+  const dispatch     = useAppDispatch();
   const authUser     = useAppSelector(s => s.auth.user);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [hovered,   setHovered]   = useState(false);
   const [loading,   setLoading]   = useState(true);
+  const [saving,    setSaving]    = useState(false);
+
+  // ── Editable identity fields ───────────────────────────────────────────────
+  const [name,  setName]  = useState('');
+  const [phone, setPhone] = useState('');
 
   // ── Profile fields from Supabase ───────────────────────────────────────────
   const [matricNo,    setMatricNo]    = useState('');
@@ -90,41 +98,66 @@ export default function StudentSettings() {
   // ── Fetch real profile data ────────────────────────────────────────────────
   useEffect(() => {
     if (!authUser?.id) return;
-    supabase
-      .from('users')
-      .select('matric_no, degree_level, project_title, department')
-      .eq('id', authUser.id)
-      .single()
-      .then(({ data }) => {
-        if (data) {
-          setMatricNo(data.matric_no      ?? '');
-          setDegreeLevel(data.degree_level  ?? '');
-          setDepartment(data.department    ?? authUser.departmentName ?? '');
-          setProjectPrefs(p => ({
-            ...p,
-            title:        data.project_title ?? '',
-            discipline:   data.degree_level  ?? '',
-            targetOutput: data.degree_level?.includes('PhD')
-              ? 'PhD Thesis'
-              : data.degree_level?.includes('Master')
-              ? "Master's Dissertation"
-              : 'Undergraduate Project',
-          }));
-        }
-        setLoading(false);
-      });
-  }, [authUser?.id, authUser?.departmentName]);
+    Promise.all([
+      fetchMyProfile(authUser.id),
+      supabase
+        .from('users')
+        .select('matric_no, degree_level, project_title, department')
+        .eq('id', authUser.id)
+        .single(),
+    ]).then(([profile, { data }]) => {
+      if (profile) {
+        setName(profile.name ?? authUser.name ?? '');
+        setPhone(profile.phone ?? '');
+        setAvatarUrl(profile.avatar_url ?? null);
+      }
+      if (data) {
+        setMatricNo(data.matric_no      ?? '');
+        setDegreeLevel(data.degree_level  ?? '');
+        setDepartment(data.department    ?? authUser.departmentName ?? '');
+        setProjectPrefs(p => ({
+          ...p,
+          title:        data.project_title ?? '',
+          discipline:   data.degree_level  ?? '',
+          targetOutput: data.degree_level?.includes('PhD')
+            ? 'PhD Thesis'
+            : data.degree_level?.includes('Master')
+            ? "Master's Dissertation"
+            : 'Undergraduate Project',
+        }));
+      }
+      setLoading(false);
+    });
+  }, [authUser?.id, authUser?.departmentName, authUser?.name]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setAvatarUrl(reader.result as string);
-    reader.readAsDataURL(file);
-    notifications.show({ title: 'Photo updated', message: 'Profile photo updated.', color: 'brand' });
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarUrl(dataUrl);
+      notifications.show({ title: 'Photo selected', message: 'Click "Save Settings" to apply your new profile photo.', color: 'brand' });
+    } catch (err) {
+      notifications.show({ title: 'Upload failed', message: err instanceof Error ? err.message : 'Could not process the image.', color: 'red' });
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const name        = authUser?.name            ?? '';
+  const handleSave = async () => {
+    if (!authUser?.id) return;
+    setSaving(true);
+    try {
+      await updateMyProfile(authUser.id, { name: name.trim(), phone: phone.trim(), avatarUrl });
+      dispatch(updateUser({ name: name.trim(), avatar: avatarUrl ?? undefined }));
+      notifications.show({ title: 'Settings saved', message: 'Your profile has been updated successfully.', color: 'green' });
+    } catch (err) {
+      notifications.show({ title: 'Save failed', message: err instanceof Error ? err.message : 'Could not save your settings.', color: 'red' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const email       = authUser?.email           ?? '';
   const institution = authUser?.institutionName ?? '—';
   const supervisor  = authUser?.supervisorName  ?? '—';
@@ -205,6 +238,23 @@ export default function StudentSettings() {
               </Text>
             </Group>
             <Divider mb="lg" />
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" mb="md">
+              <TextInput
+                label="Full Name"
+                leftSection={<LuUser size={14} color="#868e96" />}
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+              <TextInput
+                label="Phone Number"
+                placeholder="e.g. +234 80 000 0000"
+                leftSection={<LuPhone size={14} color="#868e96" />}
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+              />
+            </SimpleGrid>
+
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
               {([
                 { label: 'Email Address',  value: email,        icon: LuMail      },
@@ -359,13 +409,8 @@ export default function StudentSettings() {
               color="brand" size="md"
               leftSection={<LuSave size={15} />}
               px="xl"
-              onClick={() =>
-                notifications.show({
-                  title: 'Settings saved',
-                  message: 'Your settings have been updated successfully.',
-                  color: 'green',
-                })
-              }
+              loading={saving}
+              onClick={handleSave}
             >
               Save Settings
             </Button>

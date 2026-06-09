@@ -258,7 +258,7 @@ export default function SupervisorAnalytics() {
           icon={LuFileText}
           label="Chapters Submitted"
           value={submissions.length}
-          color="blue"
+          color="brand"
           sub={`${pending.length} pending · ${revision.length} revision`}
         />
         <KPICard

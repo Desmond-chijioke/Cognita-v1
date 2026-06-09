@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActionIcon, Avatar, Badge, Box, Group, Loader,
+  ActionIcon, Avatar, Badge, Box, Button, Group, Loader,
   Paper, ScrollArea, Stack, Text, TextInput,
 } from '@mantine/core';
-import { LuSearch, LuSend, LuCircle, LuMessageSquare } from 'react-icons/lu';
+import { LuSearch, LuSend, LuCircle, LuMessageSquare, LuMic, LuX, LuPhone, LuVideo } from 'react-icons/lu';
+import CallModal, { type CallType } from './CallModal';
+import { startIncomingRing, stopIncomingRing } from '../../utils/callAudio';
 import { useAppSelector } from '../../Redux/hooks';
 import { supabase } from '../../supabase/client';
+import { showerrornotification } from '../../helper/notificationhelper';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -15,18 +18,21 @@ interface Contact {
   email:           string;
   role:            string;
   unread:          number;
+  avatar_url?:     string;
   lastMessage?:    string;
   lastTime?:       string;   // formatted display string
   lastTimestamp?:  string;   // raw ISO for sorting
 }
 
 interface DBMessage {
-  id:          string;
-  sender_id:   string;
-  receiver_id: string;
-  text:        string;
-  created_at:  string;
-  read_at:     string | null;
+  id:            string;
+  sender_id:     string;
+  receiver_id:   string;
+  text:          string;
+  audio_url?:    string;
+  message_type?: 'text' | 'voice' | 'call-invite';
+  created_at:    string;
+  read_at:       string | null;
 }
 
 interface Message extends DBMessage {
@@ -50,12 +56,33 @@ function roleColor(role: string) {
   return COLORS[Math.abs(h) % COLORS.length];
 }
 
+function formatDuration(secs: number) {
+  const m = Math.floor(secs / 60).toString().padStart(2, '0');
+  const s = (secs % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function getSupportedMimeType() {
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) ?? '';
+}
+
+function VoicePlayer({ url }: { url: string }) {
+  return (
+    <Group gap={8} style={{ minWidth: 200 }} wrap="nowrap">
+      <LuMic size={14} style={{ flexShrink: 0, color: '#868e96' }} />
+      <audio controls src={url} style={{ height: 32, flex: 1, minWidth: 0 }} />
+    </Group>
+  );
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function MessagingPanel() {
   const user            = useAppSelector(s => s.auth.user);
   const myId          = user?.id           ?? '';
   const myName        = user?.name         ?? 'Me';
+  const myAvatarUrl   = user?.avatar       ?? undefined;
   const institutionId = user?.institutionId ?? '';
 
   const [contacts,        setContacts]        = useState<Contact[]>([]);
@@ -66,6 +93,17 @@ export default function MessagingPanel() {
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending,         setSending]         = useState(false);
+
+  // Call state
+  const [callState,    setCallState]    = useState<{ type: CallType; roomUrl: string } | null>(null);
+  const [creatingCall, setCreatingCall] = useState(false);
+
+  // Voice recording
+  const [recording,    setRecording]  = useState(false);
+  const [recDuration,  setRecDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef   = useRef<Blob[]>([]);
+  const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const bottomRef    = useRef<HTMLDivElement>(null);
   const activeIdRef  = useRef<string | null>(null);
@@ -79,13 +117,13 @@ export default function MessagingPanel() {
     if (!myId || !institutionId) return;
     setLoadingContacts(true);
 
-    type UserRow = { id: string; name: string; email: string; role: string };
+    type UserRow = { id: string; name: string; email: string; role: string; avatar_url?: string };
 
     try {
       // Only return users that share the same institution_id — no fallbacks
       const { data } = await supabase
         .from('users')
-        .select('id, name, email, role')
+        .select('id, name, email, role, avatar_url')
         .eq('institution_id', institutionId)
         .neq('id', myId)
         .neq('role', 'Director of Research')
@@ -109,6 +147,7 @@ export default function MessagingPanel() {
           name:           u.name,
           email:          u.email,
           role:           u.role,
+          avatar_url:     u.avatar_url || undefined,
           unread:         unread ?? 0,
           lastMessage:    lastMsg?.text,
           lastTime:       lastMsg ? fmtTime(lastMsg.created_at) : undefined,
@@ -131,7 +170,7 @@ export default function MessagingPanel() {
     try {
       const { data } = await supabase
         .from('messages')
-        .select('id, sender_id, receiver_id, text, created_at, read_at')
+        .select('id, sender_id, receiver_id, text, audio_url, message_type, created_at, read_at')
         .or(`and(sender_id.eq.${myId},receiver_id.eq.${contactId}),and(sender_id.eq.${contactId},receiver_id.eq.${myId})`)
         .order('created_at', { ascending: true });
 
@@ -150,7 +189,7 @@ export default function MessagingPanel() {
     }
   }, [myId]);
 
-  // ── 3. Send a message ─────────────────────────────────────────────────────
+  // ── 3. Send a text message ────────────────────────────────────────────────
 
   const sendMessage = async () => {
     const text = draft.trim();
@@ -160,7 +199,7 @@ export default function MessagingPanel() {
     try {
       const { data: newMsg } = await supabase
         .from('messages')
-        .insert({ institution_id: institutionId, sender_id: myId, receiver_id: activeId, text })
+        .insert({ institution_id: institutionId, sender_id: myId, receiver_id: activeId, text, message_type: 'text' })
         .select()
         .single();
 
@@ -175,7 +214,143 @@ export default function MessagingPanel() {
     }
   };
 
-  // ── 4. Realtime — receive incoming messages instantly ─────────────────────
+  // ── 4. Start a video/voice call ──────────────────────────────────────────
+
+  const startCall = async (type: CallType) => {
+    if (!activeId || !myId || !institutionId) return;
+    setCreatingCall(true);
+    try {
+      const apiKey = import.meta.env.VITE_DAILY_API_KEY as string | undefined;
+      if (!apiKey) throw new Error('VITE_DAILY_API_KEY is not set in your .env file');
+
+      const res = await fetch('https://api.daily.co/v1/rooms', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({
+          properties: {
+            exp:               Math.round(Date.now() / 1000) + 7200,
+            enable_screenshare: true,
+            max_participants:  10,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? `Daily API ${res.status}`);
+      }
+
+      const room = await res.json() as { url: string; name: string };
+
+      await supabase.from('messages').insert({
+        institution_id: institutionId,
+        sender_id:      myId,
+        receiver_id:    activeId,
+        text:           type === 'voice' ? '📞 Voice call started' : '📹 Video call started',
+        audio_url:      room.url,
+        message_type:   'call-invite',
+      });
+
+      setCallState({ type, roomUrl: room.url });
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : JSON.stringify(err);
+      showerrornotification({ message: `Call failed: ${detail}` });
+      console.error('[call]', err);
+    } finally {
+      setCreatingCall(false);
+    }
+  };
+
+  // ── 5. Voice recording ────────────────────────────────────────────────────
+
+  const sendVoiceNote = async (blob: Blob, mimeType: string) => {
+    if (!activeId || !myId || !institutionId) return;
+    setSending(true);
+    try {
+      const ext  = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const path = `${institutionId}/${myId}/${Date.now()}.${ext}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from('voice-notes')
+        .upload(path, blob, { contentType: mimeType });
+      if (uploadErr) throw uploadErr;
+
+      const { data: { publicUrl } } = supabase.storage.from('voice-notes').getPublicUrl(path);
+
+      const { data: newMsg } = await supabase
+        .from('messages')
+        .insert({
+          institution_id: institutionId,
+          sender_id:      myId,
+          receiver_id:    activeId,
+          text:           '[Voice note]',
+          audio_url:      publicUrl,
+          message_type:   'voice',
+        })
+        .select()
+        .single();
+
+      if (newMsg) {
+        setMessages(prev => [...prev, { ...newMsg, isOwn: true }]);
+        setContacts(prev => prev.map(c => c.id === activeId
+          ? { ...c, lastMessage: '[Voice note]', lastTime: fmtTime(newMsg.created_at), lastTimestamp: newMsg.created_at }
+          : c));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showerrornotification({ message: `Voice note failed: ${msg}` });
+      console.error('[voice-note]', err);
+    } finally {
+      setSending(false);
+      setRecDuration(0);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = getSupportedMimeType();
+      const mr       = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      audioChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        sendVoiceNote(blob, mr.mimeType || 'audio/webm');
+      };
+      mr.start(100);
+      mediaRecorderRef.current = mr;
+      setRecording(true);
+      setRecDuration(0);
+      timerRef.current = setInterval(() => setRecDuration(d => d + 1), 1000);
+    } catch {
+      // microphone permission denied — nothing to do
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setRecording(false);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.onstop = null; // discard blob — don't send
+      if (mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+    }
+    setRecording(false);
+    setRecDuration(0);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  };
+
+  // ── 5. Realtime — receive incoming messages instantly ─────────────────────
 
   useEffect(() => {
     if (!myId) return;
@@ -189,6 +364,11 @@ export default function MessagingPanel() {
         filter: `receiver_id=eq.${myId}`,
       }, payload => {
         const msg = payload.new as DBMessage;
+
+        // Ring for incoming call invites regardless of which conversation is active
+        if (msg.message_type === 'call-invite') {
+          startIncomingRing();
+        }
 
         if (msg.sender_id === activeIdRef.current) {
           // Currently viewing this conversation — append and mark read
@@ -210,6 +390,10 @@ export default function MessagingPanel() {
   }, [myId]);
 
   // ── Effects ───────────────────────────────────────────────────────────────
+
+  // Clean up timers and sounds on unmount
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+  useEffect(() => () => stopIncomingRing(), []);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
@@ -287,7 +471,7 @@ export default function MessagingPanel() {
                 }}
               >
                 <Group gap="sm" wrap="nowrap">
-                  <Avatar color={roleColor(contact.role)} radius="xl" size={38}>
+                  <Avatar src={contact.avatar_url} color={roleColor(contact.role)} radius="xl" size={38}>
                     {getInitials(contact.name)}
                   </Avatar>
                   <Box style={{ flex: 1, minWidth: 0 }}>
@@ -322,16 +506,34 @@ export default function MessagingPanel() {
 
           {/* Header */}
           <Box style={{ padding: '12px 20px', borderBottom: '1px solid #f1f3f5', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Avatar color={roleColor(activeContact.role)} radius="xl" size={40}>
+            <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={40}>
               {getInitials(activeContact.name)}
             </Avatar>
-            <Box>
+            <Box style={{ flex: 1 }}>
               <Text fw={700} size="sm">{activeContact.name}</Text>
               <Group gap={4}>
                 <LuCircle size={8} color="#adb5bd" fill="#adb5bd" />
                 <Text size="xs" c="dimmed">{activeContact.role} · {activeContact.email}</Text>
               </Group>
             </Box>
+            <Group gap={4}>
+              <ActionIcon
+                variant="subtle" color="green" radius="xl" size="lg"
+                onClick={() => startCall('voice')}
+                loading={creatingCall}
+                title="Voice call"
+              >
+                <LuPhone size={17} />
+              </ActionIcon>
+              <ActionIcon
+                variant="subtle" color="brand" radius="xl" size="lg"
+                onClick={() => startCall('video')}
+                loading={creatingCall}
+                title="Video call"
+              >
+                <LuVideo size={17} />
+              </ActionIcon>
+            </Group>
           </Box>
 
           {/* Messages */}
@@ -348,20 +550,63 @@ export default function MessagingPanel() {
                 {messages.map(msg => (
                   <Box key={msg.id} style={{ display: 'flex', justifyContent: msg.isOwn ? 'flex-end' : 'flex-start' }}>
                     {!msg.isOwn && (
-                      <Avatar color={roleColor(activeContact.role)} radius="xl" size={28} mr={8} style={{ flexShrink: 0, alignSelf: 'flex-end' }}>
+                      <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={28} mr={8} style={{ flexShrink: 0, alignSelf: 'flex-end' }}>
                         {getInitials(activeContact.name)}
                       </Avatar>
+                    )}
+                    {msg.isOwn && (
+                      <Box style={{ order: 2, flexShrink: 0, alignSelf: 'flex-end', marginLeft: 8 }}>
+                        <Avatar src={myAvatarUrl} color="brand" radius="xl" size={28}>
+                          {getInitials(myName)}
+                        </Avatar>
+                      </Box>
                     )}
                     <Box style={{ maxWidth: '70%' }}>
                       <Box style={{
                         padding: '10px 14px',
                         borderRadius: msg.isOwn ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                        background: msg.isOwn ? 'var(--mantine-color-brand-6)' : 'var(--mantine-color-gray-1)',
-                        color: msg.isOwn ? 'white' : 'var(--mantine-color-dark-7)',
+                        background:
+                          msg.message_type === 'voice'
+                            ? (msg.isOwn ? 'var(--mantine-color-brand-1)' : 'var(--mantine-color-gray-1)')
+                          : msg.message_type === 'call-invite'
+                            ? (msg.isOwn ? 'var(--mantine-color-green-7)' : 'var(--mantine-color-green-0)')
+                            : (msg.isOwn ? 'var(--mantine-color-brand-6)' : 'var(--mantine-color-gray-1)'),
+                        color:
+                          msg.message_type === 'call-invite' && !msg.isOwn
+                            ? 'var(--mantine-color-dark-7)'
+                          : msg.isOwn && msg.message_type !== 'voice'
+                            ? 'white'
+                            : 'var(--mantine-color-dark-7)',
                         fontSize: '0.875rem',
                         lineHeight: 1.5,
                       }}>
-                        {msg.text}
+                        {msg.message_type === 'call-invite' && msg.audio_url ? (
+                          <Box>
+                            <Group gap={8} wrap="nowrap" mb={msg.isOwn ? 0 : 8}>
+                              <Box style={{
+                                width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                                background: 'rgba(255,255,255,0.2)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              }}>
+                                <LuPhone size={15} />
+                              </Box>
+                              <Text size="sm" fw={600}>{msg.text}</Text>
+                            </Group>
+                            {!msg.isOwn && (
+                              <Button
+                                size="xs" color="green" radius="xl"
+                                leftSection={<LuPhone size={12} />}
+                                onClick={() => { stopIncomingRing(); setCallState({ type: 'video', roomUrl: msg.audio_url! }); }}
+                              >
+                                Join Call
+                              </Button>
+                            )}
+                          </Box>
+                        ) : msg.message_type === 'voice' && msg.audio_url ? (
+                          <VoicePlayer url={msg.audio_url} />
+                        ) : (
+                          msg.text
+                        )}
                       </Box>
                       <Text size="xs" c="dimmed" mt={2} style={{ textAlign: msg.isOwn ? 'right' : 'left' }}>
                         {msg.isOwn ? myName : activeContact.name} · {fmtTime(msg.created_at)}
@@ -374,28 +619,63 @@ export default function MessagingPanel() {
             )}
           </ScrollArea>
 
+          {callState && (
+            <CallModal
+              type={callState.type}
+              roomUrl={callState.roomUrl}
+              contactName={activeContact.name}
+              contactAvatar={activeContact.avatar_url}
+              myName={myName}
+              myAvatar={myAvatarUrl}
+              onClose={() => setCallState(null)}
+            />
+          )}
+
           {/* Input */}
           <Box style={{ padding: '12px 16px', borderTop: '1px solid #f1f3f5' }}>
-            <Group gap="sm">
-              <TextInput
-                style={{ flex: 1 }}
-                placeholder={`Message ${activeContact.name}…`}
-                value={draft}
-                onChange={e => setDraft(e.currentTarget.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                radius="xl"
-                size="md"
-                disabled={sending}
-              />
-              <ActionIcon
-                size="lg" radius="xl" color="brand" variant="filled"
-                onClick={sendMessage}
-                disabled={!draft.trim() || sending}
-                loading={sending}
-              >
-                <LuSend size={16} />
-              </ActionIcon>
-            </Group>
+            {recording ? (
+              <Group gap="sm">
+                <Box style={{
+                  display: 'flex', alignItems: 'center', gap: 10, flex: 1,
+                  background: '#fff5f5', borderRadius: 24, padding: '8px 16px',
+                  border: '1.5px solid #ffc9c9',
+                }}>
+                  <Box style={{ width: 8, height: 8, borderRadius: '50%', background: '#f03e3e', flexShrink: 0 }} />
+                  <Text size="sm" fw={700} c="red.7" style={{ minWidth: 40 }}>{formatDuration(recDuration)}</Text>
+                  <Text size="xs" c="dimmed" style={{ flex: 1 }}>Recording…</Text>
+                </Box>
+                <ActionIcon size="lg" radius="xl" color="gray" variant="light" onClick={cancelRecording} title="Cancel">
+                  <LuX size={16} />
+                </ActionIcon>
+                <ActionIcon size="lg" radius="xl" color="brand" variant="filled" onClick={stopRecording} loading={sending} title="Send">
+                  <LuSend size={16} />
+                </ActionIcon>
+              </Group>
+            ) : (
+              <Group gap="sm">
+                <TextInput
+                  style={{ flex: 1 }}
+                  placeholder={`Message ${activeContact.name}…`}
+                  value={draft}
+                  onChange={e => setDraft(e.currentTarget.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                  radius="xl"
+                  size="md"
+                  disabled={sending}
+                />
+                {draft.trim() ? (
+                  <ActionIcon size="lg" radius="xl" color="brand" variant="filled"
+                    onClick={sendMessage} disabled={sending} loading={sending}>
+                    <LuSend size={16} />
+                  </ActionIcon>
+                ) : (
+                  <ActionIcon size="lg" radius="xl" color="brand" variant="light"
+                    onClick={startRecording} disabled={sending} title="Record voice note">
+                    <LuMic size={16} />
+                  </ActionIcon>
+                )}
+              </Group>
+            )}
           </Box>
         </Paper>
       ) : (

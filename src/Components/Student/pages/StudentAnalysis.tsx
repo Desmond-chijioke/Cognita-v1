@@ -1,49 +1,141 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Badge, Box, Button, Divider, Group, Paper, Progress,
-  Select, SimpleGrid, Stack, Table, Text, Textarea,
+  Badge, Box, Button, Divider, Group, Loader, Paper,
+  Select, SimpleGrid, Stack, Table, Text,
   TextInput, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
-  LuActivity, LuSparkles, LuCircleCheck, LuX, LuArrowRight,
-  LuArrowLeft, LuSave, LuPenLine, LuCopy, LuPlus,
+  LuActivity, LuSparkles, LuCircleCheck, LuTriangleAlert, LuX, LuArrowRight,
+  LuArrowLeft, LuPlus, LuRefreshCw,
 } from 'react-icons/lu';
-import { ANALYSIS_RESULTS } from '../studentData';
-import type { AnalysisResult } from '../studentData';
+import { useAppSelector } from '../../../Redux/hooks';
+import { fetchStudentSubmissions } from '../../../supabase/submissions';
+import type { DBSubmission } from '../../../supabase/submissions';
+import { fetchAIReport, saveAIReport } from '../../../supabase/aiReports';
+import { generateJSON, isGeminiConfigured, GeminiError } from '../../../helper/gemini';
+import ChapterPicker from '../ChapterPicker';
 
-type Step = 'context' | 'recommend' | 'results' | 'history';
+type Step = 'context' | 'recommend' | 'review';
 
 interface Variable { name: string; type: string; role: string }
 
-const RECOMMEND_TESTS = [
-  {
-    name: 'Independent Samples t-test',
-    recommended: true,
-    rationale: 'Your dependent variable (diagnostic accuracy) is continuous and you are comparing two independent groups (FedCliniq vs. centralised). The t-test is the appropriate choice assuming normality.',
-    assumptions: ['Normal distribution of accuracy scores', 'Independence of observations', 'Homogeneity of variance (or use Welch correction)'],
-  },
-  {
-    name: 'Mann-Whitney U Test',
-    recommended: false,
-    rationale: 'A non-parametric alternative to the t-test, appropriate if your accuracy distributions are non-normal or heavily skewed. Robust to outliers.',
-    assumptions: ['Ordinal or continuous measurement', 'Independence of observations'],
-  },
-  {
-    name: "Welch's t-test",
-    recommended: false,
-    rationale: 'A variant of the t-test that does not assume equal variances between groups. Preferred when Levene\'s test indicates unequal variances.',
-    assumptions: ['Normal distribution', 'Independence of observations'],
-  },
-];
+interface ResearchContext {
+  researchType: string;
+  studyDesign:  string;
+  question:     string;
+  hypothesis:   string;
+}
+
+// ── Report shape produced by Gemini ───────────────────────────────────────────
+
+interface RecommendedTestAI {
+  name:        string;
+  recommended: boolean;
+  rationale:   string;
+  assumptions: string[];
+}
+
+type AnalysisVerdict = 'strong' | 'needs-work' | 'missing';
+
+interface ChapterAnalysisFinding {
+  aspect:  string;
+  verdict: AnalysisVerdict;
+  comment: string;
+}
+
+interface ChapterAnalysisReview {
+  chapterId:    string;
+  chapterTitle: string;
+  summary:      string;
+  findings:     ChapterAnalysisFinding[];
+}
+
+interface AnalysisAdvisorReport {
+  tests:         RecommendedTestAI[];
+  chapterReview: ChapterAnalysisReview | null;
+}
+
+function isAnalysisAdvisorReport(v: unknown): v is AnalysisAdvisorReport {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return Array.isArray(r.tests);
+}
+
+function isChapterReviewPayload(v: unknown): v is { summary: string; findings: ChapterAnalysisFinding[] } {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.summary === 'string' && Array.isArray(r.findings);
+}
+
+function buildAdvisorPrompt(ctx: ResearchContext, variables: Variable[]): string {
+  return `You are a statistical-methods advisor helping a student choose the right statistical test(s) for their research project.
+
+RESEARCH CONTEXT:
+- Research type: ${ctx.researchType}
+- Study design: ${ctx.studyDesign}
+- Research question: ${ctx.question}
+- Hypothesis: ${ctx.hypothesis}
+
+VARIABLES:
+${variables.map(v => `- ${v.name} (measurement type: ${v.type}, role: ${v.role})`).join('\n')}
+
+Recommend 2-4 candidate statistical tests suited to this context. For each one provide:
+- "name": the test's name
+- "recommended": true for the single best-fit test given this context, false for the alternatives
+- "rationale": a concise, plain-language explanation of why this test fits (or how it compares to the recommended one)
+- "assumptions": a short list of the statistical assumptions the student should verify before relying on this test
+
+Respond with ONLY JSON in exactly this shape (no markdown fences, no extra commentary):
+{ "tests": [{ "name": string, "recommended": boolean, "rationale": string, "assumptions": string[] }] }`;
+}
+
+function buildChapterReviewPrompt(
+  chapter: { id: string; title: string; content: string },
+  ctx: ResearchContext,
+): string {
+  return `You are an academic-analysis reviewer helping a student assess how well they have written up their results/analysis in one chapter, given their research context.
+
+RESEARCH CONTEXT:
+- Research type: ${ctx.researchType}
+- Study design: ${ctx.studyDesign}
+- Research question: ${ctx.question}
+- Hypothesis: ${ctx.hypothesis}
+
+CHAPTER TO REVIEW: "${chapter.title}"
+${chapter.content.slice(0, 8000)}
+
+You do NOT have access to the student's raw datasets, statistical software output, or real numerical results — you can only judge how the analysis is WRITTEN UP, not whether the underlying numbers are correct. Do not invent statistics, p-values, or results that aren't already in the text.
+
+Assess how well the chapter communicates its analysis/results. Only include aspects that are actually relevant to what's written (omit ones the chapter doesn't attempt) from this list, or a closely related one if more fitting:
+- "Statistical/analytical reporting" — are methods, tests, and outputs described clearly and precisely?
+- "Interpretation of results" — are findings explained in plain language and connected back to the research question/hypothesis?
+- "Evidence for claims" — are conclusions supported by what's actually presented, without overstating?
+- "Structure & clarity" — is the analysis easy to follow, well-organised, and unambiguous?
+
+For each aspect included, give:
+- "aspect": its name
+- "verdict": "strong" | "needs-work" | "missing"
+- "comment": one or two concrete, specific sentences explaining the verdict and how to improve it
+
+Then write a short overall "summary" of how well this chapter presents its analysis and what to prioritise improving.
+
+Respond with ONLY JSON in exactly this shape (no markdown fences, no extra commentary):
+{ "summary": string, "findings": [{ "aspect": string, "verdict": "strong" | "needs-work" | "missing", "comment": string }] }`;
+}
+
+function verdictMeta(v: AnalysisVerdict) {
+  return v === 'strong'      ? { color: 'green',  Icon: LuCircleCheck   }
+       : v === 'needs-work'  ? { color: 'orange', Icon: LuTriangleAlert }
+       :                       { color: 'red',    Icon: LuX             };
+}
 
 function StepIndicator({ step }: { step: Step }) {
   const steps: { id: Step; label: string }[] = [
     { id: 'context',   label: 'Research Context' },
     { id: 'recommend', label: 'AI Advisor'       },
-    { id: 'results',   label: 'Run Analysis'     },
-    { id: 'history',   label: 'History'          },
+    { id: 'review',    label: 'Analysis Review'  },
   ];
   const idx = steps.findIndex(s => s.id === step);
   return (
@@ -81,14 +173,12 @@ function StepIndicator({ step }: { step: Step }) {
 
 export default function StudentAnalysis() {
   const navigate = useNavigate();
+  const user = useAppSelector(s => s.auth.user);
+
   const [step, setStep]                 = useState<Step>('context');
-  const [running, setRunning]           = useState(false);
-  const [progress, setProgress]         = useState(0);
-  const [selectedResult, setResult]     = useState<AnalysisResult | null>(null);
-  const [savedResults, setSaved]        = useState<AnalysisResult[]>(ANALYSIS_RESULTS);
   const [selectedTest, setSelectedTest] = useState(0);
 
-  const [ctx, setCtx] = useState({
+  const [ctx, setCtx] = useState<ResearchContext>({
     researchType: 'Quantitative',
     studyDesign:  'Comparative',
     question:     'Does FedCliniq achieve diagnostic accuracy comparable to centralised learning while preserving patient privacy?',
@@ -101,32 +191,99 @@ export default function StudentAnalysis() {
     { name: 'Hospital Site',       type: 'category', role: 'Control' },
   ]);
 
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) { clearInterval(id); return 100; }
-        return p + 4;
-      });
-    }, 100);
-    return () => clearInterval(id);
-  }, [running]);
+  // ── AI Advisor (Gemini-driven test recommendations) ─────────────────────────
+  const [advisorReport, setAdvisorReport]         = useState<AnalysisAdvisorReport | null>(null);
+  const [advisorGeneratedAt, setAdvisorGeneratedAt] = useState<string | null>(null);
+  const [generatingAdvisor, setGeneratingAdvisor] = useState(false);
+
+  const tests         = advisorReport?.tests ?? [];
+  const chapterReview = advisorReport?.chapterReview ?? null;
+
+  // ── Chapters available for the analysis-writing review ───────────────────────
+  const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
+  const [selectedChapter, setSelectedChapter] = useState<Set<string>>(new Set());
+  const [reviewing, setReviewing] = useState(false);
 
   useEffect(() => {
-    if (progress >= 100 && running) {
-      setTimeout(() => {
-        setRunning(false);
-        setProgress(0);
-        setResult(ANALYSIS_RESULTS[selectedTest] ?? ANALYSIS_RESULTS[0]);
-      }, 300);
+    if (!user?.id) return;
+    Promise.all([
+      fetchAIReport<AnalysisAdvisorReport>(user.id, 'analysis'),
+      fetchStudentSubmissions(user.id),
+    ]).then(([row, subs]) => {
+      if (row && isAnalysisAdvisorReport(row.data)) {
+        setAdvisorReport(row.data);
+        setAdvisorGeneratedAt(row.created_at);
+      }
+      setSubmissions(subs.filter(s => s.content.trim().length > 0));
+    });
+  }, [user?.id]);
+
+  const handleGetRecommendations = async () => {
+    setStep('recommend');
+    if (!user?.id) return;
+    if (!isGeminiConfigured()) {
+      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing — ask an admin to add it to the environment.', color: 'red' });
+      return;
     }
-  }, [progress, running, selectedTest]);
 
-  const handleRunAnalysis = () => {
-    setRunning(true);
-    setProgress(0);
-    setResult(null);
-    setStep('results');
+    setGeneratingAdvisor(true);
+    try {
+      const prompt = buildAdvisorPrompt(ctx, variables);
+      const result = await generateJSON<{ tests: RecommendedTestAI[] }>(prompt);
+      if (!isAnalysisAdvisorReport(result)) throw new GeminiError('Unexpected response shape from Gemini.');
+
+      const merged: AnalysisAdvisorReport = { tests: result.tests, chapterReview };
+      setAdvisorReport(merged);
+      setSelectedTest(0);
+      const now = new Date().toISOString();
+      setAdvisorGeneratedAt(now);
+      await saveAIReport(user.id, 'analysis', merged);
+      notifications.show({ title: 'Recommendations ready', message: 'AI advisor generated test recommendations for your research context.', color: 'brand' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not generate recommendations.';
+      notifications.show({ title: 'Recommendation failed', message, color: 'red' });
+    } finally {
+      setGeneratingAdvisor(false);
+    }
+  };
+
+  const handleReviewChapter = async () => {
+    if (!user?.id) return;
+    if (!isGeminiConfigured()) {
+      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing — ask an admin to add it to the environment.', color: 'red' });
+      return;
+    }
+    const chapterId = [...selectedChapter][0];
+    const chapter = submissions.find(s => s.section_id === chapterId);
+    if (!chapter) {
+      notifications.show({ title: 'Nothing selected', message: 'Choose the chapter that presents your results/analysis.', color: 'orange' });
+      return;
+    }
+
+    setReviewing(true);
+    try {
+      const prompt = buildChapterReviewPrompt({ id: chapter.section_id, title: chapter.section_title, content: chapter.content }, ctx);
+      const payload = await generateJSON<{ summary: string; findings: ChapterAnalysisFinding[] }>(prompt);
+      if (!isChapterReviewPayload(payload)) throw new GeminiError('Unexpected response shape from Gemini.');
+
+      const review: ChapterAnalysisReview = {
+        chapterId:    chapter.section_id,
+        chapterTitle: chapter.section_title,
+        summary:      payload.summary,
+        findings:     payload.findings,
+      };
+      const merged: AnalysisAdvisorReport = { tests, chapterReview: review };
+      setAdvisorReport(merged);
+      const now = new Date().toISOString();
+      setAdvisorGeneratedAt(now);
+      await saveAIReport(user.id, 'analysis', merged);
+      notifications.show({ title: 'Review complete', message: `AI feedback ready for "${chapter.section_title}".`, color: 'brand' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not complete the review.';
+      notifications.show({ title: 'Review failed', message, color: 'red' });
+    } finally {
+      setReviewing(false);
+    }
   };
 
   return (
@@ -191,7 +348,7 @@ export default function StudentAnalysis() {
           </Button>
 
           <Group justify="flex-end" mt="xl">
-            <Button color="brand" rightSection={<LuArrowRight size={14} />} onClick={() => setStep('recommend')}>
+            <Button color="brand" rightSection={<LuArrowRight size={14} />} loading={generatingAdvisor} onClick={handleGetRecommendations}>
               Get AI Recommendations
             </Button>
           </Group>
@@ -201,214 +358,153 @@ export default function StudentAnalysis() {
       {/* ════════════ STEP: Recommend ════════════ */}
       {step === 'recommend' && (
         <Paper withBorder p="xl" radius="md" bg="white">
-          <Group gap="sm" mb="lg">
-            <ThemeIcon size={38} radius="md" color="brand" variant="light"><LuSparkles size={18} /></ThemeIcon>
-            <Box>
-              <Text fw={700} size="md">AI Test Recommendations</Text>
-              <Text size="xs" c="dimmed">Based on your research context and variables</Text>
-            </Box>
-          </Group>
-          <Divider mb="lg" />
-          <Stack gap="md">
-            {RECOMMEND_TESTS.map((test, i) => (
-              <Paper key={test.name} withBorder p="lg" radius="md"
-                style={{
-                  background: selectedTest === i ? '#f0f4ff' : 'white',
-                  border: selectedTest === i ? '1.5px solid #3b5bdb' : undefined,
-                }}>
-                <Group justify="space-between" align="flex-start" mb="sm" wrap="nowrap">
-                  <Group gap="sm" wrap="nowrap">
-                    <Text fw={700} size="sm">{test.name}</Text>
-                    {test.recommended && <Badge color="green" variant="light" size="xs">Recommended</Badge>}
-                  </Group>
-                  <Button size="xs" color="brand" variant={selectedTest === i ? 'filled' : 'light'}
-                    onClick={() => setSelectedTest(i)}>
-                    {selectedTest === i ? 'Selected' : 'Select'}
-                  </Button>
-                </Group>
-                <Text size="xs" c="dimmed" mb="sm">{test.rationale}</Text>
-                <Text size="xs" fw={600} c="dimmed" mb={4}>Assumptions:</Text>
-                <Stack gap={2}>
-                  {test.assumptions.map(a => (
-                    <Group key={a} gap="xs">
-                      <LuCircleCheck size={11} color="#2f9e44" />
-                      <Text size="xs" c="dimmed">{a}</Text>
-                    </Group>
-                  ))}
-                </Stack>
-              </Paper>
-            ))}
-          </Stack>
-          <Group justify="space-between" mt="xl">
-            <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} onClick={() => setStep('context')}>Back</Button>
-            <Button color="brand" rightSection={<LuArrowRight size={14} />} onClick={handleRunAnalysis}>
-              Run {RECOMMEND_TESTS[selectedTest].name}
+          <Group justify="space-between" align="flex-start" mb="lg">
+            <Group gap="sm">
+              <ThemeIcon size={38} radius="md" color="brand" variant="light"><LuSparkles size={18} /></ThemeIcon>
+              <Box>
+                <Text fw={700} size="md">AI Test Recommendations</Text>
+                <Text size="xs" c="dimmed">
+                  {advisorGeneratedAt ? `Generated ${new Date(advisorGeneratedAt).toLocaleString()} · based on your research context and variables` : 'Based on your research context and variables'}
+                </Text>
+              </Box>
+            </Group>
+            <Button size="xs" variant="light" color="brand" leftSection={generatingAdvisor ? <Loader size={12} color="currentColor" /> : <LuRefreshCw size={14} />}
+              loading={generatingAdvisor} onClick={handleGetRecommendations}>
+              {advisorReport ? 'Regenerate' : 'Generate'}
             </Button>
           </Group>
-        </Paper>
-      )}
+          <Divider mb="lg" />
 
-      {/* ════════════ STEP: Results ════════════ */}
-      {step === 'results' && (
-        <Paper withBorder p="xl" radius="md" bg="white">
-          {running || (!selectedResult && !running) ? (
-            <Stack gap="md" align="center" py="xl">
-              <ThemeIcon size={56} radius="xl" color="brand" variant="light">
-                <LuActivity size={28} />
-              </ThemeIcon>
-              <Text fw={700} size="lg">Running {RECOMMEND_TESTS[selectedTest].name}…</Text>
-              <Progress value={progress} color="brand" size="lg" radius="xl" animated style={{ width: '100%', maxWidth: 400 }} />
-              <Text size="sm" fw={700}>{progress}%</Text>
-            </Stack>
-          ) : selectedResult ? (
-            <Stack gap="lg">
-              <Group justify="space-between" align="flex-start" wrap="nowrap">
-                <Box>
-                  <Text fw={700} size="lg">{selectedResult.title}</Text>
-                  <Text size="xs" c="dimmed">{selectedResult.testType}</Text>
-                </Box>
-                <Badge color="green" variant="light" leftSection={<LuCircleCheck size={10} />}>Completed</Badge>
-              </Group>
-
-              {/* Stats row */}
-              <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
-                {[
-                  { label: 'Test Statistic', value: `${selectedResult.statistic} = ${selectedResult.statValue}` },
-                  { label: 'P-Value',         value: `p = ${selectedResult.pValue}` },
-                  { label: 'Effect Size',     value: `${selectedResult.effectSize} = ${selectedResult.effectValue}` },
-                  { label: '95% CI',          value: selectedResult.ci ?? 'N/A' },
-                ].map(({ label, value }) => (
-                  <Box key={label} p="md" ta="center" style={{ background: '#f8f9fa', borderRadius: 10 }}>
-                    <Text fw={700} size="sm">{value}</Text>
-                    <Text size="xs" c="dimmed" mt={4}>{label}</Text>
-                  </Box>
-                ))}
-              </SimpleGrid>
-
-              {/* Assumptions */}
-              {selectedResult.assumptions && (
-                <Box>
-                  <Text fw={600} size="sm" mb="sm">Assumptions Check</Text>
-                  <Stack gap="xs">
-                    {selectedResult.assumptions.map(a => (
-                      <Group key={a.label} gap="sm" wrap="nowrap">
-                        <ThemeIcon size={20} radius="xl" color={a.met ? 'green' : 'red'} variant="light" style={{ flexShrink: 0 }}>
-                          {a.met ? <LuCircleCheck size={11} /> : <LuX size={11} />}
-                        </ThemeIcon>
-                        <Box>
-                          <Text size="xs" fw={500}>{a.label}</Text>
-                          {a.note && <Text size="xs" c="dimmed">{a.note}</Text>}
-                        </Box>
+          {tests.length === 0 ? (
+            <Box ta="center" py="xl">
+              <Text size="sm" c="dimmed" fs="italic">
+                {generatingAdvisor ? 'Asking the AI advisor for test recommendations…' : 'No recommendations yet — click "Generate" to have the AI advisor suggest tests based on your context.'}
+              </Text>
+            </Box>
+          ) : (
+            <Stack gap="md">
+              {tests.map((test, i) => (
+                <Paper key={test.name} withBorder p="lg" radius="md"
+                  style={{
+                    background: selectedTest === i ? '#f0f4ff' : 'white',
+                    border: selectedTest === i ? '1.5px solid #3b5bdb' : undefined,
+                  }}>
+                  <Group justify="space-between" align="flex-start" mb="sm" wrap="nowrap">
+                    <Group gap="sm" wrap="nowrap">
+                      <Text fw={700} size="sm">{test.name}</Text>
+                      {test.recommended && <Badge color="green" variant="light" size="xs">Recommended</Badge>}
+                    </Group>
+                    <Button size="xs" color="brand" variant={selectedTest === i ? 'filled' : 'light'}
+                      onClick={() => setSelectedTest(i)}>
+                      {selectedTest === i ? 'Selected' : 'Select'}
+                    </Button>
+                  </Group>
+                  <Text size="xs" c="dimmed" mb="sm">{test.rationale}</Text>
+                  <Text size="xs" fw={600} c="dimmed" mb={4}>Assumptions:</Text>
+                  <Stack gap={2}>
+                    {test.assumptions.map(a => (
+                      <Group key={a} gap="xs">
+                        <LuCircleCheck size={11} color="#2f9e44" />
+                        <Text size="xs" c="dimmed">{a}</Text>
                       </Group>
                     ))}
                   </Stack>
-                </Box>
-              )}
-
-              {/* Interpretation */}
-              <Box p="md" style={{ background: '#f8f9ff', borderRadius: 10, borderLeft: '4px solid #3b5bdb' }}>
-                <Text size="xs" fw={700} c="brand" mb={4}>STATISTICAL INTERPRETATION</Text>
-                <Text size="sm">{selectedResult.interpretation}</Text>
-                {selectedResult.plainLanguage && (
-                  <Text size="sm" c="dimmed" fs="italic" mt="sm">{selectedResult.plainLanguage}</Text>
-                )}
-              </Box>
-
-              {/* Draft text */}
-              {selectedResult.draftText && (
-                <Box>
-                  <Text fw={600} size="sm" mb="sm">Ready-to-use Draft Text</Text>
-                  <Paper withBorder p="md" radius="md" style={{ background: '#fafafa', border: '1px dashed #dee2e6' }}>
-                    <Textarea
-                      value={selectedResult.draftText}
-                      readOnly
-                      rows={4}
-                      styles={{ input: { fontFamily: 'Georgia, serif', fontSize: 13, background: 'transparent', border: 'none', cursor: 'text' } }}
-                    />
-                    <Group gap="xs" mt="sm">
-                      <Button size="xs" variant="light"  leftSection={<LuCopy    size={11} />}
-                        onClick={() => { navigator.clipboard.writeText(selectedResult.draftText ?? ''); notifications.show({ title: 'Copied', message: 'Draft text copied to clipboard.', color: 'brand' }); }}>
-                        Copy to Clipboard
-                      </Button>
-                      <Button size="xs" color="brand"    leftSection={<LuPenLine size={11} />}
-                        onClick={() => notifications.show({ title: 'Text inserted', message: 'Statistical draft inserted into Chapter 4.', color: 'green' })}>
-                        Insert into Document
-                      </Button>
-                    </Group>
-                  </Paper>
-                </Box>
-              )}
-
-              <Group justify="space-between">
-                <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} onClick={() => setStep('recommend')}>Back</Button>
-                <Group gap="sm">
-                  <Button variant="light" leftSection={<LuSave size={14} />}
-                    onClick={() => {
-                      setSaved(prev => prev.find(r => r.id === selectedResult.id) ? prev : [selectedResult, ...prev]);
-                      notifications.show({ title: 'Saved', message: 'Analysis saved to history.', color: 'green' });
-                      setStep('history');
-                    }}>
-                    Save to History
-                  </Button>
-                </Group>
-              </Group>
-            </Stack>
-          ) : null}
-        </Paper>
-      )}
-
-      {/* ════════════ STEP: History ════════════ */}
-      {step === 'history' && (
-        <Paper withBorder p="xl" radius="md" bg="white">
-          <Group justify="space-between" align="flex-start" mb="lg">
-            <Box>
-              <Text fw={700} size="lg">Analysis History</Text>
-              <Text size="xs" c="dimmed">{savedResults.length} analyses completed</Text>
-            </Box>
-            <Button color="brand" leftSection={<LuPlus size={14} />} onClick={() => setStep('context')}>
-              New Analysis
-            </Button>
-          </Group>
-          <Divider mb="md" />
-          {savedResults.length === 0 ? (
-            <Text size="sm" c="dimmed" ta="center" py="xl">No analyses yet. Run your first analysis above.</Text>
-          ) : (
-            <Stack gap="md">
-              {savedResults.map(r => (
-                <Paper key={r.id} withBorder p="lg" radius="md" bg="white">
-                  <Group justify="space-between" align="flex-start" wrap="nowrap">
-                    <Box style={{ flex: 1, minWidth: 0 }}>
-                      <Group gap="sm" mb={4} wrap="wrap">
-                        <Text fw={600} size="sm">{r.title}</Text>
-                        <Badge variant="light" size="xs" color="blue">{r.testType}</Badge>
-                        <Badge variant="light" size="xs" color="green" leftSection={<LuCircleCheck size={9} />}>Completed</Badge>
-                      </Group>
-                      <Text size="xs" c="dimmed" mb="sm">{r.summary}</Text>
-                      <Group gap="sm">
-                        {r.pValue   !== undefined && <Badge variant="outline" size="xs" color="gray">p = {r.pValue}</Badge>}
-                        {r.effectValue !== undefined && <Badge variant="outline" size="xs" color="gray">{r.effectSize} = {r.effectValue}</Badge>}
-                        <Text size="xs" c="dimmed">{r.createdAt}</Text>
-                      </Group>
-                    </Box>
-                    <Group gap="xs" style={{ flexShrink: 0 }}>
-                      <Button size="xs" variant="subtle"
-                        onClick={() => { setResult(r); setStep('results'); }}>
-                        View Details
-                      </Button>
-                      <Button size="xs" variant="light" color="brand" leftSection={<LuPenLine size={11} />}
-                        onClick={() => notifications.show({ title: 'Inserted', message: `${r.title} inserted into Chapter 4.`, color: 'green' })}>
-                        Insert
-                      </Button>
-                    </Group>
-                  </Group>
                 </Paper>
               ))}
             </Stack>
           )}
-          <Group mt="xl">
-            <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} onClick={() => setStep('context')}>
-              Back to Context
+
+          <Group justify="space-between" mt="xl">
+            <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} onClick={() => setStep('context')}>Back</Button>
+            <Button color="brand" rightSection={<LuArrowRight size={14} />} disabled={tests.length === 0} onClick={handleRunAnalysis}>
+              {tests[selectedTest] ? `Run ${tests[selectedTest].name}` : 'Run Analysis'}
             </Button>
+          </Group>
+        </Paper>
+      )}
+
+      {/* ════════════ STEP: Analysis Review ════════════ */}
+      {step === 'review' && (
+        <Paper withBorder p="xl" radius="md" bg="white">
+          <Group justify="space-between" align="flex-start" mb="lg">
+            <Group gap="sm">
+              <ThemeIcon size={38} radius="md" color="brand" variant="light"><LuActivity size={18} /></ThemeIcon>
+              <Box>
+                <Text fw={700} size="md">AI Analysis-Writing Review</Text>
+                <Text size="xs" c="dimmed">
+                  {advisorGeneratedAt && chapterReview
+                    ? `Reviewed "${chapterReview.chapterTitle}" · ${new Date(advisorGeneratedAt).toLocaleString()}`
+                    : 'Pick the chapter where you present your results/analysis for AI feedback on how it’s written up'}
+                </Text>
+              </Box>
+            </Group>
+          </Group>
+          <Divider mb="lg" />
+
+          <Paper withBorder p="sm" radius="md" mb="lg" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
+            <Text size="xs" c="dimmed">
+              The AI cannot see your raw datasets or computed statistics — it reviews how clearly and rigorously your analysis is{' '}
+              <strong>written up</strong> (reporting, interpretation, evidence for claims, structure), not whether the underlying numbers are correct.
+            </Text>
+          </Paper>
+
+          <ChapterPicker
+            submissions={submissions}
+            selected={selectedChapter}
+            onChange={setSelectedChapter}
+            multiple={false}
+            title="Choose the chapter to review"
+            description="Select the chapter that presents your results or analysis (e.g. Chapter 4: Results & Analysis)."
+          />
+
+          <Group justify="flex-end" mt="md" mb="xl">
+            <Button color="brand" leftSection={<LuSparkles size={14} />} loading={reviewing}
+              disabled={submissions.length === 0 || selectedChapter.size === 0} onClick={handleReviewChapter}>
+              {chapterReview ? 'Re-run Review' : 'Review Chapter'}
+            </Button>
+          </Group>
+
+          {chapterReview && (
+            <Stack gap="md">
+              <Group justify="space-between" align="flex-start" wrap="nowrap">
+                <Box>
+                  <Text fw={700} size="md">{chapterReview.chapterTitle}</Text>
+                  <Text size="xs" c="dimmed">AI feedback on how this chapter's analysis is written up</Text>
+                </Box>
+                <Badge color="green" variant="light" leftSection={<LuCircleCheck size={10} />}>Reviewed</Badge>
+              </Group>
+
+              <Box p="md" style={{ background: '#f8f9ff', borderRadius: 10, borderLeft: '4px solid #3b5bdb' }}>
+                <Text size="xs" fw={700} c="brand" mb={4}>OVERALL SUMMARY</Text>
+                <Text size="sm">{chapterReview.summary}</Text>
+              </Box>
+
+              <Stack gap="xs">
+                {chapterReview.findings.map((f, i) => {
+                  const { color, Icon } = verdictMeta(f.verdict);
+                  return (
+                    <Group key={i} gap="sm" align="flex-start" wrap="nowrap" p="md" style={{ border: '1px solid #f1f3f5', borderRadius: 10 }}>
+                      <ThemeIcon size={26} radius="xl" color={color} variant="light" style={{ flexShrink: 0 }}>
+                        <Icon size={13} />
+                      </ThemeIcon>
+                      <Box style={{ flex: 1 }}>
+                        <Group gap="xs" mb={2}>
+                          <Text size="sm" fw={600}>{f.aspect}</Text>
+                          <Badge size="xs" variant="light" color={color} style={{ textTransform: 'capitalize' }}>
+                            {f.verdict.replace('-', ' ')}
+                          </Badge>
+                        </Group>
+                        <Text size="xs" c="dimmed">{f.comment}</Text>
+                      </Box>
+                    </Group>
+                  );
+                })}
+              </Stack>
+            </Stack>
+          )}
+
+          <Group justify="space-between" mt="xl">
+            <Button variant="subtle" leftSection={<LuArrowLeft size={14} />} onClick={() => setStep('recommend')}>Back</Button>
           </Group>
         </Paper>
       )}

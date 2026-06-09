@@ -36,7 +36,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
   return (
     <Modal
       opened={!!creds} onClose={onClose} centered size="sm"
-      overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+      overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
       title={
         <Group gap="xs">
           <LuKeyRound size={17} color="var(--mantine-color-brand-6)" />
@@ -268,15 +268,13 @@ export default function AdminFacultyDepts() {
     try {
       const { username, password } = generateCredentials(colDeanName);
 
-      // Create Provost account first → get userId for FK reference
+      // Create the Provost account first — this must succeed before we create
+      // the college or touch local/Redux state, so the two never go out of sync
+      // (e.g. a college saved with no Provost because the email was taken).
       let deanId: string | null = null;
       if (colDeanEmail.trim()) {
-        try {
-          const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: 'Provost', institutionId, institutionName });
-          deanId = result.userId;
-        } catch {
-          notifications.show({ title: 'Note', message: 'Provost login account could not be created. College will be saved without a Provost assigned.', color: 'yellow' });
-        }
+        const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: 'Provost', institutionId, institutionName });
+        deanId = result.userId;
       }
 
       // Save college with dean_id (reused for Provost FK)
@@ -304,19 +302,15 @@ export default function AdminFacultyDepts() {
     try {
       const { username, password } = generateCredentials(facDeanName);
 
-      // Step 1: Save faculty — must succeed
-      // Step 1: Create dean's account → get userId
+      // Create the Dean account first — this must succeed before we create
+      // the faculty or touch local/Redux state, so the two never go out of sync.
       let facDeanId: string | null = null;
       if (facDeanEmail.trim()) {
-        try {
-          const result = await createStaffUser({ name: facDeanName.trim(), email: facDeanEmail.trim(), phone: facDeanPhone.trim(), password, role: 'Dean', institutionId, institutionName });
-          facDeanId = result.userId;
-        } catch {
-          notifications.show({ title: 'Note', message: 'Dean login account could not be created. Faculty will be saved without a dean assigned.', color: 'yellow' });
-        }
+        const result = await createStaffUser({ name: facDeanName.trim(), email: facDeanEmail.trim(), phone: facDeanPhone.trim(), password, role: 'Dean', institutionId, institutionName });
+        facDeanId = result.userId;
       }
 
-      // Step 2: Save faculty with dean_id reference
+      // Save faculty with dean_id reference
       const id = await insertFaculty({ institution_id: institutionId, college_id: selectedCollegeId, name: facName.trim(), dean_id: facDeanId });
 
       setFaculties(prev => [...prev, {
@@ -341,19 +335,15 @@ export default function AdminFacultyDepts() {
     try {
       const { username, password } = generateCredentials(deptHodName);
 
-      // Step 1: Save department — must succeed
-      // Step 1: Create HoD's account → get userId
+      // Create the HoD account first — this must succeed before we create
+      // the department or touch local/Redux state, so the two never go out of sync.
       let hodId: string | null = null;
       if (deptHodEmail.trim()) {
-        try {
-          const result = await createStaffUser({ name: deptHodName.trim(), email: deptHodEmail.trim(), phone: deptHodPhone.trim(), password, role: 'Head of Department', institutionId, institutionName });
-          hodId = result.userId;
-        } catch {
-          notifications.show({ title: 'Note', message: 'HoD login account could not be created. Department will be saved without an HoD assigned.', color: 'yellow' });
-        }
+        const result = await createStaffUser({ name: deptHodName.trim(), email: deptHodEmail.trim(), phone: deptHodPhone.trim(), password, role: 'Head of Department', institutionId, institutionName });
+        hodId = result.userId;
       }
 
-      // Step 2: Save department with hod_id reference
+      // Save department with hod_id reference
       const id = await insertDepartment({ institution_id: institutionId, faculty_id: selectedFacultyId, name: deptName.trim(), hod_id: hodId, students: 0 });
 
       setDepartments(prev => [...prev, {
@@ -438,7 +428,7 @@ export default function AdminFacultyDepts() {
       <SimpleGrid cols={{ base: 2, md: 4 }} mb="xl">
         {[
           { label: 'Colleges',    value: colleges.length,    icon: LuLandmark,    color: '#7950f2' },
-          { label: 'Faculties',   value: faculties.length,   icon: LuBuilding2,   color: '#1971c2' },
+          { label: 'Faculties',   value: faculties.length,   icon: LuBuilding2,   color: '#4c6ef5' },
           { label: 'Departments', value: departments.length, icon: LuUsers,       color: '#2f9e44' },
           { label: 'Staff Heads', value: colleges.length + faculties.length + departments.length, icon: LuUserCheck, color: '#e67700' },
         ].map(({ label, value, icon: Icon, color }) => (
@@ -471,10 +461,10 @@ export default function AdminFacultyDepts() {
           {selectedFaculty && (
             <>
               <LuChevronRight size={14} color="#adb5bd" />
-              <ThemeIcon size={22} radius="sm" color="blue" variant="light">
+              <ThemeIcon size={22} radius="sm" color="brand" variant="light">
                 <LuGraduationCap size={12} />
               </ThemeIcon>
-              <Text size="sm" fw={600} c="blue.7">{selectedFaculty.name}</Text>
+              <Text size="sm" fw={600} c="brand.7">{selectedFaculty.name}</Text>
             </>
           )}
           {!selectedCollege && (
@@ -529,7 +519,7 @@ export default function AdminFacultyDepts() {
 
         {/* Column 2: Faculties */}
         <HierarchyPanel
-          icon={LuBuilding2} color="#1971c2"
+          icon={LuBuilding2} color="#4c6ef5"
           title="Faculties" subtitle="Led by Dean"
           count={panelFaculties.length} onAdd={() => setShowFacultyModal(true)}
           addLabel={selectedCollegeId ? `Add Faculty to ${selectedCollege?.name.split(' ').slice(0,2).join(' ')}` : 'Add Faculty (no college)'}
@@ -576,7 +566,7 @@ export default function AdminFacultyDepts() {
       {/* ── College Modal ── */}
       <Modal opened={showCollegeModal} onClose={() => setShowCollegeModal(false)}
         title={<Group gap="xs"><LuLandmark size={17} color="var(--mantine-color-violet-6)" /><Text fw={700}>Create College</Text></Group>}
-        centered size="md" overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}>
+        centered size="md" overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="sm">
           {/* Institution context — pulled from localStorage */}
           <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
@@ -625,7 +615,7 @@ export default function AdminFacultyDepts() {
             {selectedCollege && <Badge color="violet" variant="light" size="sm">{selectedCollege.name.split(' ').slice(0,3).join(' ')}</Badge>}
           </Group>
         }
-        centered size="md" overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}>
+        centered size="md" overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="sm">
           {/* Institution context */}
           <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
@@ -671,10 +661,10 @@ export default function AdminFacultyDepts() {
           <Group gap="xs">
             <LuUsers size={17} color="var(--mantine-color-green-6)" />
             <Text fw={700}>Create Department</Text>
-            {selectedFaculty && <Badge color="blue" variant="light" size="sm">{selectedFaculty.name.split(' ').slice(0,3).join(' ')}</Badge>}
+            {selectedFaculty && <Badge color="brand" variant="light" size="sm">{selectedFaculty.name.split(' ').slice(0,3).join(' ')}</Badge>}
           </Group>
         }
-        centered size="md" overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}>
+        centered size="md" overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="sm">
           {/* Institution context */}
           <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>

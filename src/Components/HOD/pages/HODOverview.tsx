@@ -271,7 +271,7 @@ export default function HODOverview() {
           <Divider mb="md" />
           <Stack gap="md">
             {[
-              { label: 'PhD Students',           count: phd.length,     color: '#228be6' },
+              { label: 'PhD Students',           count: phd.length,     color: '#4c6ef5' },
               { label: "Master's Students",      count: masters.length, color: '#7950f2' },
               { label: 'Undergraduate Students', count: ug.length,      color: '#0c8599' },
             ].map(({ label, count, color }) => (

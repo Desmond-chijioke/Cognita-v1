@@ -39,7 +39,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
   return (
     <Modal
       opened={!!creds} onClose={onClose} centered size="lg"
-      overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+      overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
       title={<Group gap="xs"><LuKeyRound size={17} color="var(--mantine-color-brand-6)" /><Text fw={700}>Student Account Created</Text></Group>}
     >
       {creds && (
@@ -121,7 +121,7 @@ export default function HODStudents() {
     const { data } = await supabase.from('users').select(select)
       .eq('institution_id', institutionId)
       .in('role', roles)
-      .order('created_at');
+      .order('created_at', { ascending: false });
     return (data ?? []) as unknown as Row[];
   };
 
@@ -219,6 +219,7 @@ export default function HODStudents() {
         role,
         institutionId,
         institutionName,
+        department:      departmentName || undefined,
         matricNo:        matric.trim(),
         projectTitle:    program.trim(),
         supervisorId:    supId ?? undefined,
@@ -229,29 +230,8 @@ export default function HODStudents() {
       closeAddModal();
       showsucessnotification({ message: `${name.trim()} added with login credentials.` });
 
-      // Reload table in background (non-blocking)
-      const CT = ['orange', 'indigo', 'blue', 'red', 'green', 'grape'];
-      supabase
-        .from('users')
-        .select('id, name, email, phone, matric_no, project_title, role, supervisor_id, created_at')
-        .eq('institution_id', institutionId)
-        .in('role', ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'])
-        .order('created_at')
-        .then(({ data: fresh }) => {
-          if (fresh && fresh.length > 0) {
-            dispatch(loadStudents(fresh.map((st: Record<string, string>, i: number) => ({
-              id:           st.id,
-              name:         st.name,
-              email:        st.email,
-              matricNo:     st.matric_no     ?? '',
-              program:      st.project_title ?? '',
-              role:         st.role,
-              supervisorId: st.supervisor_id ?? null,
-              color:        CT[i % CT.length],
-              addedOn:      new Date(st.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-            }))));
-          }
-        });
+      // Re-fetch so the table updates immediately without a full page refresh
+      loadAll();
     } catch (err: unknown) {
       showerrornotification({ message: err instanceof Error ? err.message : 'Failed to create student account.' });
     } finally {
@@ -387,7 +367,7 @@ export default function HODStudents() {
 
       {/* Add Student Modal */}
       <Modal opened={showModal} onClose={closeAddModal} centered size="lg"
-        overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
         title={<Group gap="xs"><LuUserCheck size={16} color="var(--mantine-color-brand-6)" /><Text fw={700}>Add Student</Text></Group>}
       >
         <Stack gap="sm">
@@ -435,7 +415,7 @@ export default function HODStudents() {
       {/* Assign Supervisor Modal */}
       <Modal opened={!!assignTarget} onClose={() => { setAssignTarget(null); setNewSupId(null); }}
         title={<Text fw={700}>Assign Supervisor — {assigningStudent?.name}</Text>}
-        centered size="sm" overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}>
+        centered size="sm" overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="md">
           <Select
             label="Supervisor"

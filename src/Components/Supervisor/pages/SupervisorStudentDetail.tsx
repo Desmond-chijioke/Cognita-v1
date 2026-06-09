@@ -1042,7 +1042,7 @@ export default function SupervisorStudentDetail() {
               <Tabs.Tab value="submitted" leftSection={<LuFlag size={13} />}>
                 Submitted
                 {studentSubmissions.filter(s => s.status !== 'approved').length > 0 && (
-                  <Badge size="xs" color="blue" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
+                  <Badge size="xs" color="brand" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
                     {studentSubmissions.filter(s => s.status !== 'approved').length}
                   </Badge>
                 )}
@@ -1346,23 +1346,23 @@ export default function SupervisorStudentDetail() {
                             </Text>
                             {active.map((ann, idx) => (
                               <Group key={ann.id} gap={8} wrap="nowrap"
-                                style={{ background: ann.color + '18', borderRadius: 6, padding: '4px 8px', border: `1px solid ${ann.color}55` }}
+                                style={{ background: ann.color + '18', borderRadius: 6, padding: '4px 8px', border: `1px solid ${ann.color}55`, overflow: 'hidden' }}
                               >
                                 <Box style={{ width: 8, height: 8, borderRadius: '50%', background: ann.color, flexShrink: 0 }} />
                                 <Text size="xs" fw={600} c="dimmed" style={{ flexShrink: 0 }}>#{idx + 1}</Text>
-                                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flexShrink: 0 }} lineClamp={1}>"{ann.selectedText}"</Text>
-                                <Text size="xs" style={{ flex: 1 }} lineClamp={1}>{ann.comment}</Text>
+                                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', minWidth: 0 }} lineClamp={1}>"{ann.selectedText}"</Text>
+                                <Text size="xs" style={{ flex: 1, minWidth: 0 }} lineClamp={1}>{ann.comment}</Text>
                               </Group>
                             ))}
                             {resolved.map((ann, idx) => (
                               <Group key={ann.id} gap={8} wrap="nowrap"
-                                style={{ background: '#f1f3f5', borderRadius: 6, padding: '4px 8px', border: '1px solid #dee2e6', opacity: 0.7 }}
+                                style={{ background: '#f1f3f5', borderRadius: 6, padding: '4px 8px', border: '1px solid #dee2e6', opacity: 0.7, overflow: 'hidden' }}
                               >
                                 <LuCircleCheck size={10} color="#2f9e44" style={{ flexShrink: 0 }} />
                                 <Text size="xs" fw={600} style={{ color: '#2f9e44', flexShrink: 0 }}>Resolved</Text>
                                 <Text size="xs" fw={600} c="dimmed" style={{ flexShrink: 0 }}>#{active.length + idx + 1}</Text>
-                                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', flexShrink: 0, textDecoration: 'line-through' }} lineClamp={1}>"{ann.selectedText}"</Text>
-                                <Text size="xs" style={{ flex: 1, textDecoration: 'line-through', color: '#adb5bd' }} lineClamp={1}>{ann.comment}</Text>
+                                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic', minWidth: 0, textDecoration: 'line-through' }} lineClamp={1}>"{ann.selectedText}"</Text>
+                                <Text size="xs" style={{ flex: 1, minWidth: 0, textDecoration: 'line-through', color: '#adb5bd' }} lineClamp={1}>{ann.comment}</Text>
                               </Group>
                             ))}
                           </Stack>

@@ -66,7 +66,7 @@ export default function AdminProjects() {
   const submitted  = projects.filter(p => p.status === 'Submitted').length;
 
   const SUMMARY = [
-    { label: 'Total Projects', value: total,      icon: LuFolder,         color: '#228be6' },
+    { label: 'Total Projects', value: total,      icon: LuFolder,         color: '#4c6ef5' },
     { label: 'In Progress',    value: inProgress,  icon: LuClock,          color: '#1864ab' },
     { label: 'In Review',      value: inReview,    icon: LuClipboardCheck, color: '#f59f00' },
     { label: 'Submitted',      value: submitted,   icon: LuCircleCheck,    color: '#2f9e44' },
@@ -234,8 +234,8 @@ export default function AdminProjects() {
             {/* AI Mode */}
             <Paper bg="#eff6ff" p="md" radius="md">
               <Group gap="xs" mb="xs">
-                <LuBot size={15} color="#1971c2" />
-                <Text size="xs" fw={700} c="blue" style={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                <LuBot size={15} color="#4c6ef5" />
+                <Text size="xs" fw={700} c="brand" style={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
                   AI Mode
                 </Text>
               </Group>

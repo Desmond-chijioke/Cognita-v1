@@ -154,13 +154,22 @@ const T: Record<ProjectType, TemplateSection[]> = {
   ],
 };
 
-let _idCounter = 0;
-function uid() { return `sec_${++_idCounter}_${Date.now()}`; }
+// Stable, deterministic id per (project type, template key) — NOT random.
+// This is what lets saved drafts/submissions (keyed by section_id in the DB)
+// reconnect to the right section every time the template is rebuilt, whether
+// that's on page reload or when switching project types and back.
+function typeSlug(type: ProjectType): string {
+  return type.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+}
+
+export function templateSectionId(type: ProjectType, key: string): string {
+  return `${typeSlug(type)}__${key}`;
+}
 
 export function buildSections(type: ProjectType): EditorSection[] {
   return T[type].map(t => ({
     ...t,
-    id: uid(),
+    id: templateSectionId(type, t.key),
     content: '',
     status: 'not-started' as SectionStatus,
     wordCount: 0,

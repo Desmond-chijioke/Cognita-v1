@@ -53,6 +53,18 @@ export async function signUpInstitution(
 ): Promise<{ userId: string }> {
   const { adminPassword, institutionName, institutionEmail, institutionType, phone } = params;
 
+  // Block re-registration with an email that's already tied to ANY account
+  // so the user gets a clear "already exists" message up front instead of
+  // being silently signed into someone else's profile deeper in the flow.
+  const { data: existingByEmail } = await supabase
+    .from('users')
+    .select('id')
+    .eq('email', institutionEmail.trim().toLowerCase())
+    .maybeSingle();
+  if (existingByEmail) {
+    throw new Error('An account with this email already exists. Sign in instead, or use "Forgot password" to recover access.');
+  }
+
   // 1. Try to create a new auth user via signUp
   let userId: string | null = null;
   const { data: signUpData, error: signUpError } = await supabase.auth.signUp({

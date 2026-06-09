@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Avatar, Box, Button, Divider, Group, NumberInput, Paper,
   SimpleGrid, Stack, Switch, Text, TextInput, ThemeIcon, Title,
@@ -10,7 +10,9 @@ import {
   LuUsers, LuBot, LuFileSearch, LuCamera,
   LuLock,
 } from 'react-icons/lu';
-import { useAppSelector } from '../../../Redux/hooks';
+import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
+import { updateUser } from '../../../Redux/slices/authSlice';
+import { fetchMyProfile, updateMyProfile, fileToAvatarDataUrl } from '../../../supabase/profile';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -83,6 +85,7 @@ function StatChip({ value, label, color }: { value: string | number; label: stri
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function HODSettings() {
+  const dispatch        = useAppDispatch();
   const user            = useAppSelector(s => s.auth.user);
   const students        = useAppSelector(s => s.hod.students);
   const supervisors     = useAppSelector(s => s.hod.supervisors);
@@ -93,12 +96,23 @@ export default function HODSettings() {
   const fileInputRef               = useRef<HTMLInputElement>(null);
   const [avatarUrl, setAvatarUrl]  = useState<string | null>(null);
   const [hovered, setHovered]      = useState(false);
+  const [saving, setSaving]        = useState(false);
 
   const [profile, setProfile] = useState({
     name:  user?.name  || '',
     title: 'Head of Department',
     phone: '',
   });
+
+  // ── Fetch real profile data (name / phone / avatar) ────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchMyProfile(user.id).then(p => {
+      if (!p) return;
+      setProfile(prev => ({ ...prev, name: p.name ?? prev.name, phone: p.phone ?? '' }));
+      setAvatarUrl(p.avatar_url ?? null);
+    });
+  }, [user?.id]);
 
   const [compliance, setCompliance] = useState({
     maxStudentsPerSupervisor: 8,
@@ -118,21 +132,33 @@ export default function HODSettings() {
   const assigned    = students.filter(s => s.supervisorId).length;
   const assignedPct = students.length ? Math.round((assigned / students.length) * 100) : 0;
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setAvatarUrl(reader.result as string);
-    reader.readAsDataURL(file);
-    notifications.show({ title: 'Photo updated', message: 'Your profile photo has been changed.', color: 'brand' });
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarUrl(dataUrl);
+      notifications.show({ title: 'Photo selected', message: 'Click "Save Settings" to apply your new profile photo.', color: 'brand' });
+    } catch (err) {
+      notifications.show({ title: 'Upload failed', message: err instanceof Error ? err.message : 'Could not process the image.', color: 'red' });
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const handleSave = () =>
-    notifications.show({
-      title:   'Settings saved',
-      message: 'Your department settings have been updated successfully.',
-      color:   'green',
-    });
+  const handleSave = async () => {
+    if (!user?.id) return;
+    setSaving(true);
+    try {
+      await updateMyProfile(user.id, { name: profile.name.trim(), phone: profile.phone.trim(), avatarUrl });
+      dispatch(updateUser({ name: profile.name.trim(), avatar: avatarUrl ?? undefined }));
+      notifications.show({ title: 'Settings saved', message: 'Your profile has been updated successfully.', color: 'green' });
+    } catch (err) {
+      notifications.show({ title: 'Save failed', message: err instanceof Error ? err.message : 'Could not save your settings.', color: 'red' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Box p="xl">
@@ -421,6 +447,7 @@ export default function HODSettings() {
               color="brand"
               size="md"
               leftSection={<LuSave size={15} />}
+              loading={saving}
               onClick={handleSave}
               px="xl"
             >

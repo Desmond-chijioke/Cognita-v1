@@ -1,4 +1,5 @@
 import { supabase } from './client';
+import { fetchHierarchy } from './hierarchy';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ export interface ActivityEvent {
   type:          'submitted' | 'approved' | 'revision' | 'annotation';
   actorName:     string;   // student name for submitted, supervisor name for approved/revision
   studentName:   string;   // always the student (for context when actor is supervisor)
+  department:    string;   // the student's department, for institution-wide context
   sectionTitle:  string;
   action:        string;   // "submitted" | "approved" | "requested revision on" | "annotated"
   time:          string;
@@ -78,6 +80,9 @@ export interface DashboardData {
   approvedCount:      number;
   reviewedCount:      number;
   totalStudents:      number;
+  totalColleges:      number;
+  totalFaculties:     number;
+  totalDepartments:   number;
   avgProgress:        number;
   degreeBreakdown:    { phd: number; masters: number; ug: number; other: number };
   submissionsByDept:  DeptStat[];
@@ -90,10 +95,15 @@ export interface DashboardData {
 }
 
 export interface AnalyticsData {
-  totalPubs:     number;
-  topDept:       string;
-  pubData:       { dept: string; pubs: number }[];
-  integrityData: { faculty: string; score: number }[];
+  totalPubs:      number;
+  topDept:        string;
+  pubData:        { dept: string; pubs: number }[];
+  integrityData:  { faculty: string; score: number }[];
+  totalStudents:  number;
+  totalSubs:      number;
+  pendingCount:   number;
+  revisionCount:  number;
+  monthlyTrend:   { month: string; count: number }[];
 }
 
 // ── Internal row types ─────────────────────────────────────────────────────────
@@ -234,12 +244,140 @@ async function load(institutionId: string): Promise<{
   return { students: [...studentMap.values()], submissions, supervisorNames };
 }
 
+// ── Org structure counts (colleges / faculties / departments) ────────────────
+
+async function fetchOrgCounts(institutionId: string): Promise<{ colleges: number; faculties: number; departments: number }> {
+  const [colleges, faculties, departments] = await Promise.all([
+    supabase.from('colleges')   .select('id', { count: 'exact', head: true }).eq('institution_id', institutionId),
+    supabase.from('faculties')  .select('id', { count: 'exact', head: true }).eq('institution_id', institutionId),
+    supabase.from('departments').select('id', { count: 'exact', head: true }).eq('institution_id', institutionId),
+  ]);
+  return {
+    colleges:    colleges.count    ?? 0,
+    faculties:   faculties.count   ?? 0,
+    departments: departments.count ?? 0,
+  };
+}
+
+// ── Full org hierarchy table (College → Provost, Faculty → Dean, ────────────
+// ── Department → HOD, Students → project topic + supervisor) ────────────────
+
+export interface OrgStudentRow {
+  id:             string;
+  name:           string;
+  projectTitle:   string;
+  supervisorName: string;
+}
+
+export interface OrgDepartmentRow {
+  id:       string;
+  name:     string;
+  hodName:  string;
+  hodEmail: string;
+  students: OrgStudentRow[];
+}
+
+export interface OrgFacultyRow {
+  id:          string;
+  name:        string;
+  deanName:    string;
+  deanEmail:   string;
+  departments: OrgDepartmentRow[];
+}
+
+export interface OrgCollegeRow {
+  id:           string;
+  name:         string;
+  provostName:  string;
+  provostEmail: string;
+  faculties:    OrgFacultyRow[];
+}
+
+export interface OrgHierarchyData {
+  colleges:       OrgCollegeRow[];
+  /** Faculties with no parent college — i.e. reporting directly to the institution. */
+  directFaculties: OrgFacultyRow[];
+}
+
+export async function fetchOrgHierarchyTable(institutionId?: string): Promise<OrgHierarchyData> {
+  if (!institutionId) return { colleges: [], directFaculties: [] };
+
+  const [{ colleges, faculties, departments }, { data: usersData }] = await Promise.all([
+    fetchHierarchy(institutionId),
+    supabase
+      .from('users')
+      .select('id, name, role, department, project_title, supervisor_id')
+      .eq('institution_id', institutionId),
+  ]);
+
+  const allUsers = (usersData ?? []) as {
+    id: string; name: string; role: string;
+    department: string | null; project_title: string | null; supervisor_id: string | null;
+  }[];
+
+  const nameById = new Map(allUsers.map(u => [u.id, u.name]));
+  const studentsByDept = new Map<string, OrgStudentRow[]>();
+  for (const u of allUsers) {
+    if (!STUDENT_ROLES.includes(u.role) || !u.department) continue;
+    const row: OrgStudentRow = {
+      id:             u.id,
+      name:           u.name,
+      projectTitle:   u.project_title ?? 'Untitled Research',
+      supervisorName: u.supervisor_id ? (nameById.get(u.supervisor_id) ?? 'Unassigned') : 'Unassigned',
+    };
+    if (!studentsByDept.has(u.department)) studentsByDept.set(u.department, []);
+    studentsByDept.get(u.department)!.push(row);
+  }
+
+  const departmentsByFaculty = new Map<string, OrgDepartmentRow[]>();
+  for (const d of departments) {
+    const row: OrgDepartmentRow = {
+      id:       d.id,
+      name:     d.name,
+      hodName:  d.hod?.name  ?? 'Vacant',
+      hodEmail: d.hod?.email ?? '—',
+      students: studentsByDept.get(d.name) ?? [],
+    };
+    const key = d.faculty_id ?? '';
+    if (!departmentsByFaculty.has(key)) departmentsByFaculty.set(key, []);
+    departmentsByFaculty.get(key)!.push(row);
+  }
+
+  const facultiesByCollege = new Map<string, OrgFacultyRow[]>();
+  for (const f of faculties) {
+    const row: OrgFacultyRow = {
+      id:          f.id,
+      name:        f.name,
+      deanName:    f.dean?.name  ?? 'Vacant',
+      deanEmail:   f.dean?.email ?? '—',
+      departments: departmentsByFaculty.get(f.id) ?? [],
+    };
+    const key = f.college_id ?? '';
+    if (!facultiesByCollege.has(key)) facultiesByCollege.set(key, []);
+    facultiesByCollege.get(key)!.push(row);
+  }
+
+  return {
+    colleges: colleges.map(c => ({
+      id:           c.id,
+      name:         c.name,
+      provostName:  c.dean?.name  ?? 'Vacant',
+      provostEmail: c.dean?.email ?? '—',
+      faculties:    facultiesByCollege.get(c.id) ?? [],
+    })),
+    directFaculties: facultiesByCollege.get('') ?? [],
+  };
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export async function fetchDashboardData(institutionId?: string): Promise<DashboardData> {
   if (!institutionId) return emptyDashboard();
 
-  const { students, submissions, supervisorNames } = await load(institutionId);
+  const [{ students, submissions, supervisorNames }, orgCounts] = await Promise.all([
+    load(institutionId),
+    fetchOrgCounts(institutionId),
+  ]);
   const studentMap = new Map(students.map(s => [s.id, s]));
 
   const byStudent = new Map<string, SubRow[]>();
@@ -350,6 +488,7 @@ export async function fetchDashboardData(institutionId?: string): Promise<Dashbo
   const events: ActivityEvent[] = [];
   for (const s of submissions) {
     const studentName  = studentMap.get(s.student_id)?.name ?? 'A student';
+    const department   = studentMap.get(s.student_id)?.department ?? 'Unknown';
     const supervisorName = s.supervisor_id ? (supervisorNames.get(s.supervisor_id) ?? 'Supervisor') : 'Supervisor';
 
     // Submission event (student is actor)
@@ -357,6 +496,7 @@ export async function fetchDashboardData(institutionId?: string): Promise<Dashbo
       type:         'submitted',
       actorName:    studentName,
       studentName,
+      department,
       sectionTitle: s.section_title,
       action:       'submitted',
       time:         timeAgo(s.submitted_at),
@@ -370,6 +510,7 @@ export async function fetchDashboardData(institutionId?: string): Promise<Dashbo
         type:         isApproved ? 'approved' : 'revision',
         actorName:    supervisorName,
         studentName,
+        department,
         sectionTitle: s.section_title,
         action:       isApproved ? 'approved' : 'requested revision on',
         time:         timeAgo(s.reviewed_at),
@@ -383,6 +524,7 @@ export async function fetchDashboardData(institutionId?: string): Promise<Dashbo
         type:         'annotation',
         actorName:    supervisorName,
         studentName,
+        department,
         sectionTitle: s.section_title,
         action:       'annotated',
         time:         timeAgo(s.submitted_at),
@@ -434,6 +576,7 @@ export async function fetchDashboardData(institutionId?: string): Promise<Dashbo
   return {
     activeProjects, pendingCount, revisionCount, approvedCount, reviewedCount,
     totalStudents: students.length, avgProgress, degreeBreakdown,
+    totalColleges: orgCounts.colleges, totalFaculties: orgCounts.faculties, totalDepartments: orgCounts.departments,
     submissionsByDept, statusBreakdown, alerts,
     allSubmissions, approvedChapters, activityFeed, studentProgress,
   };
@@ -442,7 +585,7 @@ export async function fetchDashboardData(institutionId?: string): Promise<Dashbo
 function emptyDashboard(): DashboardData {
   return {
     activeProjects: 0, pendingCount: 0, revisionCount: 0, approvedCount: 0, reviewedCount: 0,
-    totalStudents: 0, avgProgress: 0,
+    totalStudents: 0, totalColleges: 0, totalFaculties: 0, totalDepartments: 0, avgProgress: 0,
     degreeBreakdown: { phd: 0, masters: 0, ug: 0, other: 0 },
     submissionsByDept: [], statusBreakdown: [], alerts: [],
     allSubmissions: [], approvedChapters: [], activityFeed: [], studentProgress: [],
@@ -498,13 +641,20 @@ export async function fetchAdminProjects(institutionId?: string): Promise<AdminP
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 export async function fetchAnalyticsData(institutionId?: string): Promise<AnalyticsData> {
-  if (!institutionId) return { totalPubs: 0, topDept: '—', pubData: [], integrityData: [] };
+  const empty: AnalyticsData = {
+    totalPubs: 0, topDept: '—', pubData: [], integrityData: [],
+    totalStudents: 0, totalSubs: 0, pendingCount: 0, revisionCount: 0, monthlyTrend: [],
+  };
+  if (!institutionId) return empty;
 
   const { students, submissions } = await load(institutionId);
   const studentMap = new Map(students.map(s => [s.id, s]));
 
-  const approved = submissions.filter(s => s.status === 'approved');
+  const approved   = submissions.filter(s => s.status === 'approved');
+  const pending    = submissions.filter(s => s.status === 'pending');
+  const revision   = submissions.filter(s => s.status === 'needs-revision');
 
+  // Publications by department
   const pubMap = new Map<string, number>();
   for (const s of approved) {
     const dept = studentMap.get(s.student_id)?.department ?? 'Other';
@@ -515,6 +665,7 @@ export async function fetchAnalyticsData(institutionId?: string): Promise<Analyt
     .sort((a, b) => b.pubs - a.pubs)
     .slice(0, 7);
 
+  // Approval rate by department
   const intMap = new Map<string, { approved: number; total: number }>();
   for (const s of submissions) {
     const dept = studentMap.get(s.student_id)?.department ?? 'Other';
@@ -531,10 +682,30 @@ export async function fetchAnalyticsData(institutionId?: string): Promise<Analyt
     .sort((a, b) => b.score - a.score)
     .slice(0, 6);
 
+  // Monthly submission trend — last 6 months
+  const monthMap = new Map<string, number>();
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+    monthMap.set(key, 0);
+  }
+  for (const s of submissions) {
+    const d   = new Date(s.submitted_at);
+    const key = d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+    if (monthMap.has(key)) monthMap.set(key, (monthMap.get(key) ?? 0) + 1);
+  }
+  const monthlyTrend = [...monthMap.entries()].map(([month, count]) => ({ month, count }));
+
   return {
-    totalPubs:  approved.length,
-    topDept:    pubData[0]?.dept ?? '—',
+    totalPubs:     approved.length,
+    topDept:       pubData[0]?.dept ?? '—',
     pubData,
     integrityData,
+    totalStudents: students.length,
+    totalSubs:     submissions.length,
+    pendingCount:  pending.length,
+    revisionCount: revision.length,
+    monthlyTrend,
   };
 }

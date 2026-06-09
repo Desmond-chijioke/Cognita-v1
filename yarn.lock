@@ -187,6 +187,34 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@daily-co/daily-js@npm:^0.90.0":
+  version: 0.90.0
+  resolution: "@daily-co/daily-js@npm:0.90.0"
+  dependencies:
+    "@babel/runtime": ^7.12.5
+    "@sentry/browser": ^8.33.1
+    bowser: ^2.8.1
+    dequal: ^2.0.3
+    events: ^3.1.0
+  checksum: 7df7f29c77381fa7d88497b8ccef6a04f6bf20358baf774d27f66ca84e7c2be249d379f536668fcdfb03d1cbd9ab3f5e09434500b556e10d90edb8c55d694129
+  languageName: node
+  linkType: hard
+
+"@daily-co/daily-react@npm:^0.25.2":
+  version: 0.25.2
+  resolution: "@daily-co/daily-react@npm:0.25.2"
+  dependencies:
+    fast-deep-equal: ^3.1.3
+    lodash.throttle: ^4.1.1
+  peerDependencies:
+    "@daily-co/daily-js": ">=0.68.0 <1"
+    jotai: ^2
+    react: ^16.8 || ^17.0 || ^18.0 || ^19.0
+    react-dom: ^16.8 || ^17.0 || ^18.0 || ^19.0
+  checksum: 0dc522700cea4e4ab2fcc0f5b07de5e369cf7bd2c85e02e34074f8a66bcf17d5736514d673686bcc1c2241bcf00ebc07ce8ba75b70c6b91edbd4f8eb12318274
+  languageName: node
+  linkType: hard
+
 "@emnapi/core@npm:1.10.0":
   version: 1.10.0
   resolution: "@emnapi/core@npm:1.10.0"
@@ -723,6 +751,64 @@ __metadata:
   version: 1.0.1
   resolution: "@rolldown/pluginutils@npm:1.0.1"
   checksum: 240365ad4301aa209ae0efeded39d1e8ef8df07927fe1e57c9ffc60ac46a8e8b824752f6b27a4aae071e8b43ee288455e9db5055838a1e057244dab55f7c529a
+  languageName: node
+  linkType: hard
+
+"@sentry-internal/browser-utils@npm:8.55.2":
+  version: 8.55.2
+  resolution: "@sentry-internal/browser-utils@npm:8.55.2"
+  dependencies:
+    "@sentry/core": 8.55.2
+  checksum: 4094d31564bfb1ad14522242258870cf0092d50a1e64cddbe284609664fa628a9a9e9a068b8a367813be063932c004d3db2b74bf38e70b9be4bc7fa7bae8ae86
+  languageName: node
+  linkType: hard
+
+"@sentry-internal/feedback@npm:8.55.2":
+  version: 8.55.2
+  resolution: "@sentry-internal/feedback@npm:8.55.2"
+  dependencies:
+    "@sentry/core": 8.55.2
+  checksum: de8f74447c0c751c7abc0f91188a68c7635210d32d5e79384e19e6dcd52fa09e9d63dd4c738a56ce167b2640b0ee48ce7d26e8d6e42a7aef5d1f3fa2362a62dc
+  languageName: node
+  linkType: hard
+
+"@sentry-internal/replay-canvas@npm:8.55.2":
+  version: 8.55.2
+  resolution: "@sentry-internal/replay-canvas@npm:8.55.2"
+  dependencies:
+    "@sentry-internal/replay": 8.55.2
+    "@sentry/core": 8.55.2
+  checksum: de123be93c7b3f1f7b86c9e3c537b22d1b3acbad753d7bcc59163bd3b76e47f6e1dc5dc39a9b11fd3ffcb9fab483c1b1ccd9e8d5eb1892dccde8e18f6b0e3ba1
+  languageName: node
+  linkType: hard
+
+"@sentry-internal/replay@npm:8.55.2":
+  version: 8.55.2
+  resolution: "@sentry-internal/replay@npm:8.55.2"
+  dependencies:
+    "@sentry-internal/browser-utils": 8.55.2
+    "@sentry/core": 8.55.2
+  checksum: 12ee048d58f64685174717c2681b2a71fea18fb686ec43aeeff3e52bc35e1f5688c6771cfabe430f7f0a8733a04b834a4d2251f0a8fc93699e6c518375af369a
+  languageName: node
+  linkType: hard
+
+"@sentry/browser@npm:^8.33.1":
+  version: 8.55.2
+  resolution: "@sentry/browser@npm:8.55.2"
+  dependencies:
+    "@sentry-internal/browser-utils": 8.55.2
+    "@sentry-internal/feedback": 8.55.2
+    "@sentry-internal/replay": 8.55.2
+    "@sentry-internal/replay-canvas": 8.55.2
+    "@sentry/core": 8.55.2
+  checksum: a89a84c6d91fbc0729b4e387b312b47b561db3539473c0438dfd2643451c45377c8ff8b4b775dba88ad4a5e72e9c875ce8c0b804c2b02fb23d8eb29684b59422
+  languageName: node
+  linkType: hard
+
+"@sentry/core@npm:8.55.2":
+  version: 8.55.2
+  resolution: "@sentry/core@npm:8.55.2"
+  checksum: d9e66ea30af8b79ff21a89198bf2aaf4fc4fcb092cde7864102543b1dcf9f04492f2473721552c7e57fc87b2f6c8d7cfe93cbb5f557f7a117f262578452b21e6
   languageName: node
   linkType: hard
 
@@ -1442,6 +1528,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"bowser@npm:^2.8.1":
+  version: 2.14.1
+  resolution: "bowser@npm:2.14.1"
+  checksum: 5a8b6272c5300b6de416b8508930479cb9028fda597fe3b77f3adbb3959c6bb58ac92b3398c9e9d3652c71e46bce3d6083a611c60c82e9cbaa8ce9698bc9c7af
+  languageName: node
+  linkType: hard
+
 "brace-expansion@npm:^5.0.5":
   version: 5.0.6
   resolution: "brace-expansion@npm:5.0.6"
@@ -1517,6 +1610,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "cognita.ai@workspace:."
   dependencies:
+    "@daily-co/daily-js": ^0.90.0
+    "@daily-co/daily-react": ^0.25.2
     "@eslint/js": ^10.0.1
     "@mantine/core": ^9.2.1
     "@mantine/dates": ^9.2.1
@@ -1543,6 +1638,7 @@ __metadata:
     eslint-plugin-react-hooks: ^7.1.1
     eslint-plugin-react-refresh: ^0.5.2
     globals: ^17.6.0
+    jotai: ^2.20.0
     jspdf: ^4.2.1
     react: ^19.2.6
     react-dom: ^19.2.6
@@ -1635,6 +1731,13 @@ __metadata:
   version: 0.1.4
   resolution: "deep-is@npm:0.1.4"
   checksum: edb65dd0d7d1b9c40b2f50219aef30e116cedd6fc79290e740972c132c09106d2e80aa0bc8826673dd5a00222d4179c84b36a790eef63a4c4bca75a37ef90804
+  languageName: node
+  linkType: hard
+
+"dequal@npm:^2.0.3":
+  version: 2.0.3
+  resolution: "dequal@npm:2.0.3"
+  checksum: 8679b850e1a3d0ebbc46ee780d5df7b478c23f335887464023a631d1b9af051ad4a6595a44220f9ff8ff95a8ddccf019b5ad778a976fd7bbf77383d36f412f90
   languageName: node
   linkType: hard
 
@@ -1858,6 +1961,13 @@ __metadata:
   version: 2.0.3
   resolution: "esutils@npm:2.0.3"
   checksum: 22b5b08f74737379a840b8ed2036a5fb35826c709ab000683b092d9054e5c2a82c27818f12604bfc2a9a76b90b6834ef081edbc1c7ae30d1627012e067c6ec87
+  languageName: node
+  linkType: hard
+
+"events@npm:^3.1.0":
+  version: 3.3.0
+  resolution: "events@npm:3.3.0"
+  checksum: f6f487ad2198aa41d878fa31452f1a3c00958f46e9019286ff4787c84aac329332ab45c9cdc8c445928fc6d7ded294b9e005a7fce9426488518017831b272780
   languageName: node
   linkType: hard
 
@@ -2177,6 +2287,27 @@ __metadata:
   languageName: node
   linkType: hard
 
+"jotai@npm:^2.20.0":
+  version: 2.20.0
+  resolution: "jotai@npm:2.20.0"
+  peerDependencies:
+    "@babel/core": ">=7.0.0"
+    "@babel/template": ">=7.0.0"
+    "@types/react": ">=17.0.0"
+    react: ">=17.0.0"
+  peerDependenciesMeta:
+    "@babel/core":
+      optional: true
+    "@babel/template":
+      optional: true
+    "@types/react":
+      optional: true
+    react:
+      optional: true
+  checksum: 47aaf1e870307cc58ea8fca8190330099655019f8aee97933914d1f35cbbbe575593f2cf6b0cf6c36aff2233ba2878b883f80503e6b50581aa8b419dd025a4cf
+  languageName: node
+  linkType: hard
+
 "js-tokens@npm:^3.0.0 || ^4.0.0, js-tokens@npm:^4.0.0":
   version: 4.0.0
   resolution: "js-tokens@npm:4.0.0"
@@ -2440,6 +2571,13 @@ __metadata:
   dependencies:
     p-locate: ^5.0.0
   checksum: 72eb661788a0368c099a184c59d2fee760b3831c9c1c33955e8a19ae4a21b4116e53fa736dc086cdeb9fce9f7cc508f2f92d2d3aae516f133e16a2bb59a39f5a
+  languageName: node
+  linkType: hard
+
+"lodash.throttle@npm:^4.1.1":
+  version: 4.1.1
+  resolution: "lodash.throttle@npm:4.1.1"
+  checksum: 129c0a28cee48b348aef146f638ef8a8b197944d4e9ec26c1890c19d9bf5a5690fe11b655c77a4551268819b32d27f4206343e30c78961f60b561b8608c8c805
   languageName: node
   linkType: hard
 

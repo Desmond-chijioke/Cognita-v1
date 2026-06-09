@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Avatar, Box, Button, Divider, Group, NumberInput, Paper,
   SimpleGrid, Stack, Switch, Text, TextInput, ThemeIcon, Title,
@@ -10,7 +10,10 @@ import {
   LuUsers, LuFolder, LuBookOpen, LuBrain, LuShield,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
-import { updateSchool } from '../../../Redux/slices/authSlice';
+import { updateSchool, updateUser } from '../../../Redux/slices/authSlice';
+import { fetchMyProfile, updateMyProfile, fileToAvatarDataUrl } from '../../../supabase/profile';
+import { supabase } from '../../../supabase/client';
+import { fetchDashboardData, fetchAnalyticsData } from '../../../supabase/adminStats';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +88,6 @@ function StatChip({ value, label, color, icon: Icon }: {
 export default function AdminSettings() {
   const dispatch   = useAppDispatch();
   const user       = useAppSelector(s => s.auth.user);
-  const schoolLogo = useAppSelector(s => s.auth.schoolLogo);
   const schoolName = useAppSelector(s => s.auth.schoolName);
 
   const fileInputRef              = useRef<HTMLInputElement>(null);
@@ -93,13 +95,50 @@ export default function AdminSettings() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [hovered, setHovered]     = useState(false);
   const [logoHovered, setLogoHovered] = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
 
   const [profile, setProfile] = useState({
     name:        user?.name  || '',
     title:       'School Administrator',
-    phone:       '+234 80 000 0000',
+    phone:       '',
     institution: user?.institutionName ?? schoolName ?? '',
   });
+
+  const [stats, setStats] = useState({ researchers: 0, activeProjects: 0, publications: 0 });
+
+  // ── Fetch real profile data (name / phone / avatar / institution logo) ─────
+  useEffect(() => {
+    if (!user?.id) return;
+    Promise.all([
+      fetchMyProfile(user.id),
+      supabase.from('users').select('institution_logo').eq('id', user.id).maybeSingle(),
+    ]).then(([p, { data: logoRow }]) => {
+      if (p) {
+        setProfile(prev => ({ ...prev, name: p.name ?? prev.name, phone: p.phone ?? '' }));
+        setAvatarUrl(p.avatar_url ?? null);
+      }
+      const persistedLogo = logoRow?.institution_logo ?? null;
+      setLogoDataUrl(persistedLogo);
+      if (persistedLogo) dispatch(updateSchool({ schoolLogo: persistedLogo }));
+    });
+  }, [user?.id, dispatch]);
+
+  // ── Fetch real institution-wide activity snapshot ──────────────────────────
+  useEffect(() => {
+    const institutionId = user?.institutionId;
+    if (!institutionId) return;
+    Promise.all([
+      fetchDashboardData(institutionId),
+      fetchAnalyticsData(institutionId),
+    ]).then(([dashboard, analytics]) => {
+      setStats({
+        researchers:    dashboard.totalStudents,
+        activeProjects: dashboard.activeProjects,
+        publications:   analytics.totalPubs,
+      });
+    });
+  }, [user?.institutionId]);
 
   const [aiPolicy, setAiPolicy] = useState({
     allowRewrite:    true,
@@ -115,34 +154,55 @@ export default function AdminSettings() {
     systemUpdates:   false,
   });
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setAvatarUrl(reader.result as string);
-    reader.readAsDataURL(file);
-    notifications.show({ title: 'Photo updated', message: 'Your profile photo has been changed.', color: 'brand' });
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarUrl(dataUrl);
+      notifications.show({ title: 'Photo selected', message: 'Click "Save Settings" to apply your new profile photo.', color: 'brand' });
+    } catch (err) {
+      notifications.show({ title: 'Upload failed', message: err instanceof Error ? err.message : 'Could not process the image.', color: 'red' });
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      dispatch(updateSchool({ schoolLogo: dataUrl }));
-      notifications.show({ title: 'School logo updated', message: 'The new logo is now shown in the app header.', color: 'brand' });
-    };
-    reader.readAsDataURL(file);
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file, 160);
+      setLogoDataUrl(dataUrl);
+      notifications.show({ title: 'Logo selected', message: 'Click "Save Settings" to apply your new institution logo.', color: 'brand' });
+    } catch (err) {
+      notifications.show({ title: 'Upload failed', message: err instanceof Error ? err.message : 'Could not process the image.', color: 'red' });
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const handleSave = () => {
-    dispatch(updateSchool({ schoolName: profile.institution }));
-    notifications.show({
-      title:   'Settings saved',
-      message: 'Institution settings have been updated successfully.',
-      color:   'green',
-    });
+  const handleSave = async () => {
+    if (!user?.id) return;
+    setSaving(true);
+    try {
+      await updateMyProfile(user.id, { name: profile.name.trim(), phone: profile.phone.trim(), avatarUrl });
+      const { error } = await supabase.from('users')
+        .update({ institution_name: profile.institution.trim(), institution_logo: logoDataUrl })
+        .eq('id', user.id);
+      if (error) throw new Error(error.message);
+      dispatch(updateUser({ name: profile.name.trim(), avatar: avatarUrl ?? undefined }));
+      dispatch(updateSchool({ schoolName: profile.institution, schoolLogo: logoDataUrl ?? undefined }));
+      notifications.show({
+        title:   'Settings saved',
+        message: 'Your profile and institution settings have been updated successfully.',
+        color:   'green',
+      });
+    } catch (err) {
+      notifications.show({ title: 'Save failed', message: err instanceof Error ? err.message : 'Could not save your settings.', color: 'red' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -287,7 +347,7 @@ export default function AdminSettings() {
               onMouseLeave={() => setLogoHovered(false)}
             >
               <Avatar
-                src={schoolLogo ?? undefined}
+                src={logoDataUrl ?? undefined}
                 size={72}
                 radius="md"
                 color="brand"
@@ -329,9 +389,9 @@ export default function AdminSettings() {
             mb="lg"
           />
           <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
-            <StatChip value={156} label="Total Researchers"  color="#3b5bdb" icon={LuUsers}    />
-            <StatChip value={67}  label="Active Projects"    color="#0c8599" icon={LuFolder}   />
-            <StatChip value={38}  label="Publications (YTD)" color="#2f9e44" icon={LuBookOpen} />
+            <StatChip value={stats.researchers}    label="Total Researchers"  color="#3b5bdb" icon={LuUsers}    />
+            <StatChip value={stats.activeProjects} label="Active Projects"    color="#0c8599" icon={LuFolder}   />
+            <StatChip value={stats.publications}   label="Publications (YTD)" color="#2f9e44" icon={LuBookOpen} />
           </SimpleGrid>
         </Paper>
 
@@ -430,7 +490,7 @@ export default function AdminSettings() {
               <Text size="sm" fw={600}>Ready to apply changes?</Text>
               <Text size="xs" c="dimmed" mt={2}>All updates take effect immediately across the institution.</Text>
             </Box>
-            <Button color="brand" size="md" leftSection={<LuSave size={15} />} onClick={handleSave} px="xl">
+            <Button color="brand" size="md" leftSection={<LuSave size={15} />} loading={saving} onClick={handleSave} px="xl">
               Save Settings
             </Button>
           </Group>

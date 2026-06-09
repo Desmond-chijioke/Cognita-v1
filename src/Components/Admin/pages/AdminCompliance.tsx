@@ -1,60 +1,41 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Badge, Box, Group, Paper, Progress, SimpleGrid,
-  Stack, Table, Tabs, Text, ThemeIcon, Title,
+  Badge, Box, Center, Group, Loader, Pagination, Paper, Progress,
+  SimpleGrid, Stack, Table, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import {
   LuShield, LuBot, LuBookOpen, LuFileText,
-  LuCircleCheck, LuTriangleAlert,
+  LuCircleCheck, LuTriangleAlert, LuConstruction,
 } from 'react-icons/lu';
+import { useAppSelector } from '../../../Redux/hooks';
+import { supabase } from '../../../supabase/client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Severity = 'safe' | 'warning' | 'critical';
 
-const SEV = {
-  safe:     { bg: '#f4fce3', border: '#94d82d30', iconColor: 'green'  as const, textColor: '#2f9e44', icon: LuCircleCheck  },
-  warning:  { bg: '#fff9db', border: '#fab00530', iconColor: 'orange' as const, textColor: '#f08c00', icon: LuTriangleAlert },
-  critical: { bg: '#fff5f5', border: '#ff636330', iconColor: 'red'    as const, textColor: '#e03131', icon: LuTriangleAlert },
-};
-
-// ── Static data ────────────────────────────────────────────────────────────────
-
-const INTEGRITY_PROJECTS = [
-  { title: 'CRISPR-Cas9 Gene Editing',         researcher: 'Dr. Kwame Asante',  similarity: 38, ai: 52, integrity: 64 },
-  { title: 'Neural Machine Translation',        researcher: 'Dr. Ibrahim Musa',  similarity: 41, ai: 48, integrity: 62 },
-  { title: 'AI-Based Crop Disease Detection',   researcher: 'Dr. Fatima Hassan', similarity: 22, ai: 28, integrity: 78 },
-  { title: 'Renewable Energy Integration',      researcher: 'Dr. Michael Obi',   similarity: 15, ai: 18, integrity: 88 },
-  { title: 'Microplastic Contamination',        researcher: 'Dr. Sarah Chen',    similarity: 8,  ai: 5,  integrity: 96 },
-  { title: 'Social Media Misinformation',       researcher: 'Dr. Amina Yusuf',   similarity: 11, ai: 10, integrity: 92 },
-  { title: 'Antibiotic Resistance Patterns',    researcher: 'Dr. Grace Ndegwa',  similarity: 6,  ai: 8,  integrity: 94 },
-];
-
-const AI_USAGE = [
-  { researcher: 'Dr. Kwame Asante',  project: 'CRISPR-Cas9 Gene Editing',       level: 'High',     mode: 'Reviewer + Rewrite + Generation', severity: 'critical' as Severity, detail: 'Extensive AI generation detected in 2 sections. 34% of literature review appears AI-generated.' },
-  { researcher: 'Dr. Ibrahim Musa',  project: 'Neural Machine Translation',      level: 'High',     mode: 'Reviewer + Rewrite + Generation', severity: 'critical' as Severity, detail: 'AI generation mode activated 12 times. Related work section flagged for excessive AI content.' },
-  { researcher: 'Dr. Fatima Hassan', project: 'AI-Based Crop Disease Detection', level: 'Moderate', mode: 'Reviewer + Rewrite Suggestions',  severity: 'warning'  as Severity, detail: 'Applied suggested rewrites 8 times. All within acceptable thresholds.' },
-  { researcher: 'Dr. Michael Obi',   project: 'Renewable Energy Integration',    level: 'Moderate', mode: 'Reviewer + Rewrite Suggestions',  severity: 'warning'  as Severity, detail: 'Moderate AI usage. 5 rewrite suggestions applied across chapters.' },
-  { researcher: 'Dr. Sarah Chen',    project: 'Microplastic Contamination',      level: 'Low',      mode: 'Reviewer Only',                   severity: 'safe'     as Severity, detail: 'AI used only for review scoring. No rewrites applied.' },
-];
-
-const CITATIONS = [
-  { researcher: 'Dr. Kwame Asante',  project: 'CRISPR-Cas9 Gene Editing',       issue: '3 uncited claims found in introduction section',        severity: 'critical' as Severity },
-  { researcher: 'Dr. Michael Obi',   project: 'Renewable Energy Integration',   issue: 'Missing citations in methodology section',               severity: 'warning'  as Severity },
-  { researcher: 'Dr. Ibrahim Musa',  project: 'Neural Machine Translation',     issue: '3 references are missing DOI identifiers',               severity: 'warning'  as Severity },
-  { researcher: 'Dr. Fatima Hassan', project: 'AI-Based Crop Disease',          issue: '1 reference missing DOI (FAO Report 2023)',              severity: 'safe'     as Severity },
-];
-
-const ETHICS = [
-  { researcher: 'Dr. Kwame Asante', project: 'CRISPR-Cas9 Gene Editing',        issue: 'Human gene therapy research — ethics review pending',        severity: 'critical' as Severity },
-  { researcher: 'Dr. Amina Yusuf',  project: 'Social Media Misinformation',     issue: 'Human subjects data — IRB approval confirmed',               severity: 'safe'     as Severity },
-  { researcher: 'Dr. Grace Ndegwa', project: 'Antibiotic Resistance Patterns',  issue: 'Clinical data — ethics clearance valid until Dec 2027',      severity: 'safe'     as Severity },
-];
+interface ProjectIntegrity {
+  projectTitle: string;
+  studentName:  string;
+  department:   string;
+  total:        number;
+  approved:     number;
+  pending:      number;
+  revision:     number;
+  integrity:    number;
+  severity:     Severity;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function risk(val: number, lo: number, hi: number): Severity {
-  return val <= lo ? 'safe' : val <= hi ? 'warning' : 'critical';
+const SEV_STYLE = {
+  safe:     { bg: '#f4fce3', border: '#94d82d30', iconColor: 'green'  as const, icon: LuCircleCheck  },
+  warning:  { bg: '#fff9db', border: '#fab00530', iconColor: 'orange' as const, icon: LuTriangleAlert },
+  critical: { bg: '#fff5f5', border: '#ff636330', iconColor: 'red'    as const, icon: LuTriangleAlert },
+};
+
+function severityOf(integrity: number): Severity {
+  return integrity >= 70 ? 'safe' : integrity >= 40 ? 'warning' : 'critical';
 }
 function riskColor(s: Severity) {
   return s === 'safe' ? 'green' : s === 'warning' ? 'orange' : 'red';
@@ -74,61 +55,98 @@ function SummaryChip({ value, label, color }: { value: number; label: string; co
   );
 }
 
-interface AlertItem {
-  researcher: string;
-  project: string;
-  severity: Severity;
-  detail?: string;
-  issue?: string;
-  mode?: string;
-  level?: string;
-}
-
-function AlertCard({ item }: { item: AlertItem }) {
-  const cfg  = SEV[item.severity];
-  const Icon = cfg.icon;
+function ComingSoon({ label }: { label: string }) {
   return (
-    <Paper p="md" radius="md" style={{ background: cfg.bg, border: `1.5px solid ${cfg.border}` }}>
-      <Group gap="sm" align="flex-start" wrap="nowrap">
-        <ThemeIcon size={34} radius="md" color={cfg.iconColor} variant="light" style={{ flexShrink: 0, marginTop: 2 }}>
-          <Icon size={16} />
+    <Center py={64}>
+      <Stack align="center" gap="sm">
+        <ThemeIcon size={52} radius="xl" color="gray" variant="light">
+          <LuConstruction size={26} />
         </ThemeIcon>
-        <Box style={{ flex: 1, minWidth: 0 }}>
-          <Group gap={6} mb={6} wrap="nowrap">
-            <Text size="sm" fw={600}>{item.researcher}</Text>
-            <Text size="xs" c="dimmed">·</Text>
-            <Text size="xs" c="dimmed" lineClamp={1}>{item.project}</Text>
-          </Group>
-          <Text size="sm" mb={item.mode ? 'xs' : 0}>{item.detail ?? item.issue}</Text>
-          {item.mode && (
-            <Group gap="xs" mt={6}>
-              <Badge variant="outline" size="xs" radius="sm">{item.mode}</Badge>
-              <Badge
-                color={item.level === 'High' ? 'red' : item.level === 'Moderate' ? 'orange' : 'green'}
-                variant="light"
-                size="xs"
-                radius="sm"
-              >
-                {item.level}
-              </Badge>
-            </Group>
-          )}
-        </Box>
-      </Group>
-    </Paper>
+        <Text fw={600} c="dimmed">{label} tracking not yet available</Text>
+        <Text size="sm" c="dimmed" ta="center" maw={360}>
+          This tab will surface real data once the relevant analysis integrations are connected to the platform.
+        </Text>
+      </Stack>
+    </Center>
   );
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-export default function AdminCompliance() {
-  const [tab, setTab] = useState('integrity');
+const PER_PAGE = 10;
 
-  const allItems     = [...AI_USAGE, ...CITATIONS, ...ETHICS];
-  const criticalCount = allItems.filter(i => i.severity === 'critical').length;
-  const warningCount  = allItems.filter(i => i.severity === 'warning').length;
-  const ethicsPending = ETHICS.filter(i => i.severity === 'critical').length;
-  const cleanProjects = INTEGRITY_PROJECTS.filter(p => p.similarity <= 20 && p.ai <= 20).length;
+export default function AdminCompliance() {
+  const [tab, setTab]         = useState('integrity');
+  const [projects, setProjects] = useState<ProjectIntegrity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage]       = useState(1);
+
+  const institutionId = useAppSelector(s => s.auth.user?.institutionId);
+
+  useEffect(() => {
+    if (!institutionId) { setLoading(false); return; }
+
+    async function load() {
+      setLoading(true);
+      try {
+        const { data: students } = await supabase
+          .from('users')
+          .select('id, name, department, project_title')
+          .eq('institution_id', institutionId!)
+          .in('role', ['Student', 'PhD Student', "Master's Student", 'Undergraduate Student', 'Researcher']);
+
+        const studentIds = (students ?? []).map(s => s.id);
+        if (!studentIds.length) { setProjects([]); return; }
+
+        const { data: subs } = await supabase
+          .from('submissions')
+          .select('student_id, status')
+          .in('student_id', studentIds);
+
+        const subsByStudent = new Map<string, { total: number; approved: number; pending: number; revision: number }>();
+        for (const sub of subs ?? []) {
+          const cur = subsByStudent.get(sub.student_id) ?? { total: 0, approved: 0, pending: 0, revision: 0 };
+          cur.total++;
+          if (sub.status === 'approved')       cur.approved++;
+          else if (sub.status === 'pending')   cur.pending++;
+          else if (sub.status === 'needs-revision') cur.revision++;
+          subsByStudent.set(sub.student_id, cur);
+        }
+
+        const result: ProjectIntegrity[] = (students ?? [])
+          .filter(s => !!s.project_title)
+          .map(s => {
+            const counts   = subsByStudent.get(s.id) ?? { total: 0, approved: 0, pending: 0, revision: 0 };
+            const integrity = counts.total > 0
+              ? Math.round((counts.approved / counts.total) * 100)
+              : 0;
+            return {
+              projectTitle: s.project_title!,
+              studentName:  s.name,
+              department:   s.department ?? 'Unassigned',
+              ...counts,
+              integrity,
+              severity: severityOf(integrity),
+            };
+          })
+          .sort((a, b) => a.integrity - b.integrity);
+
+        setProjects(result);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
+  }, [institutionId]);
+
+  const criticalCount = projects.filter(p => p.severity === 'critical').length;
+  const warningCount  = projects.filter(p => p.severity === 'warning').length;
+  const cleanCount    = projects.filter(p => p.severity === 'safe').length;
+  const totalSubs     = projects.reduce((a, p) => a + p.total, 0);
+
+  const totalPages = Math.max(1, Math.ceil(projects.length / PER_PAGE));
+  const paged      = projects.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   return (
     <Box p="xl">
@@ -137,16 +155,16 @@ export default function AdminCompliance() {
       <Box mb="xl">
         <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Compliance</Title>
         <Text size="sm" c="dimmed" mt={4}>
-          Monitor AI usage, citation integrity, and ethics across all institution projects.
+          Monitor submission integrity and academic progress across all institution projects.
         </Text>
       </Box>
 
       {/* ── Summary chips ── */}
       <SimpleGrid cols={{ base: 2, sm: 4 }} mb="xl">
-        <SummaryChip value={criticalCount} label="Critical Issues"  color="#e03131" />
-        <SummaryChip value={warningCount}  label="Warnings"         color="#f08c00" />
-        <SummaryChip value={ethicsPending} label="Ethics Pending"   color="#7950f2" />
-        <SummaryChip value={cleanProjects} label="Clean Projects"   color="#2f9e44" />
+        <SummaryChip value={projects.length} label="Tracked Projects" color="#4c6ef5" />
+        <SummaryChip value={totalSubs}       label="Total Submissions" color="#7950f2" />
+        <SummaryChip value={warningCount + criticalCount} label="Needs Attention" color="#f08c00" />
+        <SummaryChip value={cleanCount}      label="On Track"          color="#2f9e44" />
       </SimpleGrid>
 
       {/* ── Tabs ── */}
@@ -161,88 +179,110 @@ export default function AdminCompliance() {
         {/* Integrity Metrics */}
         <Tabs.Panel value="integrity">
           <Paper
-            p="sm"
-            radius="md"
-            mb="md"
+            p="sm" radius="md" mb="md"
             style={{ background: '#f8f9fa', border: '1px dashed #dee2e6' }}
           >
             <Text size="xs" c="dimmed">
-              Real-time similarity and AI detection scores synced from researcher scans.
-              Thresholds: ≤ 20% safe · ≤ 35% borderline · above 35% critical.
+              Integrity score = approved chapters ÷ total submissions.
+              Below 40% is critical · 40–69% needs attention · 70%+ on track.
             </Text>
           </Paper>
 
-          <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-            <Table highlightOnHover verticalSpacing="md">
-              <Table.Thead>
-                <Table.Tr style={{ background: '#f8f9fa' }}>
-                  {['Project', 'Researcher', 'Similarity', 'AI Score', 'Integrity', 'Status'].map(h => (
-                    <Table.Th key={h}>
-                      <Text size="xs" c="dimmed" fw={600}>{h}</Text>
-                    </Table.Th>
-                  ))}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {INTEGRITY_PROJECTS.map(p => {
-                  const simSev     = risk(p.similarity, 20, 35);
-                  const aiSev      = risk(p.ai,         20, 45);
-                  const overallSev: Severity =
-                    simSev === 'critical' || aiSev === 'critical' ? 'critical' :
-                    simSev === 'warning'  || aiSev === 'warning'  ? 'warning'  : 'safe';
-                  const OverallIcon = SEV[overallSev].icon;
-
-                  return (
-                    <Table.Tr key={p.title}>
-                      <Table.Td>
-                        <Text size="sm" fw={500} lineClamp={1} style={{ maxWidth: 200 }}>{p.title}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">{p.researcher}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" fw={700} mb={4} style={{ color: riskText(simSev) }}>{p.similarity}%</Text>
-                        <Progress value={p.similarity} color={riskColor(simSev)} size="xs" radius="xl" style={{ width: 80 }} />
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" fw={700} mb={4} style={{ color: riskText(aiSev) }}>{p.ai}%</Text>
-                        <Progress value={p.ai} color={riskColor(aiSev)} size="xs" radius="xl" style={{ width: 80 }} />
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" fw={700}>{p.integrity}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <ThemeIcon size={28} radius="xl" color={SEV[overallSev].iconColor} variant="light">
-                          <OverallIcon size={14} />
-                        </ThemeIcon>
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </Paper>
+          {loading ? (
+            <Center py="xl"><Loader size="sm" color="brand" /></Center>
+          ) : projects.length === 0 ? (
+            <Center py={64}>
+              <Stack align="center" gap="sm">
+                <ThemeIcon size={52} radius="xl" color="gray" variant="light">
+                  <LuFileText size={26} />
+                </ThemeIcon>
+                <Text fw={600} c="dimmed">No project data yet</Text>
+                <Text size="sm" c="dimmed" ta="center" maw={360}>
+                  Integrity scores will appear once students with projects have submitted chapters for review.
+                </Text>
+              </Stack>
+            </Center>
+          ) : (
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+              <Table highlightOnHover verticalSpacing="md">
+                <Table.Thead>
+                  <Table.Tr style={{ background: '#f8f9fa' }}>
+                    {['Project', 'Student', 'Department', 'Submissions', 'Approved', 'Pending', 'Revision', 'Integrity', 'Status'].map(h => (
+                      <Table.Th key={h}>
+                        <Text size="xs" c="dimmed" fw={600}>{h}</Text>
+                      </Table.Th>
+                    ))}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {paged.map(p => {
+                    const SevIcon = SEV_STYLE[p.severity].icon;
+                    return (
+                      <Table.Tr key={`${p.studentName}-${p.projectTitle}`}>
+                        <Table.Td>
+                          <Text size="sm" fw={500} lineClamp={1} style={{ maxWidth: 180 }}>{p.projectTitle}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>{p.studentName}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" c="dimmed" lineClamp={1} style={{ maxWidth: 120 }}>{p.department}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" fw={600} ta="center">{p.total}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge color="green" variant="light" size="sm" radius="sm">{p.approved}</Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge color="yellow" variant="light" size="sm" radius="sm">{p.pending}</Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge color="red" variant="light" size="sm" radius="sm">{p.revision}</Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" fw={700} mb={4} style={{ color: riskText(p.severity) }}>
+                            {p.total > 0 ? `${p.integrity}%` : '—'}
+                          </Text>
+                          {p.total > 0 && (
+                            <Progress value={p.integrity} color={riskColor(p.severity)} size="xs" radius="xl" style={{ width: 80 }} />
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <ThemeIcon size={28} radius="xl" color={SEV_STYLE[p.severity].iconColor} variant="light">
+                            <SevIcon size={14} />
+                          </ThemeIcon>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          )}
+          {!loading && totalPages > 1 && (
+            <Group justify="space-between" mt="md">
+              <Text size="sm" c="dimmed">
+                Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, projects.length)} of {projects.length} projects
+              </Text>
+              <Pagination total={totalPages} value={page} onChange={setPage} color="brand" radius="md" size="sm" />
+            </Group>
+          )}
         </Tabs.Panel>
 
         {/* AI Usage */}
         <Tabs.Panel value="ai">
-          <Stack gap="sm">
-            {AI_USAGE.map((item, i) => <AlertCard key={i} item={item} />)}
-          </Stack>
+          <ComingSoon label="AI usage" />
         </Tabs.Panel>
 
         {/* Citations */}
         <Tabs.Panel value="citations">
-          <Stack gap="sm">
-            {CITATIONS.map((item, i) => <AlertCard key={i} item={item} />)}
-          </Stack>
+          <ComingSoon label="Citation" />
         </Tabs.Panel>
 
         {/* Ethics */}
         <Tabs.Panel value="ethics">
-          <Stack gap="sm">
-            {ETHICS.map((item, i) => <AlertCard key={i} item={item} />)}
-          </Stack>
+          <ComingSoon label="Ethics review" />
         </Tabs.Panel>
 
       </Tabs>

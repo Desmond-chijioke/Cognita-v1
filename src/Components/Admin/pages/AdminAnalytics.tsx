@@ -4,28 +4,11 @@ import {
   SimpleGrid, Stack, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import {
-  LuBookOpen, LuTrendingUp, LuActivity, LuBrain, LuAward,
+  LuBookOpen, LuTrendingUp, LuActivity, LuUsers, LuAward,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchAnalyticsData } from '../../../supabase/adminStats';
 import type { AnalyticsData } from '../../../supabase/adminStats';
-
-// ── Static data (not yet in DB) ────────────────────────────────────────────────
-
-const GRANT_DATA = [
-  { year: '2022', rate: 28 },
-  { year: '2023', rate: 34 },
-  { year: '2024', rate: 41 },
-  { year: '2025', rate: 45 },
-  { year: '2026', rate: 52 },
-];
-
-const AI_ADOPTION = [
-  { name: 'Reviewer Only',      value: 45, color: '#2f9e44' },
-  { name: 'Reviewer + Rewrite', value: 35, color: '#f08c00' },
-  { name: 'Full AI',            value: 12, color: '#e03131' },
-  { name: 'Disabled',           value: 8,  color: '#ced4da' },
-];
 
 // ── Inline SVG Charts ──────────────────────────────────────────────────────────
 
@@ -64,40 +47,52 @@ function HBarChart({ data }: { data: { dept: string; pubs: number }[] }) {
   );
 }
 
-function LineChart() {
-  const cx  = (i: number)    => 44 + i * 84;
-  const cy  = (rate: number) => 145 - (rate / 60) * 125;
-  const pts = GRANT_DATA.map((d, i) => ({ ...d, x: cx(i), y: cy(d.rate) }));
+function MonthlyTrendChart({ data }: { data: { month: string; count: number }[] }) {
+  if (!data.length || data.every(d => d.count === 0)) {
+    return <Text size="sm" c="dimmed" ta="center" py={40}>No submissions recorded yet.</Text>;
+  }
 
+  const maxVal = Math.max(...data.map(d => d.count), 1);
+  const W = 420, H = 160, padL = 36, padB = 24, padT = 16, padR = 16;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const stepX  = data.length > 1 ? chartW / (data.length - 1) : chartW;
+
+  const cx = (i: number) => padL + i * stepX;
+  const cy = (v: number) => padT + chartH - (v / maxVal) * chartH;
+
+  const pts    = data.map((d, i) => ({ ...d, x: cx(i), y: cy(d.count) }));
   const linePts = pts.map(p => `${p.x},${p.y}`).join(' ');
   const areaPath = [
     `M ${pts[0].x} ${pts[0].y}`,
     ...pts.slice(1).map(p => `L ${p.x} ${p.y}`),
-    `L ${pts[pts.length - 1].x} 145`,
-    `L ${pts[0].x} 145 Z`,
+    `L ${pts[pts.length - 1].x} ${padT + chartH}`,
+    `L ${pts[0].x} ${padT + chartH} Z`,
   ].join(' ');
 
+  const gridVals = [0, Math.round(maxVal / 2), maxVal];
+
   return (
-    <svg viewBox="0 0 420 178" width="100%" height="178">
-      {[0, 20, 40, 60].map(v => {
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}>
+      {gridVals.map(v => {
         const y = cy(v);
         return (
           <g key={v}>
-            <line x1={44} y1={y} x2={392} y2={y} stroke="#f1f3f5" strokeWidth={1} />
-            <text x={38} y={y + 4} textAnchor="end" fontSize={10} fill="#adb5bd">{v}</text>
+            <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#f1f3f5" strokeWidth={1} />
+            <text x={padL - 4} y={y + 4} textAnchor="end" fontSize={10} fill="#adb5bd">{v}</text>
           </g>
         );
       })}
       <path d={areaPath} fill="rgba(59,91,219,0.07)" />
       <polyline points={linePts} fill="none" stroke="#3b5bdb" strokeWidth={2.5} strokeLinejoin="round" />
       {pts.map(p => (
-        <g key={p.year}>
-          <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize={10} fill="#3b5bdb" fontWeight="600">{p.rate}%</text>
-          <circle cx={p.x} cy={p.y} r={5} fill="white" stroke="#3b5bdb" strokeWidth={2.5} />
+        <g key={p.month}>
+          {p.count > 0 && (
+            <text x={p.x} y={p.y - 8} textAnchor="middle" fontSize={10} fill="#3b5bdb" fontWeight="600">{p.count}</text>
+          )}
+          <circle cx={p.x} cy={p.y} r={4} fill="white" stroke="#3b5bdb" strokeWidth={2} />
+          <text x={p.x} y={H - 4} textAnchor="middle" fontSize={10} fill="#868e96">{p.month}</text>
         </g>
-      ))}
-      {pts.map(p => (
-        <text key={`xl-${p.year}`} x={p.x} y={168} textAnchor="middle" fontSize={11} fill="#868e96">{p.year}</text>
       ))}
     </svg>
   );
@@ -118,11 +113,20 @@ export default function AdminAnalytics() {
       .finally(() => setLoading(false));
   }, [institutionId]);
 
-  const latestGrant = GRANT_DATA[GRANT_DATA.length - 1].rate;
-
-  // Avg integrity from real data
   const avgIntegrity = data?.integrityData.length
     ? Math.round(data.integrityData.reduce((a, d) => a + d.score, 0) / data.integrityData.length)
+    : 0;
+
+  const statusSections = data && data.totalSubs > 0
+    ? [
+        { value: Math.round((data.totalPubs    / data.totalSubs) * 100), color: '#2f9e44', label: 'Approved',  count: data.totalPubs    },
+        { value: Math.round((data.pendingCount / data.totalSubs) * 100), color: '#4c6ef5', label: 'Pending',   count: data.pendingCount  },
+        { value: Math.round((data.revisionCount / data.totalSubs) * 100), color: '#f08c00', label: 'Revision', count: data.revisionCount },
+      ]
+    : [];
+
+  const approvedPct = data && data.totalSubs > 0
+    ? Math.round((data.totalPubs / data.totalSubs) * 100)
     : 0;
 
   return (
@@ -132,21 +136,21 @@ export default function AdminAnalytics() {
       <Box mb="xl">
         <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Analytics</Title>
         <Text size="sm" c="dimmed" mt={4}>
-          Research performance and AI adoption metrics across the institution.
+          Research performance and submission metrics across the institution.
         </Text>
       </Box>
 
       {loading ? (
-        <Group justify="center" py={80}><Loader size="md" /></Group>
+        <Group justify="center" py={80}><Loader size="md" color="brand" /></Group>
       ) : (
         <>
           {/* ── KPI cards ── */}
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} mb="xl">
             {[
-              { icon: LuBookOpen,   label: 'Total Publications',  value: data?.totalPubs ?? 0,         color: 'brand',  sub: 'Approved sections'        },
-              { icon: LuTrendingUp, label: 'Grant Success Rate',  value: `${latestGrant}%`,            color: 'teal',   sub: '↑ from 45% last year'     },
-              { icon: LuBrain,      label: 'Avg Approval Rate',   value: avgIntegrity > 0 ? `${avgIntegrity}%` : '—', color: 'violet', sub: 'Across all departments' },
-              { icon: LuAward,      label: 'Top Department',      value: data?.topDept ?? '—',         color: 'green',  sub: `${data?.pubData[0]?.pubs ?? 0} publications` },
+              { icon: LuBookOpen,   label: 'Approved Sections',  value: data?.totalPubs ?? 0,                         color: 'brand',  sub: 'Total approved chapters'        },
+              { icon: LuUsers,      label: 'Total Students',     value: data?.totalStudents ?? 0,                     color: 'violet', sub: 'Enrolled in this institution'   },
+              { icon: LuTrendingUp, label: 'Avg Approval Rate',  value: avgIntegrity > 0 ? `${avgIntegrity}%` : '—', color: 'teal',   sub: 'Across all departments'         },
+              { icon: LuAward,      label: 'Top Department',     value: data?.topDept ?? '—',                         color: 'green',  sub: `${data?.pubData[0]?.pubs ?? 0} approved sections` },
             ].map(({ icon: Icon, label, value, color, sub }) => (
               <Paper key={label} withBorder p="lg" radius="md" bg="white">
                 <Group justify="space-between" mb="sm">
@@ -165,22 +169,22 @@ export default function AdminAnalytics() {
           {/* ── Charts grid ── */}
           <SimpleGrid cols={{ base: 1, md: 2 }}>
 
-            {/* Publications by Department */}
+            {/* Approved Sections by Department */}
             <Paper withBorder p="lg" radius="md" bg="white">
               <Text fw={600} mb="md">Approved Sections by Department</Text>
               <HBarChart data={data?.pubData ?? []} />
             </Paper>
 
-            {/* Grant Success Rate (static) */}
+            {/* Monthly Submission Trend — real data */}
             <Paper withBorder p="lg" radius="md" bg="white">
               <Group justify="space-between" mb="md">
-                <Text fw={600}>Grant Success Rate (%)</Text>
-                <Text size="xs" c="green.7" fw={600}>↑ 24 pts over 4 yrs</Text>
+                <Text fw={600}>Monthly Submissions (Last 6 Months)</Text>
+                <Text size="xs" c="dimmed" fw={600}>{data?.totalSubs ?? 0} total</Text>
               </Group>
-              <LineChart />
+              <MonthlyTrendChart data={data?.monthlyTrend ?? []} />
             </Paper>
 
-            {/* Approval Rate by Department (real) */}
+            {/* Approval Rate by Department */}
             <Paper withBorder p="lg" radius="md" bg="white">
               <Text fw={600} mb="lg">Approval Rate by Department</Text>
               {(data?.integrityData ?? []).length === 0 ? (
@@ -188,8 +192,8 @@ export default function AdminAnalytics() {
               ) : (
                 <Stack gap="md">
                   {(data?.integrityData ?? []).map(({ faculty, score }) => {
-                    const color     = score >= 85 ? 'green'   : score >= 70 ? 'orange'   : 'red';
-                    const textColor = score >= 85 ? '#2f9e44' : score >= 70 ? '#f08c00' : '#e03131';
+                    const color     = score >= 70 ? 'green'   : score >= 40 ? 'orange'  : 'red';
+                    const textColor = score >= 70 ? '#2f9e44' : score >= 40 ? '#f08c00' : '#e03131';
                     return (
                       <Box key={faculty}>
                         <Group justify="space-between" mb={5}>
@@ -204,36 +208,45 @@ export default function AdminAnalytics() {
               )}
             </Paper>
 
-            {/* AI Adoption Rate (static) */}
+            {/* Submission Status Breakdown — real data */}
             <Paper withBorder p="lg" radius="md" bg="white">
-              <Text fw={600} mb="lg">AI Adoption Rate</Text>
-              <Group justify="center" align="center" gap="xl">
-                <RingProgress
-                  size={168}
-                  thickness={28}
-                  roundCaps
-                  sections={AI_ADOPTION.map(d => ({
-                    value:   d.value,
-                    color:   d.color,
-                    tooltip: `${d.name}: ${d.value}%`,
-                  }))}
-                  label={
-                    <Box ta="center">
-                      <Text fw={800} size="xl" lh={1}>92%</Text>
-                      <Text size="xs" c="dimmed">AI enabled</Text>
-                    </Box>
-                  }
-                />
-                <Stack gap="md">
-                  {AI_ADOPTION.map(({ name, value, color }) => (
-                    <Group key={name} gap="xs" wrap="nowrap">
-                      <Box style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                      <Text size="sm" c="dimmed" style={{ minWidth: 150 }}>{name}</Text>
-                      <Text size="sm" fw={700}>{value}%</Text>
+              <Text fw={600} mb="lg">Submission Status Breakdown</Text>
+              {data?.totalSubs === 0 ? (
+                <Text size="sm" c="dimmed" ta="center" py={40}>No submissions yet.</Text>
+              ) : (
+                <Group justify="center" align="center" gap="xl">
+                  <RingProgress
+                    size={168}
+                    thickness={28}
+                    roundCaps
+                    sections={statusSections.map(s => ({
+                      value:   s.value,
+                      color:   s.color,
+                      tooltip: `${s.label}: ${s.count}`,
+                    }))}
+                    label={
+                      <Box ta="center">
+                        <Text fw={800} size="xl" lh={1}>{approvedPct}%</Text>
+                        <Text size="xs" c="dimmed">approved</Text>
+                      </Box>
+                    }
+                  />
+                  <Stack gap="md">
+                    {statusSections.map(({ label, count, color }) => (
+                      <Group key={label} gap="xs" wrap="nowrap">
+                        <Box style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                        <Text size="sm" c="dimmed" style={{ minWidth: 80 }}>{label}</Text>
+                        <Text size="sm" fw={700}>{count}</Text>
+                      </Group>
+                    ))}
+                    <Group gap="xs" wrap="nowrap">
+                      <Box style={{ width: 10, height: 10, borderRadius: '50%', background: '#ced4da', flexShrink: 0 }} />
+                      <Text size="sm" c="dimmed" style={{ minWidth: 80 }}>Total</Text>
+                      <Text size="sm" fw={700}>{data?.totalSubs ?? 0}</Text>
                     </Group>
-                  ))}
-                </Stack>
-              </Group>
+                  </Stack>
+                </Group>
+              )}
             </Paper>
 
           </SimpleGrid>

@@ -39,7 +39,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
   return (
     <Modal
       opened={!!creds} onClose={onClose} centered size="sm"
-      overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+      overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
       title={<Group gap="xs"><LuKeyRound size={17} color="var(--mantine-color-brand-6)" /><Text fw={700}>Supervisor Account Created</Text></Group>}
     >
       {creds && (
@@ -127,7 +127,7 @@ export default function HODSupervisors() {
           .select('id, name, email, phone, specialty, department, role, created_at')
           .eq('institution_id', institutionId)
           .in('role', SUP_ROLES)
-          .order('created_at');
+          .order('created_at', { ascending: false });
         if (error) console.error('[HODSupervisors] fetch error:', error.message);
         result = (data ?? []) as SBUser[];
       }
@@ -195,28 +195,8 @@ export default function HODSupervisors() {
       closeModal();
       showsucessnotification({ message: `${name.trim()} added as supervisor with login credentials.` });
 
-      // Reload table in background (non-blocking)
-      const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
-      supabase
-        .from('users')
-        .select('id, name, email, phone, specialty, department, role, created_at')
-        .eq('institution_id', institutionId)
-        .in('role', ['Supervisor', 'Senior Supervisor', 'Co-Supervisor'])
-        .order('created_at')
-        .then(({ data: fresh }) => {
-          if (fresh && fresh.length > 0) {
-            dispatch(loadSupervisors(fresh.map((s: Record<string, string>, i: number) => ({
-              id:               s.id,
-              name:             s.name,
-              email:            s.email,
-              specialty:        s.specialty ?? '',
-              role:             s.role,
-              studentsAssigned: 0,
-              color:            CS[i % CS.length],
-              addedOn:          new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-            }))));
-          }
-        });
+      // Re-fetch so the table updates immediately without a full page refresh
+      loadSupervisorRows();
     } catch (err: unknown) {
       showerrornotification({ message: err instanceof Error ? err.message : 'Failed to create supervisor account.' });
     } finally {
@@ -287,7 +267,7 @@ export default function HODSupervisors() {
                   <Table.Tr key={sv.id}>
                     <Table.Td>
                       <Group gap="sm" wrap="nowrap">
-                        <Avatar color="blue" radius="xl" size="md">{getInitials(sv.name)}</Avatar>
+                        <Avatar color="brand" radius="xl" size="md">{getInitials(sv.name)}</Avatar>
                         <Text size="sm" fw={600}>{sv.name}</Text>
                       </Group>
                     </Table.Td>
@@ -326,7 +306,7 @@ export default function HODSupervisors() {
       {/* Add Supervisor Modal */}
       <Modal
         opened={showModal} onClose={closeModal} centered size="md"
-        overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
         title={<Group gap="xs"><LuUserCheck size={16} color="var(--mantine-color-brand-6)" /><Text fw={700}>Add Supervisor</Text></Group>}
       >
         <Stack gap="sm">

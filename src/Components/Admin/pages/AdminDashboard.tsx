@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Avatar, Badge, Box, Divider, Group, Loader, Paper, Progress,
-  RingProgress, ScrollArea, SimpleGrid, Stack, Tabs, Text,
+  Accordion, Avatar, Badge, Box, Divider, Group, Loader, Pagination, Paper, Progress,
+  RingProgress, ScrollArea, SimpleGrid, Stack, Table, Tabs, Text,
   TextInput, ThemeIcon, Title,
 } from '@mantine/core';
 import {
   LuFolder, LuFileText, LuClipboard, LuTrendingUp,
   LuSearch, LuCircleCheck, LuClock, LuRotateCcw, LuActivity,
   LuUsers, LuBell, LuCalendar, LuBookOpen, LuGraduationCap,
-  LuTriangleAlert,
+  LuTriangleAlert, LuBuilding2, LuLandmark, LuLayers,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../../Redux/hooks';
-import { fetchDashboardData } from '../../../supabase/adminStats';
+import { showerrornotification } from '../../../helper/notificationhelper';
+import { fetchDashboardData, fetchOrgHierarchyTable } from '../../../supabase/adminStats';
 import type {
   DeptStat, StatusSlice, SubmissionRow, ApprovedChapter,
-  ActivityEvent, StudentProgress,
+  ActivityEvent, StudentProgress, OrgCollegeRow, OrgFacultyRow, OrgHierarchyData,
 } from '../../../supabase/adminStats';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function ActivityDot({ type }: { type: ActivityEvent['type'] }) {
   const map: Record<string, { color: string; icon: React.ElementType }> = {
-    submitted:  { color: '#1971c2', icon: LuFileText    },
+    submitted:  { color: '#4c6ef5', icon: LuFileText    },
     approved:   { color: '#2f9e44', icon: LuCircleCheck },
     revision:   { color: '#e03131', icon: LuRotateCcw   },
     annotation: { color: '#f08c00', icon: LuBell        },
@@ -111,9 +112,12 @@ function ActivityDot({ type }: { type: ActivityEvent['type'] }) {
 
 // ── Chapter tracker table ──────────────────────────────────────────────────────
 
+const CARD_PAGE_SIZE = 5;
+
 function ChapterTable({ rows }: { rows: SubmissionRow[] }) {
   const [search, setSearch] = useState('');
   const [tab,    setTab]    = useState<string>('all');
+  const [page,   setPage]   = useState(1);
 
   const counts = useMemo(() => ({
     all:              rows.length,
@@ -124,12 +128,20 @@ function ChapterTable({ rows }: { rows: SubmissionRow[] }) {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return rows.filter(r => {
-      const matchTab    = tab === 'all' || r.status === tab;
-      const matchSearch = !q || r.studentName.toLowerCase().includes(q) || r.sectionTitle.toLowerCase().includes(q) || r.department.toLowerCase().includes(q);
-      return matchTab && matchSearch;
-    });
+    return rows
+      .filter(r => {
+        const matchTab    = tab === 'all' || r.status === tab;
+        const matchSearch = !q || r.studentName.toLowerCase().includes(q) || r.sectionTitle.toLowerCase().includes(q) || r.department.toLowerCase().includes(q);
+        return matchTab && matchSearch;
+      })
+      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
   }, [rows, tab, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / CARD_PAGE_SIZE));
+  const pagedRows  = filtered.slice((page - 1) * CARD_PAGE_SIZE, page * CARD_PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [search, tab]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]);
 
   if (!rows.length) return <Text size="sm" c="dimmed" ta="center" py={40}>No chapters submitted yet.</Text>;
 
@@ -158,7 +170,7 @@ function ChapterTable({ rows }: { rows: SubmissionRow[] }) {
           size="xs" w={210}
         />
       </Group>
-      <ScrollArea h={300}>
+      <ScrollArea>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
@@ -168,9 +180,9 @@ function ChapterTable({ rows }: { rows: SubmissionRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0
+            {pagedRows.length === 0
               ? <tr><td colSpan={7} style={{ padding: '24px 12px', textAlign: 'center', color: '#adb5bd' }}>No chapters match your filter.</td></tr>
-              : filtered.map((row, i) => (
+              : pagedRows.map((row, i) => (
                 <tr key={row.id} style={{ background: i % 2 === 0 ? '#fff' : '#fafafa', borderBottom: '1px solid #f8f9fa' }}>
                   <td style={{ padding: '10px 12px', maxWidth: 240 }}>
                     <Text size="sm" fw={500} lineClamp={1}>{row.sectionTitle}</Text>
@@ -193,6 +205,11 @@ function ChapterTable({ rows }: { rows: SubmissionRow[] }) {
           </tbody>
         </table>
       </ScrollArea>
+      {totalPages > 1 && (
+        <Group justify="flex-end">
+          <Pagination total={totalPages} value={page} onChange={setPage} color="brand" radius="md" size="sm" />
+        </Group>
+      )}
     </Stack>
   );
 }
@@ -200,15 +217,26 @@ function ChapterTable({ rows }: { rows: SubmissionRow[] }) {
 // ── Approved chapters cards (mirrors SupervisorApprovals) ──────────────────────
 
 function ApprovedList({ chapters }: { chapters: ApprovedChapter[] }) {
+  const [page, setPage] = useState(1);
+
+  const sorted = useMemo(
+    () => [...chapters].sort((a, b) => new Date(b.reviewedAt ?? b.submittedAt).getTime() - new Date(a.reviewedAt ?? a.submittedAt).getTime()),
+    [chapters],
+  );
+  const totalPages = Math.max(1, Math.ceil(sorted.length / CARD_PAGE_SIZE));
+  const paged      = sorted.slice((page - 1) * CARD_PAGE_SIZE, page * CARD_PAGE_SIZE);
+
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]);
+
   if (!chapters.length) return <Text size="sm" c="dimmed" ta="center" py={40}>No chapters approved yet.</Text>;
   return (
     <Stack gap="md">
-      {chapters.map((ch, i) => (
+      {paged.map((ch, i) => (
         <Paper key={ch.id} withBorder p="lg" radius="md" bg="white" style={{ borderLeft: '4px solid #2f9e44' }}>
           <Group justify="space-between" wrap="nowrap" mb="md">
             <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
               <Box style={{ width: 26, height: 26, borderRadius: '50%', background: '#e6fcf5', border: '2px solid #2f9e44', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Text size="xs" fw={800} c="green.7">#{i + 1}</Text>
+                <Text size="xs" fw={800} c="green.7">#{(page - 1) * CARD_PAGE_SIZE + i + 1}</Text>
               </Box>
               <Avatar color={nameToColor(ch.studentName)} radius="xl" size="md">{getInitials(ch.studentName)}</Avatar>
               <Box style={{ minWidth: 0 }}>
@@ -247,6 +275,122 @@ function ApprovedList({ chapters }: { chapters: ApprovedChapter[] }) {
           )}
         </Paper>
       ))}
+      {totalPages > 1 && (
+        <Group justify="flex-end">
+          <Pagination total={totalPages} value={page} onChange={setPage} color="brand" radius="md" size="sm" />
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
+// ── Org hierarchy table (College → Provost / Faculty → Dean / Dept → HOD / ──
+// ── Students → project topic + supervisor) ──────────────────────────────────
+
+function StudentTopicTable({ rows }: { rows: { id: string; name: string; projectTitle: string; supervisorName: string }[] }) {
+  if (!rows.length) {
+    return <Text size="xs" c="dimmed" ta="center" py="sm">No students in this department yet.</Text>;
+  }
+  return (
+    <Table verticalSpacing={6} fz="xs" highlightOnHover>
+      <Table.Thead>
+        <Table.Tr>
+          <Table.Th>Student</Table.Th>
+          <Table.Th>Project Topic</Table.Th>
+          <Table.Th>Supervisor</Table.Th>
+        </Table.Tr>
+      </Table.Thead>
+      <Table.Tbody>
+        {rows.map(st => (
+          <Table.Tr key={st.id}>
+            <Table.Td>{st.name}</Table.Td>
+            <Table.Td>{st.projectTitle}</Table.Td>
+            <Table.Td>
+              {st.supervisorName === 'Unassigned'
+                ? <Badge variant="light" color="gray" size="sm" radius="sm">Unassigned</Badge>
+                : st.supervisorName}
+            </Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
+
+function FacultyAccordionItem({ faculty }: { faculty: OrgFacultyRow }) {
+  return (
+    <Accordion.Item value={faculty.id}>
+      <Accordion.Control icon={<LuLayers size={14} color="#4263eb" />}>
+        <Group justify="space-between" wrap="nowrap" pr="md">
+          <Text fw={600} size="sm">{faculty.name}</Text>
+          <Text size="xs" c="dimmed">Dean: <Text component="span" fw={600} c="dark">{faculty.deanName}</Text> · {faculty.deanEmail}</Text>
+        </Group>
+      </Accordion.Control>
+      <Accordion.Panel>
+        {faculty.departments.length === 0 ? (
+          <Text size="xs" c="dimmed" ta="center" py="sm">No departments under this faculty yet.</Text>
+        ) : (
+          <Stack gap="md">
+            {faculty.departments.map(dept => (
+              <Paper key={dept.id} withBorder p="sm" radius="sm" bg="gray.0">
+                <Group justify="space-between" mb="xs" wrap="nowrap">
+                  <Group gap={6}>
+                    <LuBuilding2 size={13} color="#0c8599" />
+                    <Text fw={600} size="sm">{dept.name}</Text>
+                  </Group>
+                  <Text size="xs" c="dimmed">HOD: <Text component="span" fw={600} c="dark">{dept.hodName}</Text> · {dept.hodEmail}</Text>
+                </Group>
+                <StudentTopicTable rows={dept.students} />
+              </Paper>
+            ))}
+          </Stack>
+        )}
+      </Accordion.Panel>
+    </Accordion.Item>
+  );
+}
+
+function OrgHierarchyTable({ colleges, directFaculties }: { colleges: OrgCollegeRow[]; directFaculties: OrgFacultyRow[] }) {
+  if (!colleges.length && !directFaculties.length) {
+    return <Text size="sm" c="dimmed" ta="center" py={40}>No colleges or faculties set up for this institution yet.</Text>;
+  }
+  return (
+    <Stack gap="md">
+      {directFaculties.length > 0 && (
+        <Paper withBorder radius="md" p="sm" bg="orange.0" style={{ borderColor: '#ffd8a8' }}>
+          <Group gap={6} mb="xs">
+            <LuBuilding2 size={14} color="#e67700" />
+            <Text fw={700} size="sm" c="orange.9">Faculties directly under Institution</Text>
+            <Badge size="xs" color="orange" variant="light">{directFaculties.length}</Badge>
+          </Group>
+          <Accordion variant="contained" radius="sm" multiple>
+            {directFaculties.map(faculty => <FacultyAccordionItem key={faculty.id} faculty={faculty} />)}
+          </Accordion>
+        </Paper>
+      )}
+      {colleges.length > 0 && (
+        <Accordion variant="separated" radius="md" multiple defaultValue={colleges.map(c => c.id)}>
+          {colleges.map(college => (
+            <Accordion.Item key={college.id} value={college.id}>
+              <Accordion.Control icon={<LuLandmark size={16} color="#7950f2" />}>
+                <Group justify="space-between" wrap="nowrap" pr="md">
+                  <Text fw={700} size="sm">{college.name}</Text>
+                  <Text size="xs" c="dimmed">Provost: <Text component="span" fw={600} c="dark">{college.provostName}</Text> · {college.provostEmail}</Text>
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>
+                {college.faculties.length === 0 ? (
+                  <Text size="xs" c="dimmed" ta="center" py="sm">No faculties under this college yet.</Text>
+                ) : (
+                  <Accordion variant="contained" radius="sm" multiple>
+                    {college.faculties.map(faculty => <FacultyAccordionItem key={faculty.id} faculty={faculty} />)}
+                  </Accordion>
+                )}
+              </Accordion.Panel>
+            </Accordion.Item>
+          ))}
+        </Accordion>
+      )}
     </Stack>
   );
 }
@@ -261,17 +405,47 @@ export default function AdminDashboard() {
   const [data,    setData]    = useState<Awaited<ReturnType<typeof fetchDashboardData>> | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [orgData,    setOrgData]    = useState<OrgHierarchyData>({ colleges: [], directFaculties: [] });
+  const [orgLoading, setOrgLoading] = useState(true);
+
+  const [activityPage, setActivityPage] = useState(1);
+  const [progressPage, setProgressPage] = useState(1);
+
   useEffect(() => {
     setLoading(true);
     fetchDashboardData(institutionId)
       .then(setData)
+      .catch(err => showerrornotification({ message: err.message || 'Failed to load dashboard data.' }))
       .finally(() => setLoading(false));
+  }, [institutionId]);
+
+  useEffect(() => {
+    if (!institutionId) { setOrgLoading(false); return; }
+    setOrgLoading(true);
+    fetchOrgHierarchyTable(institutionId)
+      .then(setOrgData)
+      .catch(err => showerrornotification({ message: err.message || 'Failed to load institution structure.' }))
+      .finally(() => setOrgLoading(false));
   }, [institutionId]);
 
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const approvalRate = data && data.allSubmissions.length > 0
     ? Math.round((data.approvedCount / data.allSubmissions.length) * 100)
     : 0;
+
+  const activityFeed   = data?.activityFeed ?? [];
+  const activityPages  = Math.max(1, Math.ceil(activityFeed.length / CARD_PAGE_SIZE));
+  const pagedActivity  = activityFeed.slice((activityPage - 1) * CARD_PAGE_SIZE, activityPage * CARD_PAGE_SIZE);
+
+  const studentProgress = useMemo(
+    () => [...(data?.studentProgress ?? [])].sort((a, b) => b.progress - a.progress),
+    [data?.studentProgress],
+  );
+  const progressPages = Math.max(1, Math.ceil(studentProgress.length / CARD_PAGE_SIZE));
+  const pagedProgress = studentProgress.slice((progressPage - 1) * CARD_PAGE_SIZE, progressPage * CARD_PAGE_SIZE);
+
+  useEffect(() => { setActivityPage(p => Math.min(p, activityPages)); }, [activityPages]);
+  useEffect(() => { setProgressPage(p => Math.min(p, progressPages)); }, [progressPages]);
 
   return (
     <Box p="xl">
@@ -299,6 +473,9 @@ export default function AdminDashboard() {
           <SimpleGrid cols={{ base: 2, sm: 3, lg: 4 }}>
             {[
               { icon: LuUsers,         label: 'Total Students',     value: data?.totalStudents ?? 0,        color: 'brand',  sub: `${data?.degreeBreakdown.phd ?? 0} PhD · ${data?.degreeBreakdown.masters ?? 0} MSc · ${data?.degreeBreakdown.ug ?? 0} UG` },
+              { icon: LuLandmark,      label: 'Colleges',           value: data?.totalColleges ?? 0,        color: 'grape',  sub: 'Institution-wide structure' },
+              { icon: LuLayers,        label: 'Faculties',          value: data?.totalFaculties ?? 0,       color: 'indigo', sub: 'Across all colleges' },
+              { icon: LuBuilding2,     label: 'Departments',        value: data?.totalDepartments ?? 0,     color: 'cyan',   sub: 'Across all faculties' },
               { icon: LuTrendingUp,    label: 'Avg Progress',       value: `${data?.avgProgress ?? 0}%`,    color: 'teal',   sub: 'Chapters approved vs submitted' },
               { icon: LuCircleCheck,   label: 'Chapters Approved',  value: data?.approvedCount ?? 0,        color: 'green',  sub: `${data?.reviewedCount ?? 0} reviewed total` },
               { icon: LuTriangleAlert, label: 'Pending Review',     value: data?.pendingCount ?? 0,         color: (data?.pendingCount ?? 0) > 0 ? 'orange' : 'green', sub: 'Awaiting supervisor review' },
@@ -417,9 +594,7 @@ export default function AdminDashboard() {
                 <LuCircleCheck size={16} />
               </ThemeIcon>
             </Group>
-            <ScrollArea h={(data?.approvedChapters ?? []).length > 3 ? 520 : undefined}>
-              <ApprovedList chapters={data?.approvedChapters ?? []} />
-            </ScrollArea>
+            <ApprovedList chapters={data?.approvedChapters ?? []} />
           </Paper>
 
           {/* ── Recent activity + Student details (mirrors SupervisorOverview bottom row) ── */}
@@ -432,18 +607,21 @@ export default function AdminDashboard() {
                 <Text fw={600}>Recent Activity</Text>
               </Group>
               <Divider mb="md" />
-              {(data?.activityFeed ?? []).length === 0 ? (
+              {activityFeed.length === 0 ? (
                 <Text size="sm" c="dimmed" ta="center" py="md">No activity yet.</Text>
               ) : (
-                <ScrollArea h={280}>
+                <Stack gap="sm">
                   <Stack gap={0}>
-                    {(data?.activityFeed ?? []).slice(0, 15).map((ev: ActivityEvent, i: number) => (
+                    {pagedActivity.map((ev: ActivityEvent, i: number) => (
                       <Group key={i} justify="space-between" py="xs" wrap="nowrap" style={{ borderBottom: '1px solid #f1f3f5' }}>
                         <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
                           <ActivityDot type={ev.type} />
                           <Box style={{ minWidth: 0 }}>
                             {/* actorName = student for submitted, supervisor for approved/revision — mirrors StudentDashboard */}
-                            <Text size="sm" fw={600} lineClamp={1}>{ev.actorName}</Text>
+                            <Group gap={6} wrap="nowrap">
+                              <Text size="sm" fw={600} lineClamp={1}>{ev.actorName}</Text>
+                              <Badge variant="light" color="gray" size="xs" radius="sm" style={{ flexShrink: 0 }}>{ev.department}</Badge>
+                            </Group>
                             <Text size="xs" c="dimmed" lineClamp={1}>
                               {ev.actorName} {ev.action} &quot;{ev.sectionTitle}&quot;
                             </Text>
@@ -453,7 +631,12 @@ export default function AdminDashboard() {
                       </Group>
                     ))}
                   </Stack>
-                </ScrollArea>
+                  {activityPages > 1 && (
+                    <Group justify="flex-end">
+                      <Pagination total={activityPages} value={activityPage} onChange={setActivityPage} color="brand" radius="md" size="sm" />
+                    </Group>
+                  )}
+                </Stack>
               )}
             </Paper>
 
@@ -464,12 +647,12 @@ export default function AdminDashboard() {
                 <Text fw={600}>Student Progress</Text>
               </Group>
               <Divider mb="md" />
-              {(data?.studentProgress ?? []).length === 0 ? (
+              {studentProgress.length === 0 ? (
                 <Text size="sm" c="dimmed" ta="center" py="md">No students found for this institution.</Text>
               ) : (
-                <ScrollArea h={280}>
+                <Stack gap="sm">
                   <Stack gap="lg">
-                    {(data?.studentProgress ?? []).map((st: StudentProgress) => (
+                    {pagedProgress.map((st: StudentProgress) => (
                       <Box key={st.id}>
                         <Group justify="space-between" mb={6} wrap="nowrap">
                           <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
@@ -497,7 +680,12 @@ export default function AdminDashboard() {
                       </Box>
                     ))}
                   </Stack>
-                </ScrollArea>
+                  {progressPages > 1 && (
+                    <Group justify="flex-end">
+                      <Pagination total={progressPages} value={progressPage} onChange={setProgressPage} color="brand" radius="md" size="sm" />
+                    </Group>
+                  )}
+                </Stack>
               )}
             </Paper>
 
@@ -551,6 +739,28 @@ export default function AdminDashboard() {
               ))}
             </Paper>
           )}
+
+          {/* ── Institution org structure: Colleges → Faculties → Departments → Students ── */}
+          <Paper withBorder p="lg" radius="md" bg="white">
+            <Group justify="space-between" mb="md">
+              <Box>
+                <Text fw={700} size="md">Institution Structure</Text>
+                <Text size="xs" c="dimmed">
+                  Colleges led by their Provost, Faculties by their Dean, Departments by their HOD —
+                  with every student's project topic and assigned supervisor
+                </Text>
+              </Box>
+              <ThemeIcon size={32} radius="xl" color="violet" variant="light">
+                <LuLandmark size={16} />
+              </ThemeIcon>
+            </Group>
+            <Divider mb="md" />
+            {orgLoading ? (
+              <Group justify="center" py={40}><Loader size="sm" /></Group>
+            ) : (
+              <OrgHierarchyTable colleges={orgData.colleges} directFaculties={orgData.directFaculties} />
+            )}
+          </Paper>
 
         </Stack>
       )}

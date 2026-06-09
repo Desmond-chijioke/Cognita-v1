@@ -156,6 +156,20 @@ export async function deleteDepartment(id: string, institutionId: string) {
   if (error) throw new Error(error.message);
 }
 
+// ── Email uniqueness check ────────────────────────────────────────────────────
+// Every account (institution, college/faculty/department lead, student,
+// supervisor) lives in the single shared `users` table, so a row with a
+// matching email — regardless of role — means the address is taken.
+
+export async function emailExists(email: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('users')
+    .select('id')
+    .eq('email', email.trim().toLowerCase())
+    .maybeSingle();
+  return !!data;
+}
+
 // ── Create staff user ─────────────────────────────────────────────────────────
 // Stores user info in the shared users table.
 // institution_id is shared across all staff in one institution (NOT unique).
@@ -172,11 +186,16 @@ export async function createStaffUser(params: {
   specialty?:      string;   // supervisors
   department?:     string;   // supervisors
   matricNo?:       string;   // students
+  degreeLevel?:    string;   // students
   projectTitle?:   string;   // students (research program)
   supervisorId?:   string;   // students (assigned supervisor)
 }): Promise<{ userId: string }> {
   const { name, email, phone, password, role, institutionId, institutionName,
-          specialty, department, matricNo, projectTitle, supervisorId } = params;
+          specialty, department, matricNo, degreeLevel, projectTitle, supervisorId } = params;
+
+  if (await emailExists(email)) {
+    throw new Error(`An account with the email "${email.trim().toLowerCase()}" already exists. Use a different email address.`);
+  }
 
   // Use the deployed Edge Function (rapid-responder) to create the auth user.
   // This runs server-side with the service role key so NO second GoTrueClient
@@ -238,6 +257,7 @@ export async function createStaffUser(params: {
     specialty:        specialty     ?? null,
     department:       department    ?? null,
     matric_no:        matricNo      ?? null,
+    degree_level:     degreeLevel   ?? null,
     project_title:    projectTitle  ?? null,
     supervisor_id:    supervisorId  ?? null,
   });
