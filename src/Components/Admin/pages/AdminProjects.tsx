@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Badge, Box, Drawer, Group, Loader, Paper, Select, SimpleGrid,
-  Stack, Table, Text, TextInput, Title,
+  Stack, Table, Tabs, Text, TextInput, Title,
 } from '@mantine/core';
 import {
   LuFolder, LuClock, LuClipboardCheck,
@@ -44,21 +44,41 @@ export default function AdminProjects() {
   }, [institutionId]);
 
   const [search,       setSearch]       = useState('');
-  const [deptFilter,   setDeptFilter]   = useState<string | null>(null);
+  const [activeTab,    setActiveTab]    = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [selected,     setSelected]     = useState<AdminProject | null>(null);
 
-  const departments = useMemo(() => [...new Set(projects.map(p => p.department))].sort(), [projects]);
-  const statuses    = useMemo(() => [...new Set(projects.map(p => p.status))], [projects]);
+  // Sorted list of unique departments from loaded data
+  const departments = useMemo(
+    () => [...new Set(projects.map(p => p.department).filter(Boolean))].sort(),
+    [projects],
+  );
 
-  const filtered = useMemo(() => projects.filter(p => {
-    const q = search.toLowerCase();
-    return (
-      (!q          || p.title.toLowerCase().includes(q) || p.researcher.toLowerCase().includes(q)) &&
-      (!deptFilter   || p.department === deptFilter) &&
-      (!statusFilter || p.status     === statusFilter)
+  const statuses = useMemo(() => [...new Set(projects.map(p => p.status))], [projects]);
+
+  // When departments change (data loads) reset tab to 'all' if current tab no longer exists
+  useEffect(() => {
+    if (activeTab !== 'all' && !departments.includes(activeTab)) {
+      setActiveTab('all');
+    }
+  }, [departments, activeTab]);
+
+  // Projects matching search + status (tab scoping applied separately per-tab badge + table)
+  const baseFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return projects.filter(p =>
+      (!q            || p.title.toLowerCase().includes(q) || p.researcher.toLowerCase().includes(q)) &&
+      (!statusFilter || p.status === statusFilter),
     );
-  }), [projects, search, deptFilter, statusFilter]);
+  }, [projects, search, statusFilter]);
+
+  // Final list shown in the table — additionally scoped by active tab
+  const filtered = useMemo(
+    () => activeTab === 'all'
+      ? baseFiltered
+      : baseFiltered.filter(p => p.department === activeTab),
+    [baseFiltered, activeTab],
+  );
 
   const total      = projects.length;
   const inProgress = projects.filter(p => p.status === 'In-Progress').length;
@@ -71,6 +91,15 @@ export default function AdminProjects() {
     { label: 'In Review',      value: inReview,    icon: LuClipboardCheck, color: '#f59f00' },
     { label: 'Submitted',      value: submitted,   icon: LuCircleCheck,    color: '#2f9e44' },
   ];
+
+  // Count per department for tab badges (respects search + status but ignores tab)
+  const deptCount = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const p of baseFiltered) {
+      map[p.department] = (map[p.department] ?? 0) + 1;
+    }
+    return map;
+  }, [baseFiltered]);
 
   return (
     <Box p="xl">
@@ -94,22 +123,14 @@ export default function AdminProjects() {
         ))}
       </SimpleGrid>
 
-      {/* ── Search + filters ── */}
+      {/* ── Search + status filter ── */}
       <Group mb="md" wrap="nowrap">
         <TextInput
-          placeholder="Search projects or researchers..."
+          placeholder="Search projects or researchers…"
           leftSection={<LuSearch size={16} />}
           value={search}
           onChange={e => setSearch(e.currentTarget.value)}
           style={{ flex: 1 }}
-        />
-        <Select
-          placeholder="All Departments"
-          data={departments}
-          value={deptFilter}
-          onChange={setDeptFilter}
-          clearable
-          w={190}
         />
         <Select
           placeholder="All Status"
@@ -117,70 +138,104 @@ export default function AdminProjects() {
           value={statusFilter}
           onChange={setStatusFilter}
           clearable
-          w={150}
+          w={160}
         />
       </Group>
 
-      {/* ── Table ── */}
+      {/* ── Department tabs ── */}
       {loading ? (
         <Group justify="center" py={80}><Loader size="md" /></Group>
       ) : (
-        <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-          <Table highlightOnHover striped={false} verticalSpacing="sm">
-            <Table.Thead>
-              <Table.Tr style={{ background: '#f8f9fa' }}>
-                {['Project Title', 'Researcher', 'Department', 'Status', 'AI Usage', 'Approval', 'Last Updated'].map(h => (
-                  <Table.Th key={h}>
-                    <Text size="sm" c="dimmed" fw={500}>{h}</Text>
-                  </Table.Th>
-                ))}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {filtered.length === 0 ? (
-                <Table.Tr>
-                  <Table.Td colSpan={7}>
-                    <Text size="sm" c="dimmed" ta="center" py={32}>
-                      {projects.length === 0 ? 'No student projects found for this institution.' : 'No projects match your filters.'}
-                    </Text>
-                  </Table.Td>
+        <Tabs value={activeTab} onChange={v => setActiveTab(v ?? 'all')}>
+          <Tabs.List mb="md" style={{ flexWrap: 'wrap' }}>
+            {/* All tab */}
+            <Tabs.Tab
+              value="all"
+              rightSection={
+                <Badge size="xs" variant="filled" color="brand" radius="xl">
+                  {baseFiltered.length}
+                </Badge>
+              }
+            >
+              All
+            </Tabs.Tab>
+
+            {/* One tab per department */}
+            {departments.map(dept => (
+              <Tabs.Tab
+                key={dept}
+                value={dept}
+                rightSection={
+                  <Badge size="xs" variant="filled" color="brand" radius="xl">
+                    {deptCount[dept] ?? 0}
+                  </Badge>
+                }
+              >
+                {dept}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+
+          {/* Single shared panel — content driven by activeTab state */}
+          <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+            <Table highlightOnHover striped={false} verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr style={{ background: '#f8f9fa' }}>
+                  {['Project Title', 'Researcher', 'Department', 'Status', 'AI Usage', 'Approval', 'Last Updated'].map(h => (
+                    <Table.Th key={h}>
+                      <Text size="sm" c="dimmed" fw={500}>{h}</Text>
+                    </Table.Th>
+                  ))}
                 </Table.Tr>
-              ) : (
-                filtered.map(p => (
-                  <Table.Tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => setSelected(p)}>
-                    <Table.Td style={{ maxWidth: 340 }}>
-                      <Text size="sm" fw={500} lineClamp={2}>{p.title}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" c="dimmed">{p.researcher}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm">{p.department}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge color={STATUS_COLOR[p.status] ?? 'gray'} variant="light" radius="sm">
-                        {p.status}
-                      </Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge color={AI_COLOR[p.aiUsage] ?? 'gray'} variant="light" radius="sm">
-                        {p.aiUsage}
-                      </Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text fw={700} style={{ color: integrityColor(p.integrity) }}>
-                        {p.integrity > 0 ? `${p.integrity}%` : '—'}
+              </Table.Thead>
+              <Table.Tbody>
+                {filtered.length === 0 ? (
+                  <Table.Tr>
+                    <Table.Td colSpan={7}>
+                      <Text size="sm" c="dimmed" ta="center" py={32}>
+                        {projects.length === 0
+                          ? 'No student projects found for this institution.'
+                          : 'No projects match your filters.'}
                       </Text>
                     </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" c="dimmed">{p.lastUpdated}</Text>
-                    </Table.Td>
                   </Table.Tr>
-                ))
-              )}
-            </Table.Tbody>
-          </Table>
-        </Paper>
+                ) : (
+                  filtered.map(p => (
+                    <Table.Tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => setSelected(p)}>
+                      <Table.Td style={{ maxWidth: 340 }}>
+                        <Text size="sm" fw={500} lineClamp={2}>{p.title}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">{p.researcher}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{p.department}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge color={STATUS_COLOR[p.status] ?? 'gray'} variant="light" radius="sm">
+                          {p.status}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge color={AI_COLOR[p.aiUsage] ?? 'gray'} variant="light" radius="sm">
+                          {p.aiUsage}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text fw={700} style={{ color: integrityColor(p.integrity) }}>
+                          {p.integrity > 0 ? `${p.integrity}%` : '—'}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">{p.lastUpdated}</Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))
+                )}
+              </Table.Tbody>
+            </Table>
+          </Paper>
+        </Tabs>
       )}
 
       {/* ── Project detail drawer ── */}
