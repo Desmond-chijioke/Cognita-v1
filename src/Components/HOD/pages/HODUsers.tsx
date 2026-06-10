@@ -7,7 +7,7 @@ import {
 import {
   LuPlus, LuSearch, LuUserCheck, LuUserX,
   LuKeyRound, LuCopy, LuCheck, LuPhone, LuTriangleAlert, LuInfo,
-  LuUsers, LuGraduationCap,
+  LuUsers, LuGraduationCap, LuBuilding2,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
 import { loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
@@ -15,22 +15,20 @@ import { createStaffUser, updateSupervisorAssignment } from '../../../supabase/h
 import { supabase } from '../../../supabase/client';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+// ── Role constants ─────────────────────────────────────────────────────────────
 
 const SUP_ROLES     = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
-const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
-const ALL_ROLES     = [...SUP_ROLES, ...STUDENT_ROLES];
+const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Postgraduate Student'];
 
 const ROLE_COLOR: Record<string, string> = {
-  'Supervisor':           'blue',
-  'Senior Supervisor':    'violet',
-  'Co-Supervisor':        'teal',
-  'Assistant Supervisor': 'cyan',
-  'PhD Student':           'blue',
-  "Master's Student":      'violet',
-  'Undergraduate Student': 'teal',
-  'Student':               'orange',
-  'Researcher':            'grape',
+  'Supervisor':             'blue',
+  'Senior Supervisor':      'violet',
+  'Co-Supervisor':          'teal',
+  'Assistant Supervisor':   'cyan',
+  'PhD Student':            'blue',
+  "Master's Student":       'violet',
+  'Undergraduate Student':  'teal',
+  'Postgraduate Student':   'indigo',
 };
 
 function rc(role: string) { return ROLE_COLOR[role] ?? 'gray'; }
@@ -106,6 +104,21 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
   );
 }
 
+// ── Department context banner ──────────────────────────────────────────────────
+
+function DeptBanner({ institutionName, departmentName }: { institutionName: string; departmentName: string }) {
+  return (
+    <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
+      <Group gap={6}>
+        <LuBuilding2 size={13} color="#3b5bdb" />
+        <Text size="xs" c="brand.7" fw={600}>Institution · Department</Text>
+      </Group>
+      <Text size="sm" fw={600} mt={2}>{institutionName}</Text>
+      <Text size="xs" c="dimmed">{departmentName || '(no department set)'}</Text>
+    </Box>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function HODUsers() {
@@ -129,7 +142,6 @@ export default function HODUsers() {
   const [supEmail,     setSupEmail]     = useState('');
   const [supPhone,     setSupPhone]     = useState('');
   const [supSpec,      setSupSpec]      = useState('');
-  const [supDept,      setSupDept]      = useState(departmentName);
   const [supRole,      setSupRole]      = useState('Supervisor');
 
   // Add student modal
@@ -153,35 +165,31 @@ export default function HODUsers() {
 
   const supervisorOptions = supervisors.map(s => ({ value: s.id, label: `${s.name} — ${s.role}` }));
   const supById = (id?: string | null) => id ? allRows.find(u => u.id === id) ?? null : null;
-
-  // per-supervisor student count
   const studentCount = (supId: string) => students.filter(s => s.supervisor_id === supId).length;
 
-  // ── Fetch — uses institution_id from the logged-in user ───────────────────────
-  // NOTE: requires RLS policy: institution_id = (SELECT institution_id FROM users WHERE id = auth.uid())
-  // Run this once in Supabase SQL editor:
-  //   CREATE POLICY "Read same institution" ON public.users FOR SELECT TO authenticated
-  //   USING (institution_id = (SELECT institution_id FROM public.users WHERE id = auth.uid()) OR id = auth.uid());
+  // ── Fetch — scoped to HOD's department ───────────────────────────────────────
   const loadAll = async () => {
     if (!institutionId) return;
     setLoading(true);
     try {
-      // Fetch ALL users in the institution — filter by role client-side
-      // so we don't miss any roles not listed in ALL_ROLES
-      const { data, error } = await supabase
+      // Always filter by institution; also filter by department when the HOD has one set.
+      let query = supabase
         .from('users')
         .select('id, name, email, phone, role, specialty, department, matric_no, project_title, supervisor_id, created_at')
-        .eq('institution_id', institutionId)
-        .order('created_at');
+        .eq('institution_id', institutionId);
 
-      if (error) {
-        console.error('[HODUsers] Supabase error:', error.code, error.message);
+      if (departmentName) {
+        query = query.eq('department', departmentName);
       }
+
+      const { data, error } = await query.order('created_at');
+
+      if (error) console.error('[HODUsers]', error.code, error.message);
 
       const rows = (data ?? []) as SBUser[];
       setAllRows(rows);
 
-      // Sync Redux so HODOverview workload charts stay accurate
+      // Sync Redux so HODOverview charts stay accurate
       const sups  = rows.filter(u => SUP_ROLES.includes(u.role));
       const studs = rows.filter(u => STUDENT_ROLES.includes(u.role));
       const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
@@ -214,7 +222,7 @@ export default function HODUsers() {
     }
   };
 
-  useEffect(() => { loadAll(); }, [institutionId]);
+  useEffect(() => { loadAll(); }, [institutionId, departmentName]);
 
   // ── Search ────────────────────────────────────────────────────────────────────
   const filter = (list: SBUser[]) => !search.trim() ? list : list.filter(u =>
@@ -227,13 +235,11 @@ export default function HODUsers() {
 
   const visSups  = filter(supervisors);
   const visStuds = filter(students);
-  const visAll   = filter(allRows);
 
   // ── Add supervisor ────────────────────────────────────────────────────────────
   const closeSupModal = () => {
     setShowSupModal(false);
-    setSupName(''); setSupEmail(''); setSupPhone(''); setSupSpec('');
-    setSupDept(departmentName); setSupRole('Supervisor');
+    setSupName(''); setSupEmail(''); setSupPhone(''); setSupSpec(''); setSupRole('Supervisor');
   };
 
   const handleAddSupervisor = async () => {
@@ -242,10 +248,15 @@ export default function HODUsers() {
     const password = generatePassword();
     try {
       await createStaffUser({
-        name: supName.trim(), email: supEmail.trim().toLowerCase(),
-        phone: supPhone.trim(), password, role: supRole,
-        institutionId, institutionName,
-        specialty: supSpec.trim(), department: supDept.trim(),
+        name:         supName.trim(),
+        email:        supEmail.trim().toLowerCase(),
+        phone:        supPhone.trim(),
+        password,
+        role:         supRole,
+        institutionId,
+        institutionName,
+        specialty:    supSpec.trim(),
+        department:   departmentName,   // always locked to HOD's department
       });
       setCreds({ name: supName.trim(), email: supEmail.trim().toLowerCase(), password, role: supRole });
       closeSupModal();
@@ -271,11 +282,17 @@ export default function HODUsers() {
     const password = generatePassword();
     try {
       await createStaffUser({
-        name: stuName.trim(), email: stuEmail.trim().toLowerCase(),
-        phone: stuPhone.trim(), password, role: stuRole,
-        institutionId, institutionName,
-        matricNo: stuMatric.trim(), projectTitle: stuProgram.trim(),
-        supervisorId: stuSupId ?? undefined,
+        name:          stuName.trim(),
+        email:         stuEmail.trim().toLowerCase(),
+        phone:         stuPhone.trim(),
+        password,
+        role:          stuRole,
+        institutionId,
+        institutionName,
+        department:    departmentName,   // locked to HOD's department
+        matricNo:      stuMatric.trim(),
+        projectTitle:  stuProgram.trim(),
+        supervisorId:  stuSupId ?? undefined,
       });
       setCreds({ name: stuName.trim(), email: stuEmail.trim().toLowerCase(), password, role: stuRole });
       closeStuModal();
@@ -319,8 +336,9 @@ export default function HODUsers() {
         <Box>
           <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Users</Title>
           <Text size="sm" c="dimmed">
-            {departmentName ? `${departmentName} — ` : ''}
-            Supervisors and students in <strong>{institutionName}</strong>
+            {departmentName
+              ? <><strong>{departmentName}</strong> — supervisors and students</>
+              : <>Supervisors and students in <strong>{institutionName}</strong></>}
           </Text>
         </Box>
         <Group gap="xs">
@@ -370,9 +388,6 @@ export default function HODUsers() {
             <Tabs.Tab value="students" leftSection={<LuGraduationCap size={14} />}>
               Students ({visStuds.length})
             </Tabs.Tab>
-            <Tabs.Tab value="all" leftSection={<LuUsers size={14} />}>
-              All ({visAll.length})
-            </Tabs.Tab>
           </Tabs.List>
 
           {/* ── Supervisors Tab ── */}
@@ -381,7 +396,7 @@ export default function HODUsers() {
               <Table highlightOnHover verticalSpacing="md">
                 <Table.Thead>
                   <Table.Tr style={{ background: '#f8f9fa' }}>
-                    {['Supervisor', 'Role', 'Specialisation', 'Department', 'Phone', 'Students', 'Added'].map(h => (
+                    {['Supervisor', 'Role', 'Specialisation', 'Phone', 'Students', 'Added'].map(h => (
                       <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
                     ))}
                   </Table.Tr>
@@ -401,8 +416,7 @@ export default function HODUsers() {
                       <Table.Td>
                         <Badge color={rc(sv.role)} variant="light" size="sm">{sv.role}</Badge>
                       </Table.Td>
-                      <Table.Td><Text size="sm">{sv.specialty  || '—'}</Text></Table.Td>
-                      <Table.Td><Text size="sm">{sv.department || '—'}</Text></Table.Td>
+                      <Table.Td><Text size="sm">{sv.specialty || '—'}</Text></Table.Td>
                       <Table.Td><Text size="sm" c="dimmed">{sv.phone || '—'}</Text></Table.Td>
                       <Table.Td>
                         <Badge color={studentCount(sv.id) > 0 ? 'green' : 'gray'} variant="light" size="sm">
@@ -418,8 +432,10 @@ export default function HODUsers() {
                   ))}
                   {visSups.length === 0 && (
                     <Table.Tr>
-                      <Table.Td colSpan={7}>
-                        <Text ta="center" c="dimmed" py="xl" size="sm">No supervisors found.</Text>
+                      <Table.Td colSpan={6}>
+                        <Text ta="center" c="dimmed" py="xl" size="sm">
+                          No supervisors in {departmentName || 'this department'} yet.
+                        </Text>
                       </Table.Td>
                     </Table.Tr>
                   )}
@@ -493,59 +509,9 @@ export default function HODUsers() {
                   {visStuds.length === 0 && (
                     <Table.Tr>
                       <Table.Td colSpan={7}>
-                        <Text ta="center" c="dimmed" py="xl" size="sm">No students found.</Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  )}
-                </Table.Tbody>
-              </Table>
-            </Paper>
-          </Tabs.Panel>
-
-          {/* ── All Users Tab ── */}
-          <Tabs.Panel value="all">
-            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-              <Table highlightOnHover verticalSpacing="md">
-                <Table.Thead>
-                  <Table.Tr style={{ background: '#f8f9fa' }}>
-                    {['Name', 'Email', 'Role', 'Details', 'Added'].map(h => (
-                      <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
-                    ))}
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {visAll.map(u => (
-                    <Table.Tr key={u.id}>
-                      <Table.Td>
-                        <Group gap="sm" wrap="nowrap">
-                          <Avatar color={rc(u.role)} radius="xl" size="md">{getInitials(u.name)}</Avatar>
-                          <Box>
-                            <Text size="sm" fw={600}>{u.name}</Text>
-                            <Text size="xs" c="dimmed">{u.phone || '—'}</Text>
-                          </Box>
-                        </Group>
-                      </Table.Td>
-                      <Table.Td><Text size="sm" c="dimmed">{u.email}</Text></Table.Td>
-                      <Table.Td>
-                        <Badge color={rc(u.role)} variant="light" size="sm">{u.role}</Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        {STUDENT_ROLES.includes(u.role)
-                          ? <Text size="xs" c="dimmed">{u.matric_no || '—'} · {u.project_title || '—'}</Text>
-                          : <Text size="xs" c="dimmed">{u.specialty  || '—'} · {u.department   || '—'}</Text>
-                        }
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" c="dimmed">
-                          {new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        <Text ta="center" c="dimmed" py="xl" size="sm">
+                          No students in {departmentName || 'this department'} yet.
                         </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                  {visAll.length === 0 && (
-                    <Table.Tr>
-                      <Table.Td colSpan={5}>
-                        <Text ta="center" c="dimmed" py="xl" size="sm">No users found.</Text>
                       </Table.Td>
                     </Table.Tr>
                   )}
@@ -562,11 +528,8 @@ export default function HODUsers() {
         title={<Group gap="xs"><LuUserCheck size={16} color="var(--mantine-color-brand-6)" /><Text fw={700}>Add Supervisor</Text></Group>}
       >
         <Stack gap="sm">
-          <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
-            <Group gap={6}><LuInfo size={13} color="#3b5bdb" /><Text size="xs" c="brand.7" fw={600}>Institution</Text></Group>
-            <Text size="sm" fw={600} mt={2}>{institutionName}</Text>
-            <Text size="xs" c="dimmed" ff="monospace">{institutionId}</Text>
-          </Box>
+          <DeptBanner institutionName={institutionName} departmentName={departmentName} />
+
           <TextInput label="Full Name" required size="md" placeholder="e.g. Dr. Emeka Nwosu"
             value={supName} onChange={e => setSupName(e.target.value)} />
           <TextInput label="Email" required size="md" type="email" placeholder="supervisor@institution.edu"
@@ -576,8 +539,7 @@ export default function HODUsers() {
             value={supPhone} onChange={e => setSupPhone(e.target.value)} />
           <TextInput label="Specialisation" size="md" placeholder="e.g. Machine Learning"
             value={supSpec} onChange={e => setSupSpec(e.target.value)} />
-          <TextInput label="Department" size="md" placeholder="e.g. Computer Science"
-            value={supDept} onChange={e => setSupDept(e.target.value)} />
+
           <Divider label="Role" labelPosition="center" />
           {['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'].map(r => (
             <Box key={r} onClick={() => setSupRole(r)} style={{
@@ -588,6 +550,7 @@ export default function HODUsers() {
               <Text size="sm" fw={supRole === r ? 600 : 400} c={supRole === r ? 'brand' : 'dark'}>{r}</Text>
             </Box>
           ))}
+
           <Text size="xs" c="dimmed" mt={4}>A login account will be created with a temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={closeSupModal}>Cancel</Button>
@@ -605,11 +568,8 @@ export default function HODUsers() {
         title={<Group gap="xs"><LuGraduationCap size={16} color="var(--mantine-color-brand-6)" /><Text fw={700}>Add Student</Text></Group>}
       >
         <Stack gap="sm">
-          <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
-            <Group gap={6}><LuInfo size={13} color="#3b5bdb" /><Text size="xs" c="brand.7" fw={600}>Institution</Text></Group>
-            <Text size="sm" fw={600} mt={2}>{institutionName}</Text>
-            <Text size="xs" c="dimmed" ff="monospace">{institutionId}</Text>
-          </Box>
+          <DeptBanner institutionName={institutionName} departmentName={departmentName} />
+
           <TextInput label="Full Name" required size="md" placeholder="e.g. John Doe"
             value={stuName} onChange={e => setStuName(e.target.value)} />
           <TextInput label="Email" required size="md" type="email" placeholder="student@institution.edu"
@@ -619,6 +579,7 @@ export default function HODUsers() {
             value={stuPhone} onChange={e => setStuPhone(e.target.value)} />
           <TextInput label="Matric Number" size="md" placeholder="e.g. CS/PHD/004"
             value={stuMatric} onChange={e => setStuMatric(e.target.value)} />
+
           <Divider label="Academic Details" labelPosition="center" />
           <Select label="Level / Role" required size="md"
             data={STUDENT_ROLES} value={stuRole}
@@ -626,8 +587,9 @@ export default function HODUsers() {
           <TextInput label="Research Program / Topic" size="md" placeholder="e.g. Deep Learning for Healthcare"
             value={stuProgram} onChange={e => setStuProgram(e.target.value)} />
           <Select label="Assign Supervisor (optional)" size="md"
-            placeholder={supervisors.length ? 'Select a supervisor' : 'No supervisors yet'}
+            placeholder={supervisors.length ? 'Select a supervisor from this department' : 'No supervisors in this department yet'}
             data={supervisorOptions} value={stuSupId} onChange={setStuSupId} clearable />
+
           <Text size="xs" c="dimmed">A login account will be created with a temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={closeStuModal}>Cancel</Button>
@@ -644,6 +606,9 @@ export default function HODUsers() {
         title={<Text fw={700}>Assign Supervisor — {assigningStudent?.name}</Text>}
         centered size="sm" overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="md">
+          <Text size="xs" c="dimmed">
+            Showing supervisors from <strong>{departmentName || 'this department'}</strong> only.
+          </Text>
           <Select label="Supervisor" placeholder="Select a supervisor"
             data={supervisorOptions} value={newSupId} onChange={setNewSupId} clearable />
           <Group justify="flex-end">

@@ -7,7 +7,7 @@ import {
 import {
   LuSearch, LuMail, LuBuilding2, LuFolder, LuLandmark, LuLayers,
   LuUsers, LuUserCheck, LuTrendingUp, LuUserPlus, LuKey,
-  LuRefreshCw, LuCopy, LuCheck, LuLink,
+  LuRefreshCw, LuCopy, LuCheck, LuLink, LuFrown,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
 import { assignToSupervisor as assignSupervisor } from '../../../Redux/slices/usersSlice';
@@ -110,8 +110,8 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 const ROLE_COLOR: Record<string, string> = {
-  Researcher: 'blue', 'Postgraduate Student': 'violet', Supervisor: 'green',
-  Student: 'orange', "Master's Student": 'cyan', 'Undergraduate Student': 'pink',
+  'PhD Student': 'blue', 'Postgraduate Student': 'violet', Supervisor: 'green',
+  "Master's Student": 'cyan', 'Undergraduate Student': 'pink',
   'Head of Department': 'teal',
 };
 
@@ -120,24 +120,25 @@ const ROLE_COLOR: Record<string, string> = {
 // ];
 
 const ADD_ROLE_OPTIONS: { value: AppRole; label: string }[] = [
-  { value: 'Supervisor',           label: 'Supervisor' },
-  { value: 'Researcher',           label: 'Researcher (PhD)' },
-  { value: "Master's Student",     label: "Master's Student" },
+  { value: 'Supervisor',            label: 'Supervisor' },
+  { value: 'PhD Student',           label: 'PhD Student' },
+  { value: "Master's Student",      label: "Master's Student" },
+  { value: 'Postgraduate Student',  label: 'Postgraduate Student' },
   { value: 'Undergraduate Student', label: 'Undergraduate Student' },
-  { value: 'Head of Department',   label: 'Head of Department' },
-  { value: 'Student',              label: 'Student' },
+  { value: 'Head of Department',    label: 'Head of Department' },
 ];
 
 const DEGREE_OPTIONS = [
   { value: 'PhD',          label: 'PhD' },
   { value: "Master's",     label: "Master's" },
   { value: 'Undergraduate', label: 'Undergraduate' },
+  { value: 'Postgraduate', label: 'Postgraduate' },
 ];
 
 // ── Empty form ──────────────────────────────────────────────────────────────────
 
 const EMPTY_FORM = {
-  name: '', email: '', password: '', role: 'Researcher' as AppRole,
+  name: '', email: '', password: '', role: 'PhD Student' as AppRole,
   department: '', matricNo: '', degreeLevel: '', projectTitle: '', supervisorId: '',
 };
 
@@ -146,7 +147,7 @@ const EMPTY_FORM = {
 // ── Role buckets ──────────────────────────────────────────────────────────────
 
 const SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Dean', 'Head of Department'];
-const STUDENT_ROLES    = ['Student', 'PhD Student', "Master's Student", 'Undergraduate Student', 'Researcher'];
+const STUDENT_ROLES    = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Postgraduate Student'];
 // Only roles that have access to the Supervisor dashboard (can review student work)
 const ASSIGNABLE_SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
 
@@ -245,10 +246,10 @@ export default function AdminResearchers() {
   const [tab, setTab]               = useState<string>('students');
 
   const [search, setSearch]         = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selected, setSelected]     = useState<DisplayResearcher | null>(null);
   const [page, setPage]             = useState(1);
 
-  const [supSearch, setSupSearch]   = useState('');
   const [supPage, setSupPage]       = useState(1);
 
   // Add User modal
@@ -269,44 +270,44 @@ export default function AdminResearchers() {
     ...reduxUsers.filter(u => STUDENT_ROLES.includes(u.role)).map(storedToDisplay),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [sbStudents, reduxUsers]);
 
-  const allDepartments = useMemo(
-    () => [...new Set(allResearchers.map(r => r.department).filter(Boolean))],
-    [allResearchers],
-  );
-
   const allSupervisors = useMemo<DisplayResearcher[]>(() => [
     ...sbSupervisors.map(sbToDisplay),
     ...reduxUsers.filter(u => SUPERVISOR_ROLES.includes(u.role)).map(storedToDisplay),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [sbSupervisors, reduxUsers]);
+
+  const allDepartments = useMemo(
+    () => [...new Set([
+      ...allResearchers,
+      ...allSupervisors,
+    ].map(r => r.department).filter(Boolean))],
+    [allResearchers, allSupervisors],
+  );
 
   const assignableSupervisors = useMemo(
     () => allSupervisors.filter(s => ASSIGNABLE_SUPERVISOR_ROLES.includes(s.role)),
     [allSupervisors],
   );
 
-  const filtered = useMemo(() => {
-    setPage(1);
-    const q = search.toLowerCase();
-    return !q ? allResearchers : allResearchers.filter(r =>
-      r.name.toLowerCase().includes(q) ||
-      r.email.toLowerCase().includes(q) ||
-      r.department.toLowerCase().includes(q),
-    );
-  }, [search, allResearchers]);
+  const filterItem = (item: DisplayResearcher) => {
+    const q = search.trim().toLowerCase();
+    const matchesSearch = !q ||
+      item.name.toLowerCase().includes(q) ||
+      item.email.toLowerCase().includes(q) ||
+      item.department.toLowerCase().includes(q);
+    const matchesDepartment = !selectedDepartment || item.department === selectedDepartment;
+    return matchesSearch && matchesDepartment;
+  };
 
+  useEffect(() => {
+    setPage(1);
+    setSupPage(1);
+  }, [search, selectedDepartment]);
+
+  const filtered = useMemo(() => allResearchers.filter(filterItem), [allResearchers, search, selectedDepartment]);
   const paginated  = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
 
-  const filteredSupervisors = useMemo(() => {
-    setSupPage(1);
-    const q = supSearch.toLowerCase();
-    return !q ? allSupervisors : allSupervisors.filter(s =>
-      s.name.toLowerCase().includes(q) ||
-      s.email.toLowerCase().includes(q) ||
-      s.department.toLowerCase().includes(q),
-    );
-  }, [supSearch, allSupervisors]);
-
+  const filteredSupervisors = useMemo(() => allSupervisors.filter(filterItem), [allSupervisors, search, selectedDepartment]);
   const paginatedSupervisors = filteredSupervisors.slice((supPage - 1) * PER_PAGE, supPage * PER_PAGE);
   const totalSupPages        = Math.ceil(filteredSupervisors.length / PER_PAGE);
 
@@ -444,6 +445,30 @@ export default function AdminResearchers() {
           </Tabs.Tab>
         </Tabs.List>
 
+        <Group mt="md" gap="xs" wrap="wrap">
+          <Button
+            size="xs"
+            radius="xl"
+            variant={selectedDepartment === '' ? 'filled' : 'outline'}
+            color={selectedDepartment === '' ? 'brand' : 'gray'}
+            onClick={() => setSelectedDepartment('')}
+          >
+            All Departments
+          </Button>
+          {allDepartments.map(department => (
+            <Button
+              key={department}
+              size="xs"
+              radius="xl"
+              variant={selectedDepartment === department ? 'filled' : 'outline'}
+              color={selectedDepartment === department ? 'brand' : 'gray'}
+              onClick={() => setSelectedDepartment(department)}
+            >
+              {department}
+            </Button>
+          ))}
+        </Group>
+
         {/* ── Students & Researchers panel ── */}
         <Tabs.Panel value="students" pt="md">
           <TextInput
@@ -462,6 +487,12 @@ export default function AdminResearchers() {
               <LuUsers size={28} color="#ced4da" style={{ marginBottom: 8 }} />
               <Text c="dimmed" size="sm">No students or researchers registered for this institution yet.</Text>
               <Text size="xs" c="dimmed" mt={4}>Use Add User or the HOD Students page to create accounts.</Text>
+            </Paper>
+          ) : filtered.length === 0 ? (
+            <Paper withBorder p="xl" radius="md" ta="center">
+              <LuFrown size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+              <Text c="dimmed" size="sm">No students or researchers match your search.</Text>
+              <Text size="xs" c="dimmed" mt={4}>Try another keyword, clear the filter, or select a different department.</Text>
             </Paper>
           ) : (
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
@@ -525,8 +556,8 @@ export default function AdminResearchers() {
           <TextInput
             placeholder="Search by name, department, or email..."
             leftSection={<LuSearch size={16} />}
-            value={supSearch}
-            onChange={e => setSupSearch(e.currentTarget.value)}
+            value={search}
+            onChange={e => setSearch(e.currentTarget.value)}
             mb="md"
             size="md"
           />
@@ -538,6 +569,12 @@ export default function AdminResearchers() {
               <LuUserCheck size={28} color="#ced4da" style={{ marginBottom: 8 }} />
               <Text c="dimmed" size="sm">No supervisors registered for this institution yet.</Text>
               <Text size="xs" c="dimmed" mt={4}>Use Add User to create a Supervisor or Head of Department account.</Text>
+            </Paper>
+          ) : filteredSupervisors.length === 0 ? (
+            <Paper withBorder p="xl" radius="md" ta="center">
+              <LuFrown size={28} color="#ced4da" style={{ marginBottom: 8 }} />
+              <Text c="dimmed" size="sm">No supervisors match your search.</Text>
+              <Text size="xs" c="dimmed" mt={4}>Change your search or clear the department filter to see more results.</Text>
             </Paper>
           ) : (
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
@@ -738,7 +775,7 @@ export default function AdminResearchers() {
                     <Select
                       label="Role" placeholder="Select a role"
                       size="md" data={ADD_ROLE_OPTIONS} value={form.role}
-                      onChange={v => setForm(f => ({ ...f, role: (v ?? 'Researcher') as AppRole, supervisorId: '' }))}
+                      onChange={v => setForm(f => ({ ...f, role: (v ?? 'PhD Student') as AppRole, supervisorId: '' }))}
                     />
                     <Select
                       label="College" placeholder="Select a college (optional)"

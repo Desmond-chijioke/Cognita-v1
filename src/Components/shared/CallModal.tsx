@@ -5,6 +5,7 @@ import {
   DailyProvider,
   DailyVideo,
   useDaily,
+  useDailyEvent,
   useLocalSessionId,
   useMeetingState,
   useParticipantIds,
@@ -52,36 +53,52 @@ const CTRL_BTN: React.CSSProperties = {
 const CTRL_BTN_ACTIVE: React.CSSProperties = { ...CTRL_BTN, background: '#e03131' };
 const CTRL_BTN_SCREEN: React.CSSProperties = { ...CTRL_BTN, background: 'var(--mantine-color-brand-6)' };
 
-// ── Remote participant tile — handles video on/off state ──────────────────────
+// ── Remote participant tile ────────────────────────────────────────────────────
+// Avatar is always visible as a base layer; video fades in once loaded.
 
 function RemoteTile({
   sessionId, contactName, contactAvatar,
 }: { sessionId: string; contactName: string; contactAvatar?: string }) {
   const video = useVideoTrack(sessionId);
+  const [videoReady, setVideoReady] = useState(false);
 
-  if (video.isOff) {
-    return (
-      <Box style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+  // Reset ready state when camera turns off
+  useEffect(() => { if (video.isOff) setVideoReady(false); }, [video.isOff]);
+
+  return (
+    <Box style={{ height: '100%', position: 'relative', background: '#111' }}>
+      {/* Avatar — always visible immediately */}
+      <Box style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
         <Avatar
           src={contactAvatar}
-          size={110}
+          size={90}
           radius="50%"
           color="brand"
-          style={{ border: '3px solid rgba(255,255,255,0.18)', fontSize: 36 }}
+          style={{ border: '3px solid rgba(255,255,255,0.2)' }}
         >
           {getInitials(contactName)}
         </Avatar>
       </Box>
-    );
-  }
 
-  return (
-    <DailyVideo
-      sessionId={sessionId}
-      type="video"
-
-      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-    />
+      {/* Video — overlaid once stream is ready, fades in smoothly */}
+      {!video.isOff && (
+        <Box style={{
+          position: 'absolute', inset: 0,
+          opacity: videoReady ? 1 : 0,
+          transition: 'opacity 0.35s ease',
+        }}>
+          <DailyVideo
+            sessionId={sessionId}
+            type="video"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            onLoadedData={() => setVideoReady(true)}
+          />
+        </Box>
+      )}
+    </Box>
   );
 }
 
@@ -102,7 +119,9 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
   const [muted,    setMuted]    = useState(false);
   const [camOff,   setCamOff]   = useState(type === 'voice');
   const [duration, setDuration] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const intentionalEnd  = useRef(false);
+  const wakeLockRef     = useRef<WakeLockSentinel | null>(null);
 
   // ── Draggable window ─────────────────────────────────────────────────────
   const posRef     = useRef({ x: window.innerWidth - 380, y: window.innerHeight - 500 });
@@ -188,10 +207,56 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
     else startScreenShare();
   }, [isSharingScreen, startScreenShare, stopScreenShare]);
 
+  // ── Auto-close when remote hangs up ─────────────────────────────────────────
+  useDailyEvent('participant-left', useCallback(() => {
+    if (!intentionalEnd.current) onClose();
+  }, [onClose]));
+
   const endCall = useCallback(() => {
+    intentionalEnd.current = true;
     daily?.leave();
     onClose();
   }, [daily, onClose]);
+
+  // ── Wake Lock + Media Session — keep mobile screen alive during call ─────────
+  useEffect(() => {
+    // Request Wake Lock so the browser tab isn't suspended on mobile
+    const acquireWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLockRef.current = await (navigator as Navigator & { wakeLock: { request(t: string): Promise<WakeLockSentinel> } }).wakeLock.request('screen');
+        }
+      } catch { /* permission denied or not supported — ignore */ }
+    };
+    acquireWakeLock();
+
+    // OS-level call metadata so the phone treats this as an active call
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: `Call with ${contactName}`,
+        artist: 'Cognita',
+      });
+    }
+
+    // Re-acquire wake lock when the tab becomes visible again (e.g. after minimizing)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        acquireWakeLock();
+        // If Daily connection dropped while backgrounded, rejoin
+        if (daily && (daily.meetingState() === 'left-meeting' || daily.meetingState() === 'error')) {
+          daily.join({ url: roomUrl, startVideoOff: type === 'voice', startAudioOff: false });
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
+      if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+    };
+  }, [contactName, daily, roomUrl, type]);
 
   const remoteId     = remoteIds[0] ?? null;
   const screenTile   = screens[0] ?? null;

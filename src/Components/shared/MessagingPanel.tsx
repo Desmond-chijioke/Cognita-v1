@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ActionIcon, Avatar, Badge, Box, Button, Group, Loader,
   Paper, ScrollArea, Stack, Text, TextInput,
@@ -9,6 +10,11 @@ import { useGlobalCall } from '../../context/GlobalCallProvider';
 import { useAppSelector } from '../../Redux/hooks';
 import { supabase } from '../../supabase/client';
 import { showerrornotification } from '../../helper/notificationhelper';
+
+// ── Role groups — used for contact visibility rules ────────────────────────────
+const STUDENT_ROLES    = ['Student', 'PhD Student', 'Undergraduate Student', "Master's Student", 'Postgraduate Student', 'Researcher'];
+const SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
+const MANAGEMENT_ROLES = ['schoolAdmin', 'Head of Department', 'PG Coordinator', 'Dean', 'Provost', 'Director of Research', 'Vice Chancellor', 'External Examiner', 'Internal Examiner'];
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -79,11 +85,16 @@ function VoicePlayer({ url }: { url: string }) {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function MessagingPanel() {
-  const user            = useAppSelector(s => s.auth.user);
+  const location      = useLocation();
+  const preselectedId = (location.state as { activeContactId?: string } | null)?.activeContactId ?? null;
+
+  const user          = useAppSelector(s => s.auth.user);
   const myId          = user?.id           ?? '';
   const myName        = user?.name         ?? 'Me';
   const myAvatarUrl   = user?.avatar       ?? undefined;
   const institutionId = user?.institutionId ?? '';
+  const myRole        = user?.role         ?? '';
+  const supervisorId  = user?.supervisorId ?? '';
 
   const [contacts,        setContacts]        = useState<Contact[]>([]);
   const [messages,        setMessages]        = useState<Message[]>([]);
@@ -117,28 +128,44 @@ export default function MessagingPanel() {
   // Keep ref in sync so realtime callback has latest activeId
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
 
-  // ── 1. Load contacts — all users in same institution except self ──────────
+  // ── 1. Load contacts — filtered by role-based visibility rules ───────────
 
   const loadContacts = useCallback(async () => {
     if (!myId || !institutionId) return;
     setLoadingContacts(true);
 
-    type UserRow = { id: string; name: string; email: string; role: string; avatar_url?: string };
+    type UserRow = { id: string; name: string; email: string; role: string; avatar_url?: string; supervisor_id?: string };
 
     try {
-      // Only return users that share the same institution_id — no fallbacks
       const { data } = await supabase
         .from('users')
-        .select('id, name, email, role, avatar_url')
+        .select('id, name, email, role, avatar_url, supervisor_id')
         .eq('institution_id', institutionId)
         .neq('id', myId)
-        .neq('role', 'Director of Research')
         .order('name');
-      const users = (data ?? []) as unknown as UserRow[];
 
-      if (!users.length) return;
+      let users = (data ?? []) as unknown as UserRow[];
 
-      // For each contact: count unread + get last message (batched)
+      // Apply role-based contact visibility
+      if (STUDENT_ROLES.includes(myRole)) {
+        // Students can only message their assigned supervisor
+        users = supervisorId ? users.filter(u => u.id === supervisorId) : [];
+      } else if (SUPERVISOR_ROLES.includes(myRole)) {
+        // Supervisors see their assigned students + all management roles
+        users = users.filter(u =>
+          (STUDENT_ROLES.includes(u.role) && u.supervisor_id === myId) ||
+          MANAGEMENT_ROLES.includes(u.role),
+        );
+      } else if (MANAGEMENT_ROLES.includes(myRole)) {
+        // Management sees other management roles + supervisors (not students)
+        users = users.filter(u =>
+          MANAGEMENT_ROLES.includes(u.role) || SUPERVISOR_ROLES.includes(u.role),
+        );
+      }
+
+      if (!users.length) { setContacts([]); return; }
+
+      // For each visible contact: count unread + get last message (batched)
       const enriched = await Promise.all(users.map(async (u: UserRow) => {
         const [{ count: unread }, { data: last }] = await Promise.all([
           supabase.from('messages').select('*', { count: 'exact', head: true })
@@ -149,24 +176,23 @@ export default function MessagingPanel() {
         ]);
         const lastMsg = last?.[0];
         return {
-          id:             u.id,
-          name:           u.name,
-          email:          u.email,
-          role:           u.role,
-          avatar_url:     u.avatar_url || undefined,
-          unread:         unread ?? 0,
-          lastMessage:    lastMsg?.text,
-          lastTime:       lastMsg ? fmtTime(lastMsg.created_at) : undefined,
-          lastTimestamp:  lastMsg?.created_at,
+          id:            u.id,
+          name:          u.name,
+          email:         u.email,
+          role:          u.role,
+          avatar_url:    u.avatar_url || undefined,
+          unread:        unread ?? 0,
+          lastMessage:   lastMsg?.text,
+          lastTime:      lastMsg ? fmtTime(lastMsg.created_at) : undefined,
+          lastTimestamp: lastMsg?.created_at,
         } as Contact;
       }));
 
       setContacts(enriched);
-      // No auto-select — user must click a contact to open a chat
     } finally {
       setLoadingContacts(false);
     }
-  }, [institutionId, myId]);
+  }, [institutionId, myId, myRole, supervisorId]);
 
   // ── 2. Load messages for the active conversation ──────────────────────────
 
@@ -347,6 +373,19 @@ export default function MessagingPanel() {
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
+  // Auto-select contact from router state (e.g. "Message Supervisor" button)
+  // or auto-open the only contact for students who have exactly one visible contact
+  useEffect(() => {
+    if (!contacts.length || activeId) return;
+    if (preselectedId && contacts.find(c => c.id === preselectedId)) {
+      setActiveId(preselectedId);
+      if (isMobile) setMobileView('chat');
+    } else if (STUDENT_ROLES.includes(myRole) && contacts.length === 1) {
+      setActiveId(contacts[0].id);
+      if (isMobile) setMobileView('chat');
+    }
+  }, [contacts, preselectedId, myRole, isMobile, activeId]);
+
   useEffect(() => {
     if (activeId) loadMessages(activeId);
     else setMessages([]);
@@ -412,7 +451,11 @@ export default function MessagingPanel() {
             <Box ta="center" py="xl"><Loader size="sm" color="brand" /></Box>
           ) : filtered.length === 0 ? (
             <Text size="sm" c="dimmed" ta="center" p="xl">
-              {institutionId ? 'No contacts in your institution yet.' : 'Loading…'}
+              {!institutionId
+                ? 'Loading…'
+                : STUDENT_ROLES.includes(myRole) && !supervisorId
+                ? 'No supervisor assigned yet. Contact your HoD.'
+                : 'No contacts available.'}
             </Text>
           ) : (
             filtered.map(contact => (

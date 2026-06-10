@@ -24,6 +24,13 @@ export const APPROUTE_LIST = {
   HOD_MESSAGES:    '/hod/messages',
   HOD_SETTINGS:    '/hod/settings',
 
+  // HOD Research Workspace
+  HOD_RESEARCH_EDITOR:      '/hod/research/editor',
+  HOD_RESEARCH_EXPORT:      '/hod/research/export',
+  HOD_RESEARCH_REFERENCES:  '/hod/research/references',
+  HOD_RESEARCH_AI_REVIEWER: '/hod/research/ai-reviewer',
+  HOD_RESEARCH_PLAGIARISM:  '/hod/research/plagiarism',
+
   // Supervisor
   SUPERVISOR_OVERVIEW: '/supervisor/overview',
   SUPERVISOR_STUDENTS: '/supervisor/students',
@@ -33,6 +40,13 @@ export const APPROUTE_LIST = {
   SUPERVISOR_NOTIFICATIONS: '/supervisor/notifications',
   SUPERVISOR_MESSAGES: '/supervisor/messages',
   SUPERVISOR_SETTINGS: '/supervisor/settings',
+
+  // Supervisor Research Workspace
+  SUPERVISOR_RESEARCH_EDITOR:      '/supervisor/research/editor',
+  SUPERVISOR_RESEARCH_EXPORT:      '/supervisor/research/export',
+  SUPERVISOR_RESEARCH_REFERENCES:  '/supervisor/research/references',
+  SUPERVISOR_RESEARCH_AI_REVIEWER: '/supervisor/research/ai-reviewer',
+  SUPERVISOR_RESEARCH_PLAGIARISM:  '/supervisor/research/plagiarism',
 
   // Student (PhD Student)
   STUDENT_DASHBOARD: '/app/dashboard',
@@ -66,11 +80,9 @@ export const ROLE_HOME: Record<string, string> = {
   'Co-Supervisor':          APPROUTE_LIST.SUPERVISOR_OVERVIEW,
   'Assistant Supervisor':   APPROUTE_LIST.SUPERVISOR_OVERVIEW,
 
-  // ── Students / Researchers — all route to student workspace ──────────────
+  // ── Students — all route to student workspace ────────────────────────────
   'PhD Student':            APPROUTE_LIST.STUDENT_DASHBOARD,
-  'Researcher':             APPROUTE_LIST.STUDENT_DASHBOARD,
   'Undergraduate Student':  APPROUTE_LIST.STUDENT_DASHBOARD,
   "Master's Student":       APPROUTE_LIST.STUDENT_DASHBOARD,
-  'Student':                APPROUTE_LIST.STUDENT_DASHBOARD,
   'Postgraduate Student':   APPROUTE_LIST.STUDENT_DASHBOARD,
 };

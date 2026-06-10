@@ -421,7 +421,7 @@ export default function StudentDashboard() {
                 {supEmail && <Text size="xs" c="dimmed" mb="sm">{supEmail}</Text>}
                 <Button variant="light" color="brand" size="xs" fullWidth
                   leftSection={<LuPenLine size={12} />}
-                  onClick={() => navigate('/app/messages')}>
+                  onClick={() => navigate('/app/messages', { state: { activeContactId: authUser?.supervisorId } })}>
                   Message Supervisor
                 </Button>
               </>

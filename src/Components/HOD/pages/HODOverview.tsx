@@ -19,12 +19,16 @@ const ROLE_COLOR: Record<string, string> = {
   'PhD Student':           'blue',
   "Master's Student":      'violet',
   'Undergraduate Student': 'teal',
+  'Student':               'orange',
+  'Researcher':            'grape',
+  'Postgraduate Student':  'indigo',
 };
 
 const SUP_ROLE_COLOR: Record<string, string> = {
-  'Supervisor':        'blue',
-  'Senior Supervisor': 'violet',
-  'Co-Supervisor':     'teal',
+  'Supervisor':           'blue',
+  'Senior Supervisor':    'violet',
+  'Co-Supervisor':        'teal',
+  'Assistant Supervisor': 'cyan',
 };
 
 function getInitials(name: string) {
@@ -122,7 +126,7 @@ function RecentStudentRow({ student: st }: RecentStudentRowProps) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher', 'Postgraduate Student'];
 const SUP_ROLES    = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
 
 export default function HODOverview() {
@@ -141,15 +145,15 @@ export default function HODOverview() {
     const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
     const CT = ['orange', 'indigo', 'blue', 'red', 'green', 'grape'];
 
-    // Strict institution_id filter only — no name fallback, no unscoped last-resort
+    // Filter by institution AND the HOD's own department
+    const deptName = user?.departmentName ?? '';
     const query = async (roles: string[], select: string) => {
       type Row = Record<string, unknown>;
-      const { data } = await supabase.from('users').select(select)
+      let q = supabase.from('users').select(select)
         .eq('institution_id', institutionId)
-        .in('role', roles)
-        .order('created_at');
-      // supabase may type errors as GenericStringError[] which doesn't overlap with Row[];
-      // cast via unknown to satisfy TypeScript when data shape is known at runtime
+        .in('role', roles);
+      if (deptName) q = q.eq('department', deptName);
+      const { data } = await q.order('created_at');
       return (data ?? []) as unknown as Row[];
     };
 

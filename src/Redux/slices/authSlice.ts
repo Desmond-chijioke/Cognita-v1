@@ -42,6 +42,7 @@ interface AuthState {
   role: AppRole;
   isAuthenticated: boolean;
   isInitializing: boolean;   // true until the first localStorage check completes
+  isLoggingOut: boolean;     // true while sign-out is in flight
   isLoading: boolean;
   schoolName: string | null;
   schoolLogo: string | null;
@@ -52,6 +53,7 @@ const initialState: AuthState = {
   role: 'Student',
   isAuthenticated: false,
   isInitializing: true,      // start as true — ProtectedRoute will wait
+  isLoggingOut: false,
   isLoading: false,
   schoolName: null,
   schoolLogo: null,
@@ -92,13 +94,17 @@ const authSlice = createSlice({
       // Called when the startup session check completes with no saved session
       state.isInitializing = false;
     },
+    startLogout(state) {
+      state.isLoggingOut = true;
+    },
     logout(state) {
-      state.user           = null;
-      state.role           = 'Student';
+      state.user            = null;
+      state.role            = 'Student';
       state.isAuthenticated = false;
       state.isInitializing  = false;
-      state.schoolName     = null;
-      state.schoolLogo     = null;
+      state.isLoggingOut    = false;
+      state.schoolName      = null;
+      state.schoolLogo      = null;
     },
     updateUser(state, action: PayloadAction<Partial<User>>) {
       if (state.user) {
@@ -112,5 +118,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { loginStart, loginSuccess, loginFailed, authInitialized, logout, updateUser, updateSchool } = authSlice.actions;
+export const { loginStart, loginSuccess, loginFailed, authInitialized, startLogout, logout, updateUser, updateSchool } = authSlice.actions;
 export default authSlice.reducer;

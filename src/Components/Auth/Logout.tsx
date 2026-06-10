@@ -1,27 +1,38 @@
-import { Button } from '@mantine/core';
+import { ActionIcon, Button } from '@mantine/core';
 import { LuLogOut } from 'react-icons/lu';
 import { useAppDispatch } from '../../Redux/hooks';
-import { logout } from '../../Redux/slices/authSlice';
+import { startLogout, logout } from '../../Redux/slices/authSlice';
 import { signOut } from '../../supabase/auth';
 import { clearSession } from '../../helper/storage';
 import { useNavigate } from 'react-router-dom';
 
-export default function Logout() {
+export default function Logout({ iconOnly = false }: { iconOnly?: boolean }) {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    // 1. Immediately clear the app session and Redux state — user sees
-    //    the login page right away without waiting for any network call.
+  const handleLogout = async () => {
+    dispatch(startLogout());
+    try { await signOut(); } catch { /* ignore */ }
     clearSession();
     dispatch(logout());
     navigate('/login', { replace: true });
-
-    // 2. Supabase cleanup runs in the background (fire-and-forget).
-    //    This invalidates the server-side refresh token so the session
-    //    can't be restored later, but we don't block navigation on it.
-    signOut().catch(() => {});
   };
+
+  if (iconOnly) {
+    return (
+      <ActionIcon
+        variant="subtle"
+        color="red"
+        size={40}
+        radius={8}
+        onClick={handleLogout}
+        title="Log out"
+        style={{ width: '100%' }}
+      >
+        <LuLogOut size={18} />
+      </ActionIcon>
+    );
+  }
 
   return (
     <Button

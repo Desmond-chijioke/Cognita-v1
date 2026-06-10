@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 import LandingPage from '../Components/landingpage/Landingpage';
@@ -10,6 +11,13 @@ import AdminLayout from '../Components/Admin/AdminLayout';
 import HODLayout from '../Components/HOD/HODLayout';
 import SupervisorLayout from '../Components/Supervisor/SupervisorLayout';
 import StudentLayout from '../Components/Student/StudentLayout';
+import ResearchLayout from '../Components/Researcher/ResearchLayout';
+
+// Researcher pages
+import ResearchEditor from '../Components/Researcher/ResearchEditor';
+import ResearchExport from '../Components/Researcher/ResearchExport';
+import ResearchAIReviewer from '../Components/Researcher/ResearchAIReviewer';
+import ResearchPlagiarism from '../Components/Researcher/ResearchPlagiarism';
 
 // Admin pages
 import AdminDashboard from '../Components/Admin/pages/AdminDashboard';
@@ -54,6 +62,8 @@ import StudentExport from '../Components/Student/pages/StudentExport';
 import StudentMessages from '../Components/Student/pages/StudentMessages';
 import StudentCollaboration from '../Components/Student/pages/StudentCollaboration';
 import StudentSettings from '../Components/Student/pages/StudentSettings';
+
+const StudentEditorComponent = StudentEditor as ComponentType<{ researcherMode?: boolean }>;
 
 import { APPROUTE_LIST } from './types';
 
@@ -124,6 +134,34 @@ export const router = createBrowserRouter([
         ],
       },
 
+      // HOD Research Workspace (Dean / Provost / HOD)
+      {
+        path: '/hod/research',
+        element: <ResearchLayout />,
+        children: [
+          { index: true,            element: <Navigate to="editor" replace /> },
+          { path: 'editor',         element: <ResearchEditor /> },
+          { path: 'export',         element: <ResearchExport /> },
+          { path: 'references',     element: <StudentReferences /> },
+          { path: 'ai-reviewer',    element: <ResearchAIReviewer /> },
+          { path: 'plagiarism',     element: <ResearchPlagiarism /> },
+        ],
+      },
+
+      // Supervisor Research Workspace
+      {
+        path: '/supervisor/research',
+        element: <ResearchLayout />,
+        children: [
+          { index: true,            element: <Navigate to="editor" replace /> },
+          { path: 'editor',         element: <ResearchEditor /> },
+          { path: 'export',         element: <ResearchExport /> },
+          { path: 'references',     element: <StudentReferences /> },
+          { path: 'ai-reviewer',    element: <ResearchAIReviewer /> },
+          { path: 'plagiarism',     element: <ResearchPlagiarism /> },
+        ],
+      },
+
       // Student (PhD Student)
       {
         path: '/app',
@@ -131,7 +169,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true,                  element: <Navigate to="dashboard" replace /> },
           { path: 'dashboard',            element: <StudentDashboard /> },
-          { path: 'editor',               element: <StudentEditor /> },
+          { path: 'editor',               element: <StudentEditorComponent /> },
           { path: 'references',           element: <StudentReferences /> },
           { path: 'data-files',           element: <StudentDataFiles /> },
           { path: 'analysis',             element: <StudentAnalysis /> },

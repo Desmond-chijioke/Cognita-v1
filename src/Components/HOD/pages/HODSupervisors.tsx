@@ -5,30 +5,44 @@ import {
   Table, Text, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import {
-  LuPlus, LuSearch, LuTrash2, LuUserCheck, LuRefreshCw,
-  LuKeyRound, LuCopy, LuCheck, LuPhone, LuTriangleAlert, LuInfo,
+  LuPlus, LuSearch, LuRefreshCw,
+  LuKeyRound, LuCopy, LuCheck, LuPhone, LuTriangleAlert, LuBuilding2,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
-import { removeSupervisor, loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
+import { loadSupervisors } from '../../../Redux/slices/hodSlice';
 import { createStaffUser } from '../../../supabase/hierarchy';
 import { supabase } from '../../../supabase/client';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const SUP_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
+
+const ROLE_COLOR: Record<string, string> = {
+  'Supervisor':           'blue',
+  'Senior Supervisor':    'violet',
+  'Co-Supervisor':        'teal',
+  'Assistant Supervisor': 'cyan',
+};
 
 function generatePassword(len = 10): string {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
   return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
-const ROLE_COLOR: Record<string, string> = {
-  'Supervisor':        'blue',
-  'Senior Supervisor': 'violet',
-  'Co-Supervisor':     'teal',
-};
-
 function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+}
+
+interface SBUser {
+  id:          string;
+  name:        string;
+  email:       string;
+  role:        string;
+  specialty?:  string;
+  department?: string;
+  phone?:      string;
+  created_at:  string;
 }
 
 interface GeneratedCreds { name: string; email: string; password: string; role: string; }
@@ -37,9 +51,8 @@ interface GeneratedCreds { name: string; email: string; password: string; role: 
 
 function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onClose: () => void }) {
   return (
-    <Modal
-      opened={!!creds} onClose={onClose} centered size="sm"
-      overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
+    <Modal opened={!!creds} onClose={onClose} centered size="sm"
+      overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
       title={<Group gap="xs"><LuKeyRound size={17} color="var(--mantine-color-brand-6)" /><Text fw={700}>Supervisor Account Created</Text></Group>}
     >
       {creds && (
@@ -80,8 +93,6 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-interface SBUser { id: string; name: string; email: string; role: string; specialty?: string; department?: string; phone?: string; created_at: string; }
-
 export default function HODSupervisors() {
   const dispatch        = useAppDispatch();
   const user            = useAppSelector(s => s.auth.user);
@@ -89,72 +100,61 @@ export default function HODSupervisors() {
   const institutionName = user?.institutionName ?? '';
   const departmentName  = user?.departmentName  ?? '';
 
-  // Local table state — direct from Supabase, no Redux middleman
-  const [rows,       setRows]      = useState<SBUser[]>([]);
-  const [loading,    setLoading]   = useState(true);
-  const [search,     setSearch]    = useState('');
-  const [showModal,  setShowModal] = useState(false);
-  const [saving,     setSaving]    = useState(false);
-  const [creds,      setCreds]     = useState<GeneratedCreds | null>(null);
+  const [rows,      setRows]      = useState<SBUser[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [search,    setSearch]    = useState('');
+  const [page,      setPage]      = useState(1);
+  const [showModal, setShowModal] = useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [creds,     setCreds]     = useState<GeneratedCreds | null>(null);
 
-  // Form fields
-  const [name,       setName]   = useState('');
-  const [email,      setEmail]  = useState('');
-  const [phone,      setPhone]  = useState('');
-  const [specialty,  setSpec]   = useState('');
-  const [department, setDept]   = useState(departmentName);
-  const [role,       setRole]   = useState('Supervisor');
+  const [name,      setName]  = useState('');
+  const [email,     setEmail] = useState('');
+  const [phone,     setPhone] = useState('');
+  const [specialty, setSpec]  = useState('');
+  const [role,      setRole]  = useState('Supervisor');
 
-  // ── All supervisor-type roles ────────────────────────────────────────────────
-  const SUP_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor'];
+  const PAGE_SIZE = 15;
 
-  // ── Fetch supervisors via edge function (service role, bypasses RLS) ────────
-  const loadSupervisorRows = async () => {
+  // ── Fetch — scoped to HOD's department ───────────────────────────────────────
+  const loadRows = async () => {
+    if (!institutionId) return;
     setLoading(true);
     try {
-      const { data: edgeData, error: edgeError } = await supabase.functions.invoke('rapid-responder', {
-        body: { action: 'fetch_users', institutionId, roles: SUP_ROLES },
-      });
+      let query = supabase
+        .from('users')
+        .select('id, name, email, phone, specialty, department, role, created_at')
+        .eq('institution_id', institutionId)
+        .in('role', SUP_ROLES);
 
-      let result: SBUser[] = [];
+      if (departmentName) query = query.eq('department', departmentName);
 
-      if (!edgeError && Array.isArray(edgeData?.users)) {
-        result = edgeData.users as SBUser[];
-      } else {
-        // Fallback: direct query with institution_id
-        const { data, error } = await supabase
-          .from('users')
-          .select('id, name, email, phone, specialty, department, role, created_at')
-          .eq('institution_id', institutionId)
-          .in('role', SUP_ROLES)
-          .order('created_at', { ascending: false });
-        if (error) console.error('[HODSupervisors] fetch error:', error.message);
-        result = (data ?? []) as SBUser[];
-      }
+      const { data, error } = await query.order('created_at', { ascending: false });
+      if (error) console.error('[HODSupervisors]', error.message);
 
-      // Only overwrite when query returned data — prevents clearing on JWT-not-ready render
-      if (result.length > 0) {
-        setRows(result);
-        const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
-        dispatch(loadSupervisors(result.map((s, i) => ({
-          id: s.id, name: s.name, email: s.email,
-          specialty: s.specialty ?? '', role: s.role,
-          studentsAssigned: 0, color: CS[i % CS.length],
-          addedOn: new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-        }))));
-      }
+      const result = (data ?? []) as SBUser[];
+      setRows(result);
+
+      const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
+      dispatch(loadSupervisors(result.map((s, i) => ({
+        id:               s.id,
+        name:             s.name,
+        email:            s.email,
+        specialty:        s.specialty ?? '',
+        role:             s.role,
+        studentsAssigned: 0,
+        color:            CS[i % CS.length],
+        addedOn:          new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      }))));
     } finally {
       setLoading(false);
     }
   };
 
-  const myId = user?.id ?? '';
-  useEffect(() => { loadSupervisorRows(); }, [institutionId, institutionName, myId]);
+  useEffect(() => { loadRows(); }, [institutionId, departmentName]);
+  useEffect(() => { setPage(1); }, [search]);
 
-  const [page,     setPage]  = useState(1);
-  const PAGE_SIZE = 15;
-
-  const filtered = search
+  const filtered   = search
     ? rows.filter(s =>
         s.name.toLowerCase().includes(search.toLowerCase()) ||
         (s.specialty ?? '').toLowerCase().includes(search.toLowerCase()) ||
@@ -162,14 +162,12 @@ export default function HODSupervisors() {
       )
     : rows;
 
-  useEffect(() => { setPage(1); }, [search]);
-
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const closeModal = () => {
     setShowModal(false);
-    setName(''); setEmail(''); setPhone(''); setSpec(''); setDept(departmentName); setRole('Supervisor');
+    setName(''); setEmail(''); setPhone(''); setSpec(''); setRole('Supervisor');
   };
 
   const handleAdd = async () => {
@@ -177,47 +175,39 @@ export default function HODSupervisors() {
     setSaving(true);
     const password = generatePassword();
     try {
-      // Create Supabase auth account + users table row
       await createStaffUser({
-        name:            name.trim(),
-        email:           email.trim().toLowerCase(),
-        phone:           phone.trim(),
+        name:         name.trim(),
+        email:        email.trim().toLowerCase(),
+        phone:        phone.trim(),
         password,
         role,
         institutionId,
         institutionName,
-        specialty:       specialty.trim(),
-        department:      department.trim(),
+        specialty:    specialty.trim(),
+        department:   departmentName,   // always locked to HOD's department
       });
-
-      // Show credentials and close form immediately
       setCreds({ name: name.trim(), email: email.trim().toLowerCase(), password, role });
       closeModal();
-      showsucessnotification({ message: `${name.trim()} added as supervisor with login credentials.` });
-
-      // Re-fetch so the table updates immediately without a full page refresh
-      loadSupervisorRows();
+      showsucessnotification({ message: `${name.trim()} added as ${role}.` });
+      loadRows();
     } catch (err: unknown) {
-      showerrornotification({ message: err instanceof Error ? err.message : 'Failed to create supervisor account.' });
+      showerrornotification({ message: err instanceof Error ? err.message : 'Failed to create account.' });
     } finally {
       setSaving(false);
     }
   };
 
-  const handleRemove = (id: string, supName: string) => {
-    dispatch(removeSupervisor(id));
-    showsucessnotification({ message: `${supName} has been removed from the department.` });
-  };
-
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <Box p="xl">
 
-      {/* Header */}
       <Group justify="space-between" mb="xl" align="flex-start">
         <Box>
           <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Supervisors</Title>
           <Text size="sm" c="dimmed">
-            {departmentName ? `${departmentName} — ` : ''}Add and manage supervisors in your department.
+            {departmentName
+              ? <><strong>{departmentName}</strong> — add and manage supervisors in your department</>
+              : <>Add and manage supervisors in your department</>}
           </Text>
         </Box>
         <Button leftSection={<LuPlus size={14} />} color="brand" onClick={() => setShowModal(true)}>
@@ -225,12 +215,11 @@ export default function HODSupervisors() {
         </Button>
       </Group>
 
-      {/* Stats */}
       <SimpleGrid cols={{ base: 2, md: 3 }} mb="xl">
         {[
-          { label: 'Total Supervisors',         value: rows.length },
-          { label: 'Filtered',                  value: filtered.length },
-          { label: 'Roles',                     value: [...new Set(rows.map(s => s.role))].length },
+          { label: 'Total Supervisors', value: rows.length },
+          { label: 'Search results',    value: filtered.length },
+          { label: 'Unique roles',      value: [...new Set(rows.map(s => s.role))].length },
         ].map(({ label, value }) => (
           <Paper key={label} withBorder p="md" radius="md" bg="white">
             <Text fw={800} size="xl">{value}</Text>
@@ -239,31 +228,31 @@ export default function HODSupervisors() {
         ))}
       </SimpleGrid>
 
-      {/* Search */}
       <TextInput
-        placeholder="Search by name, specialty, or email…"
+        placeholder="Search by name, specialisation, or email…"
         leftSection={<LuSearch size={15} />}
         value={search}
         onChange={e => setSearch(e.currentTarget.value)}
         mb="md" size="md"
       />
 
-      {/* Table */}
       {loading ? (
-        <Box ta="center" py="xl"><LuRefreshCw size={24} color="#adb5bd" style={{ animation: 'spin 1s linear infinite' }} /></Box>
+        <Box ta="center" py="xl">
+          <LuRefreshCw size={24} color="#adb5bd" style={{ animation: 'spin 1s linear infinite' }} />
+        </Box>
       ) : (
         <>
           <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
             <Table highlightOnHover verticalSpacing="md">
               <Table.Thead>
                 <Table.Tr style={{ background: '#f8f9fa' }}>
-                  {['Supervisor', 'Email', 'Specialisation', 'Department', 'Role', 'Phone', 'Added'].map(h => (
+                  {['Supervisor', 'Email', 'Specialisation', 'Role', 'Phone', 'Added'].map(h => (
                     <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
                   ))}
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {paginated.map((sv: SBUser) => (
+                {paginated.map(sv => (
                   <Table.Tr key={sv.id}>
                     <Table.Td>
                       <Group gap="sm" wrap="nowrap">
@@ -273,18 +262,23 @@ export default function HODSupervisors() {
                     </Table.Td>
                     <Table.Td><Text size="sm" c="dimmed">{sv.email}</Text></Table.Td>
                     <Table.Td><Text size="sm">{sv.specialty || '—'}</Text></Table.Td>
-                    <Table.Td><Text size="sm">{sv.department || '—'}</Text></Table.Td>
                     <Table.Td>
                       <Badge color={ROLE_COLOR[sv.role] ?? 'gray'} variant="light" size="sm">{sv.role}</Badge>
                     </Table.Td>
                     <Table.Td><Text size="sm" c="dimmed">{sv.phone || '—'}</Text></Table.Td>
-                    <Table.Td><Text size="xs" c="dimmed">{new Date(sv.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text></Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">
+                        {new Date(sv.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </Text>
+                    </Table.Td>
                   </Table.Tr>
                 ))}
                 {paginated.length === 0 && (
                   <Table.Tr>
                     <Table.Td colSpan={6}>
-                      <Text ta="center" c="dimmed" py="xl" size="sm">No supervisors found. Add one above or create via Faculty & Depts.</Text>
+                      <Text ta="center" c="dimmed" py="xl" size="sm">
+                        No supervisors in {departmentName || 'this department'} yet. Add one above.
+                      </Text>
                     </Table.Td>
                   </Table.Tr>
                 )}
@@ -303,21 +297,20 @@ export default function HODSupervisors() {
         </>
       )}
 
-      {/* Add Supervisor Modal */}
-      <Modal
-        opened={showModal} onClose={closeModal} centered size="md"
-        overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}
-        title={<Group gap="xs"><LuUserCheck size={16} color="var(--mantine-color-brand-6)" /><Text fw={700}>Add Supervisor</Text></Group>}
+      {/* ── Add Supervisor Modal ── */}
+      <Modal opened={showModal} onClose={closeModal} centered size="md"
+        overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+        title={<Group gap="xs"><LuBuilding2 size={16} color="var(--mantine-color-brand-6)" /><Text fw={700}>Add Supervisor</Text></Group>}
       >
         <Stack gap="sm">
-          {/* Institution context */}
+          {/* Locked department context */}
           <Box style={{ background: '#f0f4ff', borderRadius: 8, padding: '8px 12px', border: '1px solid #c5d2fb' }}>
             <Group gap={6}>
-              <LuInfo size={13} color="#3b5bdb" />
+              <LuBuilding2 size={13} color="#3b5bdb" />
               <Text size="xs" c="brand.7" fw={600}>Institution · Department</Text>
             </Group>
             <Text size="sm" fw={600} mt={2}>{institutionName}</Text>
-            <Text size="xs" c="dimmed">{departmentName} · <Text component="span" ff="monospace">{institutionId}</Text></Text>
+            <Text size="xs" c="dimmed">{departmentName || '(no department set)'}</Text>
           </Box>
 
           <TextInput label="Full Name" required size="md" placeholder="e.g. Dr. Emeka Nwosu"
@@ -327,31 +320,16 @@ export default function HODSupervisors() {
           <TextInput label="Phone Number" size="md" type="tel" placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={phone} onChange={e => setPhone(e.target.value)} />
-          <TextInput
-            label="Specialisation"
-            size="md"
-            placeholder="e.g. Machine Learning, Environmental Science"
-            value={specialty}
-            onChange={e => setSpec(e.target.value)}
-          />
-          <TextInput
-            label="Department"
-            size="md"
-            placeholder="e.g. Computer Science"
-            value={department}
-            onChange={e => setDept(e.target.value)}
-          />
+          <TextInput label="Specialisation" size="md" placeholder="e.g. Machine Learning, Environmental Science"
+            value={specialty} onChange={e => setSpec(e.target.value)} />
 
           <Divider label="Role" labelPosition="center" />
-          {['Supervisor', 'Senior Supervisor', 'Co-Supervisor'].map(r => (
-            <Box key={r}
-              onClick={() => setRole(r)}
-              style={{
-                padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
-                background: role === r ? '#eef2ff' : '#fff',
-                border: role === r ? '1.5px solid #748ffc' : '1px solid #e9ecef',
-              }}
-            >
+          {SUP_ROLES.map(r => (
+            <Box key={r} onClick={() => setRole(r)} style={{
+              padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
+              background: role === r ? '#eef2ff' : '#fff',
+              border:     role === r ? '1.5px solid #748ffc' : '1px solid #e9ecef',
+            }}>
               <Text size="sm" fw={role === r ? 600 : 400} c={role === r ? 'brand' : 'dark'}>{r}</Text>
             </Box>
           ))}

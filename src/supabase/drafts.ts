@@ -37,3 +37,21 @@ export async function saveSectionDrafts(
     .upsert(rows, { onConflict: 'student_id,section_id' });
   if (error) throw new Error(error.message);
 }
+
+export async function deleteSectionDraft(studentId: string, sectionId: string): Promise<void> {
+  const { error } = await supabase
+    .from('section_drafts')
+    .delete()
+    .eq('student_id', studentId)
+    .eq('section_id', sectionId);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteProjectDrafts(studentId: string, projPrefix: string): Promise<void> {
+  const { error } = await supabase
+    .from('section_drafts')
+    .delete()
+    .eq('student_id', studentId)
+    .like('section_id', `${projPrefix}%`);
+  if (error) throw new Error(error.message);
+}

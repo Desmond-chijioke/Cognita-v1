@@ -22,11 +22,10 @@ function generatePassword(len = 10): string {
 }
 
 const STUDENT_ROLE_COLORS: Record<string, string> = {
+  'Postgraduate Student':  'indigo',
   'PhD Student':           'blue',
   "Master's Student":      'violet',
   'Undergraduate Student': 'teal',
-  'Student':               'orange',
-  'Researcher':            'grape',
 };
 
 function getInitials(name: string) {
@@ -111,23 +110,24 @@ export default function HODStudents() {
   const [role,    setRole]    = useState('PhD Student');
   const [supId,   setSupId]   = useState<string | null>(null);
 
-  const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+  const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Postgraduate Student'];
   const SUP_ROLES    = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
 
-  // ── Helper: strict institution_id filter — no name fallback, no unscoped query ─
-  const queryByInstitution = async (select: string, roles: string[]) => {
+  // ── Helper: filter by institution AND department ───────────────────────────
+  const queryByDept = async (select: string, roles: string[]) => {
     type Row = Record<string, unknown>;
     if (!institutionId) return [] as Row[];
-    const { data } = await supabase.from('users').select(select)
+    let q = supabase.from('users').select(select)
       .eq('institution_id', institutionId)
-      .in('role', roles)
-      .order('created_at', { ascending: false });
+      .in('role', roles);
+    if (departmentName) q = q.eq('department', departmentName);
+    const { data } = await q.order('created_at', { ascending: false });
     return (data ?? []) as unknown as Row[];
   };
 
   // ── Load supervisors for the Add Student dropdown ─────────────────────────
   const loadDropdownSups = async () => {
-    const data = await queryByInstitution('id, name, role', SUP_ROLES);
+    const data = await queryByDept('id, name, role', SUP_ROLES);
     if (data.length > 0) setSupRows(data as unknown as SBSup[]);
   };
 
@@ -137,11 +137,11 @@ export default function HODStudents() {
     try {
       const [studs, sups] = await Promise.all([
         // All students in the institution regardless of department
-        queryByInstitution(
+        queryByDept(
           'id, name, email, phone, role, created_at, matric_no, project_title, supervisor_id',
           STUDENT_ROLES,
         ),
-        queryByInstitution('id, name, role', SUP_ROLES),
+        queryByDept('id, name, role', SUP_ROLES),
       ]);
 
       // Only overwrite state when the query actually returned data.
@@ -152,13 +152,13 @@ export default function HODStudents() {
 
       const CS = ['blue', 'violet', 'teal', 'orange', 'grape', 'cyan'];
       if (sups.length > 0) {
-        dispatch(loadSupervisors(sups.map((s, i) => ({
+        dispatch(loadSupervisors(sups.map((s: Record<string, unknown>, i: number) => ({
           id:               String(s.id   ?? ''),
           name:             String(s.name ?? ''),
           email:            String(s.email ?? ''),
           specialty:        String(s.specialty ?? ''),
           role:             String(s.role ?? ''),
-          studentsAssigned: studs.filter(st => st.supervisor_id === s.id).length,
+          studentsAssigned: studs.filter((st: Record<string, unknown>) => st.supervisor_id === s.id).length,
           color:            CS[i % CS.length],
           addedOn:          '',
         }))));
@@ -181,8 +181,7 @@ export default function HODStudents() {
     }
   };
 
-  const myId = user?.id ?? '';
-  useEffect(() => { loadAll(); }, [institutionId, myId]);
+  useEffect(() => { loadAll(); }, [institutionId, departmentName]);
   useEffect(() => { setPage(1); }, [search]);
 
   const supervisorOptions = supRows.map(s => ({ value: s.id, label: `${s.name}` }));
@@ -268,7 +267,9 @@ export default function HODStudents() {
         <Box>
           <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Students</Title>
           <Text size="sm" c="dimmed">
-            {departmentName ? `${departmentName} — ` : ''}Add students and assign them to supervisors.
+            {departmentName
+              ? <><strong>{departmentName}</strong> — add students and assign them to supervisors</>
+              : <>Add students and assign them to supervisors</>}
           </Text>
         </Box>
         <Button leftSection={<LuPlus size={14} />} color="brand" onClick={() => { setShowModal(true); loadDropdownSups(); }}>
@@ -349,7 +350,11 @@ export default function HODStudents() {
             ))}
             {paginated.length === 0 && (
               <Table.Tr>
-                <Table.Td colSpan={7}><Text ta="center" c="dimmed" py="xl" size="sm">No students found.</Text></Table.Td>
+                <Table.Td colSpan={7}>
+                  <Text ta="center" c="dimmed" py="xl" size="sm">
+                    No students in {departmentName || 'this department'} yet. Add one above.
+                  </Text>
+                </Table.Td>
               </Table.Tr>
             )}
           </Table.Tbody>
@@ -398,7 +403,7 @@ export default function HODStudents() {
           <TextInput label="Research Program / Topic" size="md" placeholder="e.g. Deep Learning for Healthcare"
             value={program} onChange={e => setProgram(e.target.value)} />
           <Select label="Assign Supervisor (optional)" size="md"
-            placeholder={supRows.length ? 'Select a supervisor' : 'No supervisors added yet'}
+            placeholder={supRows.length ? 'Select a supervisor from this department' : 'No supervisors in this department yet'}
             data={supervisorOptions} value={supId} onChange={setSupId} clearable />
 
           <Text size="xs" c="dimmed">A login account will be created with a temporary password.</Text>
@@ -417,6 +422,9 @@ export default function HODStudents() {
         title={<Text fw={700}>Assign Supervisor — {assigningStudent?.name}</Text>}
         centered size="sm" overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="md">
+          <Text size="xs" c="dimmed">
+            Showing supervisors from <strong>{departmentName || 'this department'}</strong> only.
+          </Text>
           <Select
             label="Supervisor"
             placeholder="Select a supervisor"

@@ -3,11 +3,12 @@ import { RouterProvider } from 'react-router-dom';
 import { router } from './Route/router';
 import { supabase } from './supabase/client';
 import { fetchProfile } from './supabase/auth';
-import { useAppDispatch } from './Redux/hooks';
+import { useAppDispatch, useAppSelector } from './Redux/hooks';
 import { loginSuccess, logout, authInitialized } from './Redux/slices/authSlice';
 import type { AppRole } from './Redux/slices/authSlice';
 import { loadSession, saveSession, clearSession } from './helper/storage';
 import { GlobalCallProvider } from './context/GlobalCallProvider';
+import GlobalLoader from './Components/shared/GlobalLoader';
 
 // ── Why this approach ─────────────────────────────────────────────────────────
 //
@@ -204,8 +205,11 @@ function AppInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
+  const isLoggingOut = useAppSelector(s => s.auth.isLoggingOut);
+
   return (
     <GlobalCallProvider>
+      {isLoggingOut && <GlobalLoader message="Signing out…" />}
       <RouterProvider router={router} />
     </GlobalCallProvider>
   );

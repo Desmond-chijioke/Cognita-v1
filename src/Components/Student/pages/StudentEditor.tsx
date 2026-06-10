@@ -27,7 +27,8 @@ import { useAppSelector, useAppDispatch } from '../../../Redux/hooks';
 import { submitSection, resolveAnnotation, approveSubmission, requestRevision, addAnnotation, updateAnnotation, deleteAnnotation } from '../../../Redux/slices/submissionsSlice';
 import type { SubmissionStatus, SubmissionAnnotation } from '../../../Redux/slices/submissionsSlice';
 import { submitChapter, fetchStudentSubmissions, resolveAnnotationDB } from '../../../supabase/submissions';
-import { fetchSectionDrafts, saveSectionDrafts } from '../../../supabase/drafts';
+import { fetchSectionDrafts, saveSectionDrafts, deleteSectionDraft, deleteProjectDrafts } from '../../../supabase/drafts';
+import type { DBDraft } from '../../../supabase/drafts';
 import { supabase } from '../../../supabase/client';
 import type { DBSubmission } from '../../../supabase/submissions';
 import { useCollaborativeDoc } from '../../../hooks/useCollaborativeDoc';
@@ -130,6 +131,85 @@ function RingProgress({ value, size = 80 }: { value: number; size?: number }) {
   );
 }
 
+// â”€â”€ Custom templates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const TPL_META_PREFIX = 'template_def_';
+
+interface CustomTemplate {
+  id:       string;   // template_def_<timestamp>
+  name:     string;
+  sections: string[]; // ordered list of section titles
+}
+
+function buildCustomSections(tpl: CustomTemplate): EditorSection[] {
+  const tsId = tpl.id.slice(TPL_META_PREFIX.length);
+  return tpl.sections.map((title, i) => ({
+    id:          `ctpl_${tsId}_${i}`,
+    key:         `ctpl_${tsId}_${i}`,
+    title,
+    mandatory:   false,
+    placeholder: `Start writing your ${title.toLowerCase()} hereâ€¦`,
+    content:     '',
+    status:      'not-started' as SectionStatus,
+    wordCount:   0,
+  }));
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+const PROJ_META_PREFIX = 'proj_meta_';
+const DEFAULT_PROJ_ID  = 'default';
+
+interface Project {
+  id:   string;  // 'default' | 'proj_meta_<ts>'
+  name: string;
+  type: string;  // ProjectType or custom template ID
+}
+
+function getProjPrefix(projId: string): string {
+  if (projId === DEFAULT_PROJ_ID) return '';
+  return `proj_${projId.slice(PROJ_META_PREFIX.length)}__`;
+}
+
+function applyProjPrefix(sections: EditorSection[], projId: string): EditorSection[] {
+  const prefix = getProjPrefix(projId);
+  if (!prefix) return sections;
+  return sections.map(s => ({ ...s, id: `${prefix}${s.id}` }));
+}
+
+function hydrateFromDrafts(
+  freshSecs: EditorSection[],
+  drafts: DBDraft[],
+): EditorSection[] {
+  const consumedDraftIds = new Set<string>();
+  const updated = freshSecs.map(sec => {
+    let draft = drafts.find(d => d.section_id === sec.id);
+    if (!draft) {
+      draft = drafts.find(d =>
+        !consumedDraftIds.has(d.section_id) &&
+        d.section_title.trim().toLowerCase() === sec.title.trim().toLowerCase(),
+      );
+    }
+    if (draft && draft.content.trim()) {
+      consumedDraftIds.add(draft.section_id);
+      return { ...sec, content: draft.content, wordCount: countWords(draft.content), status: 'in-progress' as SectionStatus };
+    }
+    return sec;
+  });
+  const existingIds = new Set(freshSecs.map(s => s.id));
+  const customSections: EditorSection[] = drafts
+    .filter(d => !existingIds.has(d.section_id) && !consumedDraftIds.has(d.section_id))
+    .map(d => ({
+      id:          d.section_id,
+      key:         d.section_id,
+      title:       d.section_title,
+      mandatory:   false,
+      placeholder: 'Start writing here…',
+      content:     d.content,
+      status:      d.content.trim() ? 'in-progress' as SectionStatus : 'not-started' as SectionStatus,
+      wordCount:   countWords(d.content),
+    }));
+  return [...updated, ...customSections];
+}
+
 // â”€â”€ Initial sections â€” empty; Supabase drafts + submissions populate content â”€â”€â”€
 function buildInitialSections(): EditorSection[] {
   return STUDENT_SECTIONS.map(s => ({
@@ -145,20 +225,36 @@ function buildInitialSections(): EditorSection[] {
 }
 
 // â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-export default function StudentEditor() {
+export default function StudentEditor({ researcherMode = false }: { researcherMode?: boolean }) {
 
   // â”€â”€ Core state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const [projectType, setProjectType]     = useState<ProjectType>('Thesis');
+  const [projectType, setProjectType]     = useState<string>('Thesis');
   const [sections,    setSections]        = useState<EditorSection[]>(buildInitialSections);
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? '');
 
   // Per-project-type cache (in-memory) â€” lets switching back to a previously
   // visited type restore its content exactly, with nothing dropped, even for
   // sections that have no equivalent in whatever template sits in between.
-  const sectionsByType = useRef<Partial<Record<ProjectType, EditorSection[]>>>({});
+  const sectionsByType = useRef<Record<string, EditorSection[]>>({});
 
   // â”€â”€ Switch-type modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const [switchModal, setSwitchModal]     = useState<{ open: boolean; pending: ProjectType | null }>({ open: false, pending: null });
+  const [switchModal, setSwitchModal]     = useState<{ open: boolean; pending: string | null }>({ open: false, pending: null });
+
+  // â”€â”€ Custom templates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
+  const [createTplOpen,   setCreateTplOpen]   = useState(false);
+  const [tplName,         setTplName]         = useState('');
+  const [tplSections,     setTplSections]     = useState<string[]>(['']);
+  const [savingTpl,       setSavingTpl]       = useState(false);
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+  const [projects,         setProjects]         = useState<Project[]>([{ id: DEFAULT_PROJ_ID, name: 'My Research', type: 'Thesis' }]);
+  const [activeProjectId,  setActiveProjectId]  = useState<string>(DEFAULT_PROJ_ID);
+  const [createProjOpen,   setCreateProjOpen]   = useState(false);
+  const [newProjName,      setNewProjName]      = useState('');
+  const [newProjType,      setNewProjType]      = useState<string>('Thesis');
+  const [savingProj,       setSavingProj]       = useState(false);
+  const allDraftsRef = useRef<DBDraft[]>([]);
 
   // â”€â”€ Section rename state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [editingId,    setEditingId]      = useState<string | null>(null);
@@ -224,59 +320,75 @@ export default function StudentEditor() {
     Promise.all([
       fetchSectionDrafts(user.id),
       fetchStudentSubmissions(user.id),
-    ]).then(([drafts, dbSubs]) => {
+    ]).then(([rawDrafts, dbSubs]) => {
 
-      setSections(prev => {
-        // Drafts consumed by a section below must not also be re-attached as
-        // "custom sections" further down (would otherwise duplicate content
-        // that came from an older save under a different section_id).
-        const consumedDraftIds = new Set<string>();
+      // Separate row types by prefix
+      const projMetaRows = rawDrafts.filter(d => d.section_id.startsWith(PROJ_META_PREFIX));
+      const tplDefs      = rawDrafts.filter(d => d.section_id.startsWith(TPL_META_PREFIX));
+      const sectionRows  = rawDrafts.filter(d =>
+        !d.section_id.startsWith(PROJ_META_PREFIX) &&
+        !d.section_id.startsWith(TPL_META_PREFIX),
+      );
 
-        // Update standard sections with saved draft or submission content.
-        // Match by id first (current scheme); fall back to matching by title
-        // so drafts saved under an older/legacy section_id (e.g. before ids
-        // were made stable per project type) are still recovered correctly.
-        const updated = prev.map(sec => {
-          let draft = drafts.find(d => d.section_id === sec.id);
-          if (!draft) {
-            draft = drafts.find(d =>
-              !consumedDraftIds.has(d.section_id) &&
-              d.section_title.trim().toLowerCase() === sec.title.trim().toLowerCase(),
-            );
-          }
-          if (draft && draft.content.trim()) {
-            consumedDraftIds.add(draft.section_id);
-            return { ...sec, content: draft.content, wordCount: countWords(draft.content), status: 'in-progress' as SectionStatus };
-          }
-          // No draft yet â€” seed from submitted content so student sees their work
+      // Cache all section rows for fast project switching (no re-fetch needed)
+      allDraftsRef.current = sectionRows;
+
+      // Custom templates
+      setCustomTemplates(tplDefs.map(d => ({
+        id:       d.section_id,
+        name:     d.section_title,
+        sections: (() => { try { return JSON.parse(d.content) as string[]; } catch { return []; } })(),
+      })));
+
+      // Projects — always include the default project first
+      const loadedProjects: Project[] = projMetaRows.map(d => {
+        const meta = (() => { try { return JSON.parse(d.content) as { type?: string }; } catch { return {}; } })();
+        return { id: d.section_id, name: d.section_title, type: meta.type ?? 'Thesis' };
+      });
+      const allProjects: Project[] = [
+        { id: DEFAULT_PROJ_ID, name: 'My Research', type: 'Thesis' },
+        ...loadedProjects,
+      ];
+      setProjects(allProjects);
+
+      // Restore last-used project from localStorage
+      const savedProjId  = localStorage.getItem(`cognita_activeproject_${user.id}`) ?? DEFAULT_PROJ_ID;
+      const activeProjId = allProjects.some(p => p.id === savedProjId) ? savedProjId : DEFAULT_PROJ_ID;
+      const activeProj   = allProjects.find(p => p.id === activeProjId) ?? allProjects[0];
+      setActiveProjectId(activeProjId);
+      setProjectType(activeProj.type);
+
+      // Filter section rows for the active project
+      const prefix     = getProjPrefix(activeProjId);
+      const projDrafts = sectionRows.filter(d =>
+        prefix === '' ? !d.section_id.startsWith('proj_') : d.section_id.startsWith(prefix),
+      );
+
+      // Build fresh sections for the active project type, hydrate from drafts
+      let freshSecs: EditorSection[];
+      if ((PROJECT_TYPES as string[]).includes(activeProj.type)) {
+        freshSecs = applyProjPrefix(buildSections(activeProj.type as ProjectType), activeProjId);
+      } else {
+        const tplDef = tplDefs.find(d => d.section_id === activeProj.type);
+        const parsedTpl: CustomTemplate | undefined = tplDef
+          ? { id: tplDef.section_id, name: tplDef.section_title, sections: (() => { try { return JSON.parse(tplDef.content) as string[]; } catch { return []; } })() }
+          : undefined;
+        freshSecs = applyProjPrefix(parsedTpl ? buildCustomSections(parsedTpl) : buildSections('Thesis'), activeProjId);
+      }
+
+      setSections(() => {
+        const hydrated = hydrateFromDrafts(freshSecs, projDrafts);
+        // Also seed from submissions for sections that have no draft yet
+        const withSubs = hydrated.map(sec => {
+          if (sec.content.trim()) return sec;
           const sub = dbSubs.find(s => s.section_id === sec.id);
           if (sub && sub.content.trim()) {
             return { ...sec, content: sub.content, wordCount: countWords(sub.content), status: 'in-progress' as SectionStatus };
           }
           return sec;
         });
-
-        // Re-attach any custom sections saved as drafts (excluding ones already
-        // matched into a standard section above)
-        const existingIds = new Set(prev.map(s => s.id));
-        const customSections: EditorSection[] = drafts
-          .filter(d => !existingIds.has(d.section_id) && !consumedDraftIds.has(d.section_id))
-          .map(d => ({
-            id:          d.section_id,
-            key:         d.section_id,
-            title:       d.section_title,
-            mandatory:   false,
-            placeholder: 'Start writing hereâ€¦',
-            content:     d.content,
-            status:      d.content.trim() ? 'in-progress' as SectionStatus : 'not-started' as SectionStatus,
-            wordCount:   countWords(d.content),
-          }));
-
-        const merged = [...updated, ...customSections];
-        // Seed the per-type cache so switching away and back to this (the
-        // starting) type restores this freshly-loaded content losslessly.
-        sectionsByType.current[projectType] = merged;
-        return merged;
+        sectionsByType.current[`${activeProjId}::${activeProj.type}`] = withSubs;
+        return withSubs;
       });
 
       // Sync submissions to Redux for status + annotation tracking
@@ -367,8 +479,9 @@ export default function StudentEditor() {
 
     // All sections get saved: custom ones always (to preserve their existence),
     // standard ones only when they have content.
+    const _savePrefix = getProjPrefix(activeProjectId);
     const toSave = sections
-      .filter(s => s.content.trim() || s.id.startsWith('custom_'))
+      .filter(s => s.content.trim() || s.id.startsWith(`${_savePrefix}custom_`) || s.id.startsWith(`${_savePrefix}ctpl_`))
       .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
 
     // localStorage as instant offline backup
@@ -463,7 +576,12 @@ export default function StudentEditor() {
   };
 
   // Project-type switching
-  const requestSwitch = (type: ProjectType) => {
+  const getTypeName = (typeId: string) =>
+    (PROJECT_TYPES as string[]).includes(typeId)
+      ? typeId
+      : (customTemplates.find(t => t.id === typeId)?.name ?? typeId);
+
+  const requestSwitchTo = (type: string) => {
     if (type === projectType) return;
     setSwitchModal({ open: true, pending: type });
   };
@@ -476,30 +594,219 @@ export default function StudentEditor() {
     // Cache the outgoing type's sections (with content) so switching back to
     // it later restores EXACTLY what was there â€” including sections that have
     // no equivalent in the new template and would otherwise be discarded.
-    sectionsByType.current[oldType] = sections;
+    // Cache the outgoing type's sections (keyed by project + type)
+    const projId  = activeProjectId;
+    sectionsByType.current[`${projId}::${oldType}`] = sections;
 
-    // Persist the outgoing type's content to the database too, so it survives
-    // a reload even if the student never switches back to it in this session.
+    // Persist outgoing sections to the database
     if (user?.id) {
-      const toSave = sections
-        .filter(s => s.content.trim() || s.id.startsWith('custom_'))
+      const _prefix = getProjPrefix(projId);
+      const toSave  = sections
+        .filter(s => s.content.trim() || s.id.startsWith(`${_prefix}custom_`) || s.id.startsWith(`${_prefix}ctpl_`))
         .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
       if (toSave.length) saveSectionDrafts(user.id, toSave).catch(() => {});
     }
 
-    // Restore from cache if we've visited the new type before in this session
-    // (lossless); otherwise build fresh from its template, carrying over
-    // matching content as a starting point â€” the outgoing type's full data
-    // stays safely cached above and in the database either way.
-    const cached = sectionsByType.current[newType];
-    const newSecs = cached ?? mapSections(sections, newType);
-    sectionsByType.current[newType] = newSecs;
+    // Restore from cache, or build fresh (project-prefix-aware)
+    const cacheKey = `${projId}::${newType}`;
+    const cached   = sectionsByType.current[cacheKey];
+    let newSecs: EditorSection[];
+    if (cached) {
+      newSecs = cached;
+    } else if ((PROJECT_TYPES as string[]).includes(newType)) {
+      newSecs = applyProjPrefix(mapSections(sections, newType as ProjectType), projId);
+    } else {
+      const tpl = customTemplates.find(t => t.id === newType);
+      newSecs = applyProjPrefix(tpl ? buildCustomSections(tpl) : buildSections('Thesis'), projId);
+    }
+    sectionsByType.current[cacheKey] = newSecs;
+
+    // Keep project metadata in sync with the new type
+    setProjects(prev => prev.map(p => p.id === projId ? { ...p, type: newType } : p));
+    if (user?.id && projId !== DEFAULT_PROJ_ID) {
+      const projName = projects.find(p => p.id === projId)?.name ?? 'Project';
+      saveSectionDrafts(user.id, [{ sectionId: projId, sectionTitle: projName, content: JSON.stringify({ type: newType }) }]).catch(() => {});
+    }
 
     setSections(newSecs);
     setProjectType(newType);
     setActiveSectionId(newSecs[0]?.id ?? '');
     setSwitchModal({ open: false, pending: null });
-    notifications.show({ title: 'Project type changed', message: `Template updated to ${newType}. Your ${oldType} content was saved â€” switch back anytime to see it.`, color: 'blue' });
+    notifications.show({ title: 'Template changed', message: `Switched to â€œ${getTypeName(newType)}â€. Your previous content is saved â€” switch back anytime.`, color: 'blue' });
+  };
+
+  // Save a new custom template
+  const handleSaveTemplate = async () => {
+    if (!user?.id || !tplName.trim()) return;
+    const filtered = tplSections.map(s => s.trim()).filter(Boolean);
+    if (!filtered.length) return;
+    setSavingTpl(true);
+    const tplId = `${TPL_META_PREFIX}${Date.now()}`;
+    try {
+      await saveSectionDrafts(user.id, [{
+        sectionId:    tplId,
+        sectionTitle: tplName.trim(),
+        content:      JSON.stringify(filtered),
+      }]);
+      const newTpl: CustomTemplate = { id: tplId, name: tplName.trim(), sections: filtered };
+      setCustomTemplates(prev => [...prev, newTpl]);
+
+      // Cache current sections then switch immediately to the new template
+      sectionsByType.current[`${activeProjectId}::${projectType}`] = sections;
+      if (user?.id) {
+        const _tplPrefix = getProjPrefix(activeProjectId);
+        const toSave = sections
+          .filter(s => s.content.trim() || s.id.startsWith(`${_tplPrefix}custom_`) || s.id.startsWith(`${_tplPrefix}ctpl_`))
+          .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
+        if (toSave.length) saveSectionDrafts(user.id, toSave).catch(() => {});
+      }
+      const newSecs = applyProjPrefix(buildCustomSections(newTpl), activeProjectId);
+      sectionsByType.current[`${activeProjectId}::${tplId}`] = newSecs;
+      setSections(newSecs);
+      setProjectType(tplId);
+      setActiveSectionId(newSecs[0]?.id ?? '');
+
+      setCreateTplOpen(false);
+      setTplName('');
+      setTplSections(['']);
+      notifications.show({ title: 'Template created', message: `Switched to "${tplName.trim()}". Start writing your sections.`, color: 'green' });
+    } catch {
+      notifications.show({ title: 'Save failed', message: 'Could not save template. Try again.', color: 'red' });
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  // Delete a custom template
+  const handleDeleteTemplate = async (tplId: string) => {
+    if (!user?.id) return;
+    try {
+      await deleteSectionDraft(user.id, tplId);
+      setCustomTemplates(prev => prev.filter(t => t.id !== tplId));
+      if (projectType === tplId) {
+        const fallback = applyProjPrefix(buildSections('Thesis'), activeProjectId);
+        setSections(fallback);
+        setProjectType('Thesis');
+        setActiveSectionId(fallback[0]?.id ?? '');
+        setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, type: 'Thesis' } : p));
+      }
+      notifications.show({ title: 'Template deleted', message: 'Template has been deleted.', color: 'red' });
+    } catch {
+      notifications.show({ title: 'Delete failed', message: 'Could not delete template. Try again.', color: 'red' });
+    }
+  };
+
+  // ── switchProject ────────────────────────────────────────────────────────
+  const switchProject = async (newProjId: string) => {
+    if (newProjId === activeProjectId || !user?.id) return;
+    const newProj = projects.find(p => p.id === newProjId);
+    if (!newProj && newProjId !== DEFAULT_PROJ_ID) return;
+
+    // Save current project's sections
+    const curPrefix = getProjPrefix(activeProjectId);
+    const toSaveSw = sections
+      .filter(s => s.content.trim() || s.id.startsWith(`${curPrefix}custom_`) || s.id.startsWith(`${curPrefix}ctpl_`))
+      .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
+    if (toSaveSw.length) saveSectionDrafts(user.id, toSaveSw).catch(() => {});
+
+    const type      = newProj?.type ?? 'Thesis';
+    const newPrefix = getProjPrefix(newProjId);
+
+    // Filter all cached section rows for the new project
+    const projDraftsSw = allDraftsRef.current.filter(d =>
+      newPrefix === '' ? !d.section_id.startsWith('proj_') : d.section_id.startsWith(newPrefix),
+    );
+
+    // Build fresh sections and hydrate from cached drafts
+    let freshSecsSw: EditorSection[];
+    if ((PROJECT_TYPES as string[]).includes(type)) {
+      freshSecsSw = applyProjPrefix(buildSections(type as ProjectType), newProjId);
+    } else {
+      const tpl = customTemplates.find(t => t.id === type);
+      freshSecsSw = applyProjPrefix(tpl ? buildCustomSections(tpl) : buildSections('Thesis'), newProjId);
+    }
+    const hydratedSw = hydrateFromDrafts(freshSecsSw, projDraftsSw);
+    sectionsByType.current[`${newProjId}::${type}`] = hydratedSw;
+
+    setSections(hydratedSw);
+    setProjectType(type);
+    setActiveSectionId(hydratedSw[0]?.id ?? '');
+    setActiveProjectId(newProjId);
+    localStorage.setItem(`cognita_activeproject_${user.id}`, newProjId);
+    notifications.show({ title: 'Project switched', message: `Now editing "${newProj?.name ?? 'My Research'}"`, color: 'blue' });
+  };
+
+  // ── handleCreateProject ──────────────────────────────────────────────────
+  const handleCreateProject = async () => {
+    if (!user?.id || !newProjName.trim()) return;
+    setSavingProj(true);
+    const projId = `${PROJ_META_PREFIX}${Date.now()}`;
+    try {
+      await saveSectionDrafts(user.id, [{
+        sectionId:    projId,
+        sectionTitle: newProjName.trim(),
+        content:      JSON.stringify({ type: newProjType }),
+      }]);
+      const newProj: Project = { id: projId, name: newProjName.trim(), type: newProjType };
+      setProjects(prev => [...prev, newProj]);
+
+      // Save current project first
+      const curPfx = getProjPrefix(activeProjectId);
+      const toSaveCp = sections
+        .filter(s => s.content.trim() || s.id.startsWith(`${curPfx}custom_`) || s.id.startsWith(`${curPfx}ctpl_`))
+        .map(s => ({ sectionId: s.id, sectionTitle: s.title, content: s.content }));
+      if (toSaveCp.length) saveSectionDrafts(user.id, toSaveCp).catch(() => {});
+
+      // Build fresh empty sections for the new project
+      const tplForNew = customTemplates.find(t => t.id === newProjType);
+      const baseForNew = (PROJECT_TYPES as string[]).includes(newProjType)
+        ? buildSections(newProjType as ProjectType)
+        : (tplForNew ? buildCustomSections(tplForNew) : buildSections('Thesis'));
+      const freshNew = applyProjPrefix(baseForNew, projId);
+      sectionsByType.current[`${projId}::${newProjType}`] = freshNew;
+
+      setSections(freshNew);
+      setProjectType(newProjType);
+      setActiveSectionId(freshNew[0]?.id ?? '');
+      setActiveProjectId(projId);
+      localStorage.setItem(`cognita_activeproject_${user.id}`, projId);
+
+      setCreateProjOpen(false);
+      setNewProjName('');
+      setNewProjType('Thesis');
+      notifications.show({ title: 'Project created', message: `Started "${newProjName.trim()}" — all sections are ready.`, color: 'green' });
+    } catch {
+      notifications.show({ title: 'Failed to create project', message: 'Please try again.', color: 'red' });
+    } finally {
+      setSavingProj(false);
+    }
+  };
+
+  // ── handleDeleteProject ──────────────────────────────────────────────────
+  const handleDeleteProject = async (projId: string) => {
+    if (!user?.id || projId === DEFAULT_PROJ_ID) return;
+    const projName = projects.find(p => p.id === projId)?.name ?? 'Project';
+    try {
+      await deleteSectionDraft(user.id, projId);
+      const projPfx = getProjPrefix(projId);
+      if (projPfx) await deleteProjectDrafts(user.id, projPfx).catch(() => {});
+      // Remove from local state; if it was active, fall back to default
+      setProjects(prev => prev.filter(p => p.id !== projId));
+      if (activeProjectId === projId) {
+        const defaultProj = projects.find(p => p.id === DEFAULT_PROJ_ID);
+        const fallbackSecs = applyProjPrefix(buildSections((defaultProj?.type ?? 'Thesis') as ProjectType), DEFAULT_PROJ_ID);
+        const dfDrafts = allDraftsRef.current.filter(d => !d.section_id.startsWith('proj_'));
+        const dfHydrated = hydrateFromDrafts(fallbackSecs, dfDrafts);
+        setSections(dfHydrated);
+        setProjectType(defaultProj?.type ?? 'Thesis');
+        setActiveSectionId(dfHydrated[0]?.id ?? '');
+        setActiveProjectId(DEFAULT_PROJ_ID);
+        localStorage.setItem(`cognita_activeproject_${user.id}`, DEFAULT_PROJ_ID);
+      }
+      notifications.show({ title: `"${projName}" deleted`, message: `${projName} was removed.`, color: 'red' });
+    } catch {
+      notifications.show({ title: 'Delete failed', message: 'Could not delete project.', color: 'red' });
+    }
   };
 
   // Section content insert (citations)
@@ -527,7 +834,8 @@ export default function StudentEditor() {
   // Add custom section
   const handleAddSection = () => {
     if (!newSecTitle.trim()) return;
-    const id = `custom_${Date.now()}`;
+    const _addPrefix = getProjPrefix(activeProjectId);
+    const id = `${_addPrefix}custom_${Date.now()}`;
     const newSec: EditorSection = {
       id, key: id,
       title: newSecTitle.trim(), mandatory: false,
@@ -606,29 +914,31 @@ export default function StudentEditor() {
             </Badge>
           )}
         </Tabs.Tab>
-        <Tabs.Tab value="review" leftSection={<LuEye size={13} />} style={{ fontSize: 12 }}>
-          Review
-          {(() => {
-            const sub = getActiveSub();
-            if (!sub) return null;
-            const open = sub.annotations.filter(a => !a.resolved).length;
-            if (open > 0) {
-              return (
-                <Badge size="xs" color="orange" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
-                  {open}
-                </Badge>
-              );
-            }
-            if (sub.supervisorComment || sub.annotations.length > 0) {
-              return (
-                <Badge size="xs" color="green" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
-                  âœ“
-                </Badge>
-              );
-            }
-            return null;
-          })()}
-        </Tabs.Tab>
+        {!researcherMode && (
+          <Tabs.Tab value="review" leftSection={<LuEye size={13} />} style={{ fontSize: 12 }}>
+            Review
+            {(() => {
+              const sub = getActiveSub();
+              if (!sub) return null;
+              const open = sub.annotations.filter(a => !a.resolved).length;
+              if (open > 0) {
+                return (
+                  <Badge size="xs" color="orange" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
+                    {open}
+                  </Badge>
+                );
+              }
+              if (sub.supervisorComment || sub.annotations.length > 0) {
+                return (
+                  <Badge size="xs" color="green" variant="filled" ml={4} radius="xl" style={{ pointerEvents: 'none' }}>
+                    ✓
+                  </Badge>
+                );
+              }
+              return null;
+            })()}
+          </Tabs.Tab>
+        )}
       </Tabs.List>
 
       {/* AI Chat */}
@@ -820,6 +1130,7 @@ export default function StudentEditor() {
       </Tabs.Panel>
 
       {/* Supervisor Review */}
+      {!researcherMode && (
       <Tabs.Panel value="review" style={{ overflowY: 'auto', padding: '12px 10px' }}>
         {(() => {
           const sub = getActiveSub();
@@ -960,6 +1271,7 @@ export default function StudentEditor() {
           );
         })()}
       </Tabs.Panel>
+      )}
     </Tabs>
   );
 
@@ -1029,7 +1341,7 @@ export default function StudentEditor() {
             >
               {isMobile ? '' : 'Save'}
             </Button>
-            {(() => {
+            {!researcherMode && (() => {
               const st = activeSection ? getSubStatus(activeSection.id) : null;
               const color = st === 'approved' ? 'green' : st === 'needs-revision' ? 'orange' : 'blue';
               const label = st === 'approved' ? 'Approved' : st === 'needs-revision' ? 'Revision' : st === 'pending' ? 'Pending' : 'Submit';
@@ -1087,21 +1399,76 @@ export default function StudentEditor() {
               </Box>
             )}
 
+            {/* Project switcher */}
+            <Box px={12} pt={12} pb={6} style={{ flexShrink: 0 }}>
+              <Text size="10px" fw={700} c="dimmed" mb={6} style={{ letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                Project
+              </Text>
+              <Group gap={4} align="center" wrap="nowrap">
+                <Select
+                  data={projects.map(p => ({ value: p.id, label: p.name }))}
+                  value={activeProjectId}
+                  onChange={v => v && switchProject(v)}
+                  size="xs"
+                  comboboxProps={{ withinPortal: true }}
+                  styles={{ input: { fontWeight: 600, fontSize: 12 } }}
+                  style={{ flex: 1 }}
+                />
+                <Tooltip label="New project" withArrow>
+                  <ActionIcon size="sm" variant="subtle" color="brand" onClick={() => setCreateProjOpen(true)}>
+                    <LuPlus size={14} />
+                  </ActionIcon>
+                </Tooltip>
+                {activeProjectId !== DEFAULT_PROJ_ID && (
+                  <Tooltip label="Delete this project" withArrow>
+                    <ActionIcon size="sm" variant="subtle" color="red" onClick={() => handleDeleteProject(activeProjectId)}>
+                      <LuTrash2 size={11} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </Group>
+            </Box>
+
             {/* Project type selector */}
             <Box px={12} pt={projectTitle ? 6 : 12} pb={8} style={{ flexShrink: 0 }}>
               <Text size="10px" fw={700} c="dimmed" mb={6} style={{ letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 Project Type
               </Text>
-              <Select
-                data={PROJECT_TYPES}
-                value={projectType}
-                onChange={v => v && requestSwitch(v as ProjectType)}
-                size="xs"
-                comboboxProps={{ withinPortal: true }}
-                styles={{
-                  input: { fontWeight: 600, fontSize: 12, color: BRAND, background: '#f0f4ff', border: `1px solid #c5d2fb` },
-                }}
-              />
+              <Group gap={4} align="center" wrap="nowrap">
+                <Select
+                  data={[
+                    { group: 'Built-in Templates', items: PROJECT_TYPES.map(t => ({ value: t, label: t })) },
+                    ...(customTemplates.length > 0 ? [{
+                      group: 'My Templates',
+                      items: customTemplates.map(t => ({ value: t.id, label: t.name })),
+                    }] : []),
+                  ]}
+                  value={projectType}
+                  onChange={v => v && requestSwitchTo(v)}
+                  size="xs"
+                  comboboxProps={{ withinPortal: true }}
+                  styles={{
+                    input: { fontWeight: 600, fontSize: 12, color: BRAND, background: '#f0f4ff', border: `1px solid #c5d2fb` },
+                  }}
+                  style={{ flex: 1 }}
+                />
+                <Tooltip label="Create custom template" withArrow>
+                  <ActionIcon size="sm" variant="subtle" color="brand" onClick={() => setCreateTplOpen(true)}>
+                    <LuPlus size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+              {/* Delete button shown only when a custom template is active */}
+              {!((PROJECT_TYPES as string[]).includes(projectType)) && customTemplates.some(t => t.id === projectType) && (
+                <Group gap={4} mt={6} align="center">
+                  <Tooltip label="Delete this custom template" withArrow>
+                    <ActionIcon size="xs" variant="subtle" color="red" onClick={() => handleDeleteTemplate(projectType)}>
+                      <LuTrash2 size={11} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Text size="10px" c="dimmed">Custom template active</Text>
+                </Group>
+              )}
             </Box>
 
             <Divider />
@@ -1147,7 +1514,7 @@ export default function StudentEditor() {
                       {sectionStatusIcon(getSubStatus(sec.id) === 'approved' ? 'completed' : sec.status)}
                     </Box>
                     {/* Submission status dot */}
-                    {(() => {
+                    {!researcherMode && (() => {
                       const st = getSubStatus(sec.id);
                       if (!st) return null;
                       const dotColor = st === 'approved' ? '#2f9e44' : st === 'needs-revision' ? '#e67700' : '#4c6ef5';
@@ -1185,7 +1552,7 @@ export default function StudentEditor() {
                           <Text size="9px" c="dimmed">
                             {sec.wordCount > 0 ? `${sec.wordCount.toLocaleString()} words` : 'Empty'}
                           </Text>
-                          {getSubStatus(sec.id) === 'needs-revision' && getSubComment(sec.id) && (
+                          {!researcherMode && getSubStatus(sec.id) === 'needs-revision' && getSubComment(sec.id) && (
                             <Text size="9px" c="orange" style={{ fontStyle: 'italic' }} lineClamp={1}>
                               {getSubComment(sec.id)}
                             </Text>
@@ -1197,7 +1564,7 @@ export default function StudentEditor() {
                     {/* Right-side icons */}
                     {!isEditing && (
                       <Group gap={2} style={{ flexShrink: 0 }} wrap="nowrap">
-                        {sec.supervisorComment && (
+                        {!researcherMode && sec.supervisorComment && (
                           <Tooltip label={sec.supervisorComment} multiline maw={220} withArrow>
                             <Box style={{ display: 'flex', alignItems: 'center' }}><LuMessageSquare size={11} color="#e67700" /></Box>
                           </Tooltip>
@@ -1498,9 +1865,9 @@ export default function StudentEditor() {
         <Stack gap="lg">
           <Text size="sm" c="dimmed">
             Switching from{' '}
-            <Text component="span" fw={700} c="dark">{projectType}</Text>
+            <Text component="span" fw={700} c="dark">{getTypeName(projectType)}</Text>
             {' '}to{' '}
-            <Text component="span" fw={700} c="dark">{switchModal.pending}</Text>
+            <Text component="span" fw={700} c="dark">{switchModal.pending ? getTypeName(switchModal.pending) : ''}</Text>
             {' '}will restructure your sections. Existing content will be mapped to matching sections where possible.
           </Text>
 
@@ -1525,7 +1892,123 @@ export default function StudentEditor() {
         </Stack>
       </Modal>
 
-      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• ADD SECTION MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+            {/* CREATE PROJECT MODAL */}
+      <Modal
+        opened={createProjOpen}
+        onClose={() => { setCreateProjOpen(false); setNewProjName(''); setNewProjType('Thesis'); }}
+        title={<Text fw={700} size="sm" style={{ fontFamily: 'Playfair Display, serif' }}>New Project</Text>}
+        centered size="sm"
+      >
+        <Stack gap="md">
+          <TextInput
+            label="Project Name"
+            placeholder="e.g. PhD Thesis, Conference Paper 2025..."
+            value={newProjName}
+            onChange={e => setNewProjName(e.currentTarget.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCreateProject(); }}
+            autoFocus
+          />
+          <Select
+            label="Starting Template"
+            data={[
+              { group: 'Built-in Templates', items: PROJECT_TYPES.map(t => ({ value: t, label: t })) },
+              ...(customTemplates.length > 0 ? [{ group: 'My Templates', items: customTemplates.map(t => ({ value: t.id, label: t.name })) }] : []),
+            ]}
+            value={newProjType}
+            onChange={v => v && setNewProjType(v)}
+            comboboxProps={{ withinPortal: true }}
+          />
+          <Text size="xs" c="dimmed">
+            Each project has its own sections and content, saved independently in the cloud and synced across all your devices.
+          </Text>
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" onClick={() => { setCreateProjOpen(false); setNewProjName(''); setNewProjType('Thesis'); }}>Cancel</Button>
+            <Button color="brand" loading={savingProj} disabled={!newProjName.trim()} leftSection={<LuPlus size={13} />} onClick={handleCreateProject}>
+              Create Project
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* CREATE TEMPLATE MODAL */}
+      <Modal
+        opened={createTplOpen}
+        onClose={() => { setCreateTplOpen(false); setTplName(''); setTplSections(['']); }}
+        title={
+          <Text fw={700} size="sm" style={{ fontFamily: 'Playfair Display, serif' }}>
+            Create Custom Template
+          </Text>
+        }
+        centered
+        size="sm"
+      >
+        <Stack gap="md">
+          <TextInput
+            label="Template Name"
+            placeholder="e.g. Lab Report, Case Study, Literature Map..."
+            value={tplName}
+            onChange={e => setTplName(e.currentTarget.value)}
+            autoFocus
+          />
+
+          <Box>
+            <Text size="xs" fw={600} mb={4}>Sections</Text>
+            <Text size="xs" c="dimmed" mb={8}>
+              Add the sections you need. Press Enter to insert the next one.
+            </Text>
+            <Stack gap={6}>
+              {tplSections.map((sec, i) => (
+                <Group key={i} gap={6} wrap="nowrap">
+                  <TextInput
+                    placeholder={`Section ${i + 1} title...`}
+                    value={sec}
+                    onChange={e => {
+                      const next = [...tplSections];
+                      next[i] = e.currentTarget.value;
+                      setTplSections(next);
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); setTplSections(prev => [...prev, '']); }
+                    }}
+                    size="sm"
+                    style={{ flex: 1 }}
+                  />
+                  {tplSections.length > 1 && (
+                    <ActionIcon size="sm" variant="subtle" color="red"
+                      onClick={() => setTplSections(prev => prev.filter((_, j) => j !== i))}>
+                      <LuX size={13} />
+                    </ActionIcon>
+                  )}
+                </Group>
+              ))}
+            </Stack>
+            <Button size="xs" variant="subtle" color="gray" leftSection={<LuPlus size={12} />}
+              mt={8} onClick={() => setTplSections(prev => [...prev, ''])}>
+              Add Section
+            </Button>
+          </Box>
+
+          <Text size="xs" c="dimmed">
+            Saved to the cloud and available on any device you log in from.
+          </Text>
+
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" onClick={() => { setCreateTplOpen(false); setTplName(''); setTplSections(['']); }}>
+              Cancel
+            </Button>
+            <Button
+              color="brand" loading={savingTpl}
+              disabled={!tplName.trim() || tplSections.filter(s => s.trim()).length === 0}
+              leftSection={<LuSave size={13} />}
+              onClick={handleSaveTemplate}
+            >
+              Save Template
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+{/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• ADD SECTION MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
       <Modal
         opened={addModal}
         onClose={() => { setAddModal(false); setNewSecTitle(''); }}
