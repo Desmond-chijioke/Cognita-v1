@@ -6,7 +6,7 @@ import {
 } from '@mantine/core';
 import {
   LuUsers, LuSearch, LuGraduationCap, LuActivity,
-  LuTriangleAlert, LuCircleCheck, LuBookOpen, LuArrowRight, LuUserX,
+  LuTriangleAlert, LuCircleCheck, LuUserX,
 } from 'react-icons/lu';
 import type { SupervisedStudent, ComplianceStatus, DegreeLevel } from '../supervisorData';
 import { useAppSelector } from '../../../Redux/hooks';
@@ -19,8 +19,6 @@ function nameToColor(name: string) {
   return MANTINE_COLORS[Math.abs(h) % MANTINE_COLORS.length];
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
 function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 }
@@ -30,7 +28,19 @@ function complianceColor(s: ComplianceStatus) {
 }
 
 function degreeBadgeColor(level: string) {
-  return level === 'PhD' ? 'blue' : level === "Master's" ? 'violet' : 'teal';
+  if (level.includes('PhD'))           return 'blue';
+  if (level.includes("Master"))        return 'violet';
+  if (level.includes('Undergraduate')) return 'teal';
+  if (level.includes('Postgraduate'))  return 'indigo';
+  return 'gray';
+}
+
+function roleTabColor(role: string) {
+  if (role.includes('PhD'))           return 'blue';
+  if (role.includes("Master"))        return 'violet';
+  if (role.includes('Undergraduate')) return 'teal';
+  if (role.includes('Postgraduate'))  return 'indigo';
+  return 'gray';
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -55,18 +65,14 @@ function StudentTable({ students, onRowClick }: StudentTableProps) {
       <Table highlightOnHover verticalSpacing="md">
         <Table.Thead>
           <Table.Tr style={{ background: '#f8f9fa' }}>
-            {['Student', 'Project', 'Stage', 'Progress', 'Integrity', 'Compliance', 'Last Active', ''].map(h => (
+            {['Student', 'Project', 'Level / Stage', 'Progress', 'Integrity', 'Compliance', 'Last Active', ''].map(h => (
               <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
             ))}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {students.map(st => (
-            <Table.Tr
-              key={st.id}
-              onClick={() => onRowClick(st.id)}
-              style={{ cursor: 'pointer' }}
-            >
+            <Table.Tr key={st.id} onClick={() => onRowClick(st.id)} style={{ cursor: 'pointer' }}>
               <Table.Td>
                 <Group gap="sm" wrap="nowrap">
                   <Avatar color={st.color} radius="xl" size="sm">{getInitials(st.name)}</Avatar>
@@ -94,10 +100,8 @@ function StudentTable({ students, onRowClick }: StudentTableProps) {
                 />
               </Table.Td>
               <Table.Td>
-                <Text
-                  size="sm" fw={700}
-                  style={{ color: st.integrityScore >= 85 ? '#2f9e44' : st.integrityScore >= 70 ? '#f08c00' : '#e03131' }}
-                >
+                <Text size="sm" fw={700}
+                  style={{ color: st.integrityScore >= 85 ? '#2f9e44' : st.integrityScore >= 70 ? '#f08c00' : '#e03131' }}>
                   {st.integrityScore}%
                 </Text>
               </Table.Td>
@@ -110,7 +114,7 @@ function StudentTable({ students, onRowClick }: StudentTableProps) {
                 <Text size="xs" c="dimmed">{st.lastActivity}</Text>
               </Table.Td>
               <Table.Td>
-                <LuArrowRight size={16} color="#adb5bd" />
+                <LuGraduationCap size={16} color="#adb5bd" />
               </Table.Td>
             </Table.Tr>
           ))}
@@ -122,17 +126,18 @@ function StudentTable({ students, onRowClick }: StudentTableProps) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-const STUDENT_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'];
+const FETCH_ROLES = ['PhD Student', "Master's Student", 'Undergraduate Student', 'Postgraduate Student'];
 
 export default function SupervisorMyStudents() {
-  const navigate      = useNavigate();
-  const currentUser   = useAppSelector(s => s.auth.user);
-  const [search,  setSearch]   = useState('');
-  const [tab,     setTab]      = useState('all');
-  const [sbStudents, setSbStudents] = useState<SupervisedStudent[]>([]);
-  const [loading, setLoading]  = useState(true);
+  const navigate    = useNavigate();
+  const currentUser = useAppSelector(s => s.auth.user);
 
-  // ── Fetch students assigned to this supervisor from Supabase ──────────────
+  const [search,     setSearch]     = useState('');
+  const [tab,        setTab]        = useState('all');
+  const [sbStudents, setSbStudents] = useState<SupervisedStudent[]>([]);
+  const [loading,    setLoading]    = useState(true);
+
+  // ── Fetch students assigned to this supervisor ────────────────────────────
   useEffect(() => {
     if (!currentUser?.id) return;
     setLoading(true);
@@ -140,18 +145,18 @@ export default function SupervisorMyStudents() {
       .from('users')
       .select('id, name, email, matric_no, project_title, role, degree_level, department, created_at')
       .eq('supervisor_id', currentUser.id)
-      .in('role', STUDENT_ROLES)
+      .in('role', FETCH_ROLES)
       .order('name')
       .then(({ data }) => {
         setLoading(false);
         if (!data || data.length === 0) return;
-        const mapped = (data as Record<string, string>[]).map((u) => ({
+        const mapped = (data as Record<string, string>[]).map(u => ({
           id:               u.id,
           name:             u.name,
           email:            u.email,
-          matricNo:         u.matric_no      ?? 'N/A',
-          degreeLevel:      (u.degree_level ?? u.role ?? 'PhD') as DegreeLevel,
-          projectTitle:     u.project_title  ?? 'Untitled Research',
+          matricNo:         u.matric_no     ?? 'N/A',
+          degreeLevel:      (u.role ?? u.degree_level ?? 'PhD Student') as DegreeLevel,
+          projectTitle:     u.project_title ?? 'Untitled Research',
           stage:            'Proposal' as const,
           progress:         0,
           similarityIndex:  0,
@@ -174,20 +179,46 @@ export default function SupervisorMyStudents() {
       });
   }, [currentUser?.id]);
 
-  // Show only real Supabase students — no fallback to mock data
   const allStudents = useMemo<SupervisedStudent[]>(() => sbStudents, [sbStudents]);
 
-  const byTab = tab === 'ug'
-    ? allStudents.filter(s => s.degreeLevel === 'Undergraduate')
-    : tab === 'pg'
-    ? allStudents.filter(s => s.degreeLevel !== 'Undergraduate')
-    : allStudents;
-
-  const filtered = byTab.filter(s =>
-    s.name.toLowerCase().includes(search.toLowerCase()) ||
-    s.projectTitle.toLowerCase().includes(search.toLowerCase()) ||
-    s.matricNo.toLowerCase().includes(search.toLowerCase())
+  // Unique roles present in the loaded data — drives the dynamic tabs
+  const roles = useMemo(
+    () => [...new Set(allStudents.map(s => s.degreeLevel))].sort(),
+    [allStudents],
   );
+
+  // Reset tab if the selected role no longer exists in the data
+  useEffect(() => {
+    if (tab !== 'all' && !roles.includes(tab as DegreeLevel)) {
+      setTab('all');
+    }
+  }, [roles, tab]);
+
+  // Search filter applied first (independent of tab)
+  const baseFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allStudents;
+    return allStudents.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.projectTitle.toLowerCase().includes(q) ||
+      s.matricNo.toLowerCase().includes(q),
+    );
+  }, [allStudents, search]);
+
+  // Tab scope applied on top of search results
+  const filtered = useMemo(
+    () => tab === 'all' ? baseFiltered : baseFiltered.filter(s => s.degreeLevel === tab),
+    [baseFiltered, tab],
+  );
+
+  // Per-role counts that update as search changes
+  const roleCount = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const s of baseFiltered) {
+      map[s.degreeLevel] = (map[s.degreeLevel] ?? 0) + 1;
+    }
+    return map;
+  }, [baseFiltered]);
 
   const critical = allStudents.filter(s => s.complianceStatus === 'Critical').length;
   const warning  = allStudents.filter(s => s.complianceStatus === 'Warning').length;
@@ -211,7 +242,7 @@ export default function SupervisorMyStudents() {
           <LuUserX size={32} color="#adb5bd" style={{ marginBottom: 8 }} />
           <Text fw={600} c="dimmed">No students assigned yet</Text>
           <Text size="sm" c="dimmed" mt={4}>
-            Students assigned to you by your HOD will appear here. Ask your HOD to assign students to your account.
+            Students assigned to you by your HOD will appear here.
           </Text>
         </Paper>
       ) : (
@@ -245,23 +276,45 @@ export default function SupervisorMyStudents() {
             </Group>
           </Paper>
 
-          {/* ── Tabs ── */}
+          {/* ── Dynamic role tabs ── */}
           <Tabs value={tab} onChange={v => setTab(v ?? 'all')}>
-            <Tabs.List mb="lg">
-              <Tabs.Tab value="all" leftSection={<LuUsers         size={14} />}>
-                All Students ({allStudents.length})
+            <Tabs.List mb="lg" style={{ flexWrap: 'wrap' }}>
+
+              {/* All tab */}
+              <Tabs.Tab
+                value="all"
+                leftSection={<LuUsers size={14} />}
+                rightSection={
+                  <Badge size="xs" variant="filled" color="brand" radius="xl">
+                    {baseFiltered.length}
+                  </Badge>
+                }
+              >
+                All Students
               </Tabs.Tab>
-              <Tabs.Tab value="ug"  leftSection={<LuBookOpen      size={14} />}>
-                Undergraduate ({allStudents.filter(s => s.degreeLevel === 'Undergraduate').length})
-              </Tabs.Tab>
-              <Tabs.Tab value="pg"  leftSection={<LuGraduationCap size={14} />}>
-                Postgraduate ({allStudents.filter(s => s.degreeLevel !== 'Undergraduate').length})
-              </Tabs.Tab>
+
+              {/* One tab per role present in data */}
+              {roles.map(role => (
+                <Tabs.Tab
+                  key={role}
+                  value={role}
+                  leftSection={<LuGraduationCap size={14} />}
+                  rightSection={
+                    <Badge size="xs" variant="filled" color={roleTabColor(role)} radius="xl">
+                      {roleCount[role] ?? 0}
+                    </Badge>
+                  }
+                >
+                  {role}
+                </Tabs.Tab>
+              ))}
             </Tabs.List>
 
-            <Tabs.Panel value="all"><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
-            <Tabs.Panel value="ug" ><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
-            <Tabs.Panel value="pg" ><StudentTable students={filtered} onRowClick={id => navigate(`/supervisor/students/${id}`)} /></Tabs.Panel>
+            {/* Single shared table — driven by `filtered` */}
+            <StudentTable
+              students={filtered}
+              onRowClick={id => navigate(`/supervisor/students/${id}`)}
+            />
           </Tabs>
 
           {/* ── Legend ── */}
@@ -272,8 +325,8 @@ export default function SupervisorMyStudents() {
             <Group gap="xl">
               {[
                 { icon: LuCircleCheck,   color: '#2f9e44', label: 'Good — integrity ≥ 85%' },
-                { icon: LuTriangleAlert, color: '#f08c00', label: 'Warning — integrity 70–84% or AI score 25–35%' },
-                { icon: LuActivity,      color: '#e03131', label: 'Critical — integrity < 70% or AI score > 35%' },
+                { icon: LuTriangleAlert, color: '#f08c00', label: 'Warning — integrity 70–84%' },
+                { icon: LuActivity,      color: '#e03131', label: 'Critical — integrity < 70%' },
               ].map(({ icon: Icon, color, label }) => (
                 <Group key={label} gap="xs">
                   <Icon size={13} style={{ color }} />
