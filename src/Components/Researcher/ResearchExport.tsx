@@ -172,9 +172,9 @@ export default function ResearchExport() {
       const name = authUser?.name ?? 'Researcher';
       if (format === 'docx') await exportDocx(selectedSections, name);
       else exportPdf(selectedSections, name);
-      notifications.show({ title: 'Export complete', color: 'green' });
+      notifications.show({ title: 'Export complete', message: 'Your document has been downloaded.', color: 'green' });
     } catch {
-      notifications.show({ title: 'Export failed', color: 'red' });
+      notifications.show({ title: 'Export failed', message: 'Could not generate the document.', color: 'red' });
     } finally {
       setExporting(false);
     }

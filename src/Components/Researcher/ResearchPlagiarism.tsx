@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Badge, Box, Button, Checkbox, Divider, Group, Loader, Paper, Progress,
-  SimpleGrid, Stack, Text, ThemeIcon, Title,
+  SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
