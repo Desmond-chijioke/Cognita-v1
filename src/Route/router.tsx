@@ -10,6 +10,7 @@ import ProtectedRoute from '../Components/protectedRoute/ProtectedRoute';
 import AdminLayout from '../Components/Admin/AdminLayout';
 import CollegeLayout from '../Components/College/CollegeLayout';
 import FacultyLayout from '../Components/Faculty/FacultyLayout';
+import PGSchoolLayout from '../Components/PGSchool/PGSchoolLayout';
 import HODLayout from '../Components/HOD/HODLayout';
 import SupervisorLayout from '../Components/Supervisor/SupervisorLayout';
 import StudentLayout from '../Components/Student/StudentLayout';
@@ -47,6 +48,14 @@ import FacultyStudents     from '../Components/Faculty/pages/FacultyStudents';
 import FacultyAnalytics    from '../Components/Faculty/pages/FacultyAnalytics';
 import FacultyMessages     from '../Components/Faculty/pages/FacultyMessages';
 import FacultySettings     from '../Components/Faculty/pages/FacultySettings';
+
+// PG School pages (PG Coordinator)
+import PGSchoolOverview     from '../Components/PGSchool/pages/PGSchoolOverview';
+import PGSchoolStudents     from '../Components/PGSchool/pages/PGSchoolStudents';
+import PGSchoolSupervisors  from '../Components/PGSchool/pages/PGSchoolSupervisors';
+import PGSchoolAnalytics    from '../Components/PGSchool/pages/PGSchoolAnalytics';
+import PGSchoolMessages     from '../Components/PGSchool/pages/PGSchoolMessages';
+import PGSchoolSettings     from '../Components/PGSchool/pages/PGSchoolSettings';
 
 // HOD pages
 import HODOverview from '../Components/HOD/pages/HODOverview';
@@ -161,6 +170,35 @@ export const router = createBrowserRouter([
       // Faculty Research Workspace (Dean)
       {
         path: '/faculty/research',
+        element: <ResearchLayout />,
+        children: [
+          { index: true,         element: <Navigate to="editor" replace /> },
+          { path: 'editor',      element: <ResearchEditor />    },
+          { path: 'export',      element: <ResearchExport />    },
+          { path: 'references',  element: <StudentReferences /> },
+          { path: 'ai-reviewer', element: <ResearchAIReviewer /> },
+          { path: 'plagiarism',  element: <ResearchPlagiarism /> },
+        ],
+      },
+
+      // PG School (PG Coordinator)
+      {
+        path: '/pgschool',
+        element: <PGSchoolLayout />,
+        children: [
+          { index: true,           element: <Navigate to="overview"    replace /> },
+          { path: 'overview',      element: <PGSchoolOverview />    },
+          { path: 'students',      element: <PGSchoolStudents />    },
+          { path: 'supervisors',   element: <PGSchoolSupervisors /> },
+          { path: 'analytics',     element: <PGSchoolAnalytics />   },
+          { path: 'messages',      element: <PGSchoolMessages />    },
+          { path: 'settings',      element: <PGSchoolSettings />    },
+        ],
+      },
+
+      // PG School Research Workspace (PG Coordinator)
+      {
+        path: '/pgschool/research',
         element: <ResearchLayout />,
         children: [
           { index: true,         element: <Navigate to="editor" replace /> },

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActionIcon, Alert, Badge, Box, Button, CopyButton, Divider, Group,
-  Loader, Modal, Paper, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Title, Tooltip,
+  Loader, Modal, Paper, Select, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Title, Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -217,6 +217,7 @@ export default function AdminFacultyDepts() {
   // ── College modal ────────────────────────────────────────────────────────────
   const [showCollegeModal, setShowCollegeModal] = useState(false);
   const [colName,          setColName]          = useState('');
+  const [colLeaderRole,    setColLeaderRole]    = useState<'Provost' | 'PG Coordinator'>('Provost');
   const [colDeanName,      setColDeanName]      = useState('');
   const [colDeanEmail,     setColDeanEmail]     = useState('');
   const [colDeanPhone,     setColDeanPhone]     = useState('');
@@ -268,26 +269,24 @@ export default function AdminFacultyDepts() {
     try {
       const { username, password } = generateCredentials(colDeanName);
 
-      // Create the Provost account first — this must succeed before we create
-      // the college or touch local/Redux state, so the two never go out of sync
-      // (e.g. a college saved with no Provost because the email was taken).
+      // Create the college leader account first — role is either 'Provost' or
+      // 'PG Coordinator' depending on what the admin selected in the modal.
       let deanId: string | null = null;
       if (colDeanEmail.trim()) {
-        const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: 'Provost', institutionId, institutionName });
+        const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: colLeaderRole, institutionId, institutionName });
         deanId = result.userId;
       }
 
-      // Save college with dean_id (reused for Provost FK)
       const id = await insertCollege({ institution_id: institutionId, name: colName.trim(), dean_id: deanId });
 
       setColleges(prev => [...prev, {
         id, institution_id: institutionId, name: colName.trim(), dean_id: deanId,
-        dean: deanId ? { id: deanId, name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim() } : null,
+        dean: deanId ? { id: deanId, name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), role: colLeaderRole } : null,
         created_at: new Date().toISOString(),
       }]);
-      setCreds({ name: colDeanName.trim(), role: 'Provost', email: colDeanEmail.trim(), username, password });
+      setCreds({ name: colDeanName.trim(), role: colLeaderRole, email: colDeanEmail.trim(), username, password });
       setShowCollegeModal(false);
-      setColName(''); setColDeanName(''); setColDeanEmail(''); setColDeanPhone('');
+      setColName(''); setColLeaderRole('Provost'); setColDeanName(''); setColDeanEmail(''); setColDeanPhone('');
       showsucessnotification({ message: `${colName.trim()} created successfully!` });
     } catch (err: unknown) {
       showerrornotification({ message: err instanceof Error ? err.message : 'Failed to save college.' });
@@ -479,7 +478,7 @@ export default function AdminFacultyDepts() {
         {/* Column 1: Colleges */}
         <HierarchyPanel
           icon={LuLandmark} color="#7950f2"
-          title="Colleges" subtitle="Led by Provost"
+          title="Colleges" subtitle="Led by Provost or PG Coordinator"
           count={colleges.length} onAdd={() => setShowCollegeModal(true)}
           addLabel="Add College" loading={loading}
           isEmpty={!loading && colleges.length === 0}
@@ -487,7 +486,7 @@ export default function AdminFacultyDepts() {
         >
           {colleges.map(c => (
             <NodeCard key={c.id}
-              name={c.name} leaderLabel="Provost"
+              name={c.name} leaderLabel={c.dean?.role ?? 'Provost'}
               leaderName={c.dean?.name ?? '—'} leaderEmail={c.dean?.email ?? ''}
               badge={`${faculties.filter(f => f.college_id === c.id).length} faculties`}
               badgeColor="violet"
@@ -564,7 +563,7 @@ export default function AdminFacultyDepts() {
       </SimpleGrid>
 
       {/* ── College Modal ── */}
-      <Modal opened={showCollegeModal} onClose={() => setShowCollegeModal(false)}
+      <Modal opened={showCollegeModal} onClose={() => { setShowCollegeModal(false); setColLeaderRole('Provost'); }}
         title={<Group gap="xs"><LuLandmark size={17} color="var(--mantine-color-violet-6)" /><Text fw={700}>Create College</Text></Group>}
         centered size="md" overlayProps={{ color: 'var(--mantine-color-brand-9)', backgroundOpacity: 0.55, blur: 3 }}>
         <Stack gap="sm">
@@ -578,26 +577,49 @@ export default function AdminFacultyDepts() {
             <Text size="xs" c="dimmed" ff="monospace">{institutionId}</Text>
           </Box>
 
+          <Select
+            label="College Type"
+            description="Determines the role assigned to the college leader"
+            required size="md"
+            value={colLeaderRole}
+            onChange={v => setColLeaderRole((v ?? 'Provost') as 'Provost' | 'PG Coordinator')}
+            data={[
+              { value: 'Provost',        label: 'Regular College — led by Provost' },
+              { value: 'PG Coordinator', label: 'College of Postgraduate Studies — led by PG Coordinator' },
+            ]}
+          />
+
           <TextInput label="College Name" required size="md"
-            placeholder="e.g. College of Physical & Life Sciences"
+            placeholder={colLeaderRole === 'PG Coordinator'
+              ? 'e.g. College of Postgraduate Studies'
+              : 'e.g. College of Physical & Life Sciences'}
             value={colName} onChange={e => setColName(e.target.value)} />
 
-          <Divider label="Provost (College Head)" labelPosition="center" mt="xs" />
+          <Divider
+            label={colLeaderRole === 'PG Coordinator' ? 'PG Coordinator (College Head)' : 'Provost (College Head)'}
+            labelPosition="center" mt="xs"
+          />
 
-          <TextInput label="Provost Full Name" required size="md"
+          <TextInput
+            label={colLeaderRole === 'PG Coordinator' ? 'PG Coordinator Full Name' : 'Provost Full Name'}
+            required size="md"
             placeholder="e.g. Prof. Aliyu Musa"
             value={colDeanName} onChange={e => setColDeanName(e.target.value)} />
-          <TextInput label="Provost Email" size="md" type="email"
-            placeholder="provost@institution.edu"
+          <TextInput
+            label={colLeaderRole === 'PG Coordinator' ? 'PG Coordinator Email' : 'Provost Email'}
+            size="md" type="email"
+            placeholder={colLeaderRole === 'PG Coordinator' ? 'pgcoordinator@institution.edu' : 'provost@institution.edu'}
             value={colDeanEmail} onChange={e => setColDeanEmail(e.target.value)} />
           <TextInput label="Phone Number" size="md" type="tel"
             placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={colDeanPhone} onChange={e => setColDeanPhone(e.target.value)} />
 
-          <Text size="xs" c="dimmed">A login account will be created for the Provost using the email above.</Text>
+          <Text size="xs" c="dimmed">
+            A login account will be created for the {colLeaderRole} using the email above.
+          </Text>
           <Group justify="flex-end" mt="xs">
-            <Button variant="subtle" color="gray" onClick={() => setShowCollegeModal(false)}>Cancel</Button>
+            <Button variant="subtle" color="gray" onClick={() => { setShowCollegeModal(false); setColLeaderRole('Provost'); }}>Cancel</Button>
             <Button color="brand" loading={savingCol} onClick={saveCollege}
               disabled={!colName.trim() || !colDeanName.trim()}>
               Save &amp; Generate Credentials

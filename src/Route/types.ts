@@ -76,6 +76,20 @@ export const APPROUTE_LIST = {
   SUPERVISOR_RESEARCH_AI_REVIEWER: '/supervisor/research/ai-reviewer',
   SUPERVISOR_RESEARCH_PLAGIARISM:  '/supervisor/research/plagiarism',
 
+  // PG School (PG Coordinator) — read-only, institution-wide, non-UG students only
+  PGSCHOOL_OVERVIEW:    '/pgschool/overview',
+  PGSCHOOL_STUDENTS:    '/pgschool/students',
+  PGSCHOOL_SUPERVISORS: '/pgschool/supervisors',
+  PGSCHOOL_ANALYTICS:   '/pgschool/analytics',
+  PGSCHOOL_MESSAGES:    '/pgschool/messages',
+  PGSCHOOL_SETTINGS:    '/pgschool/settings',
+
+  // PG School Research Workspace
+  PGSCHOOL_RESEARCH_EDITOR:      '/pgschool/research/editor',
+  PGSCHOOL_RESEARCH_EXPORT:      '/pgschool/research/export',
+  PGSCHOOL_RESEARCH_AI_REVIEWER: '/pgschool/research/ai-reviewer',
+  PGSCHOOL_RESEARCH_PLAGIARISM:  '/pgschool/research/plagiarism',
+
   // Student (PhD Student)
   STUDENT_DASHBOARD: '/app/dashboard',
   STUDENT_EDITOR: '/app/editor',
@@ -102,6 +116,9 @@ export const ROLE_HOME: Record<string, string> = {
 
   // ── Faculty level ─────────────────────────────────────────────────────────
   'Dean':                   APPROUTE_LIST.FACULTY_OVERVIEW,
+
+  // ── PG School ────────────────────────────────────────────────────────────
+  'PG Coordinator':         APPROUTE_LIST.PGSCHOOL_OVERVIEW,
 
   // ── Department level ──────────────────────────────────────────────────────
   'Head of Department':     APPROUTE_LIST.HOD_OVERVIEW,
