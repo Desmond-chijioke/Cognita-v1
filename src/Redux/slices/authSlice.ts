@@ -32,6 +32,8 @@ export interface User {
   institutionName?: string;
   institutionEmail?: string;
   departmentName?:  string;
+  collegeId?:       string;
+  facultyId?:       string;
   supervisorId?:    string;
   supervisorName?:  string;
   supervisorEmail?: string;
@@ -66,8 +68,8 @@ const authSlice = createSlice({
     loginStart(state) {
       state.isLoading = true;
     },
-    loginSuccess(state, action: PayloadAction<{ role: AppRole; email: string; id?: string; name?: string; institutionId?: string; institutionName?: string; institutionEmail?: string; departmentName?: string; supervisorId?: string; supervisorName?: string; supervisorEmail?: string }>) {
-      const { role, email, id, name, institutionId, institutionName, institutionEmail, departmentName, supervisorId, supervisorName, supervisorEmail } = action.payload;
+    loginSuccess(state, action: PayloadAction<{ role: AppRole; email: string; id?: string; name?: string; institutionId?: string; institutionName?: string; institutionEmail?: string; departmentName?: string; collegeId?: string; facultyId?: string; supervisorId?: string; supervisorName?: string; supervisorEmail?: string }>) {
+      const { role, email, id, name, institutionId, institutionName, institutionEmail, departmentName, collegeId, facultyId, supervisorId, supervisorName, supervisorEmail } = action.payload;
       state.user = {
         id:               id   ?? crypto.randomUUID(),
         name:             name ?? email.split('@')[0].replace(/[._]/g, ' '),
@@ -77,6 +79,8 @@ const authSlice = createSlice({
         institutionName,
         institutionEmail,
         departmentName,
+        collegeId,
+        facultyId,
         supervisorId,
         supervisorName,
         supervisorEmail,

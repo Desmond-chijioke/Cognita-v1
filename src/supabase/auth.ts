@@ -15,11 +15,13 @@ export interface UserProfile {
   phone?:              string;
   department_name?:    string;
   department?:         string;
+  college_id?:         string;
+  faculty_id?:         string;
   matric_no?:          string;
   degree_level?:       string;
   project_title?:      string;
   supervisor_id?:      string;
-  supervisor_name?:    string;   // resolved from supervisor_id
+  supervisor_name?:    string;
   supervisor_email?:   string;
 }
 
@@ -193,6 +195,8 @@ export async function fetchProfile(userId: string): Promise<UserProfile | null> 
 
   // Look up which dept / faculty / college this user is responsible for
   let departmentName: string | undefined;
+  let collegeId:      string | undefined;
+  let facultyId:      string | undefined;
 
   if (user.role === 'Head of Department') {
     const { data: dept } = await supabase
@@ -202,22 +206,27 @@ export async function fetchProfile(userId: string): Promise<UserProfile | null> 
       .maybeSingle();
     if (dept) departmentName = dept.name;
 
+  } else if (user.role === 'Provost') {
+    const { data: col } = await supabase
+      .from('colleges')
+      .select('id, name')
+      .eq('dean_id', userId)
+      .maybeSingle();
+    if (col) {
+      departmentName = col.name;
+      collegeId      = col.id;
+    }
+
   } else if (user.role === 'Dean') {
-    // Check faculties first, then colleges
     const { data: fac } = await supabase
       .from('faculties')
-      .select('name')
+      .select('id, name, college_id')
       .eq('dean_id', userId)
       .maybeSingle();
     if (fac) {
       departmentName = fac.name;
-    } else {
-      const { data: col } = await supabase
-        .from('colleges')
-        .select('name')
-        .eq('dean_id', userId)
-        .maybeSingle();
-      if (col) departmentName = col.name;
+      facultyId      = fac.id;
+      collegeId      = fac.college_id ?? undefined;
     }
   }
 
@@ -240,6 +249,8 @@ export async function fetchProfile(userId: string): Promise<UserProfile | null> 
   return {
     ...user,
     department_name:  departmentName,
+    college_id:       collegeId,
+    faculty_id:       facultyId,
     supervisor_name:  supervisorName,
     supervisor_email: supervisorEmail,
   } as UserProfile;

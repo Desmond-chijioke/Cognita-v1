@@ -9,6 +9,8 @@ export interface StoredSession {
   institutionName?:  string;
   institutionEmail?: string;
   departmentName?:   string;
+  collegeId?:        string;
+  facultyId?:        string;
   supervisorId?:     string;
   supervisorName?:   string;
   supervisorEmail?:  string;

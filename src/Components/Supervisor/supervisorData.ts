@@ -2,7 +2,7 @@
 
 export type StageStatus      = 'completed' | 'in-progress' | 'not-started' | 'needs-revision';
 export type ComplianceStatus = 'Good' | 'Warning' | 'Critical';
-export type DegreeLevel      = 'PhD' | "Master's" | 'Undergraduate';
+export type DegreeLevel      = 'PhD' | "Master's" | 'Undergraduate' | 'Postgraduate';
 export type AnalysisStatus   = 'pending' | 'approved' | 'flagged';
 export type AlertType        = 'overdue' | 'missing-data' | 'plagiarism-risk' | 'analysis-issue' | 'deadline' | 'milestone';
 

@@ -8,6 +8,8 @@ import ProtectedRoute from '../Components/protectedRoute/ProtectedRoute';
 
 // Layouts
 import AdminLayout from '../Components/Admin/AdminLayout';
+import CollegeLayout from '../Components/College/CollegeLayout';
+import FacultyLayout from '../Components/Faculty/FacultyLayout';
 import HODLayout from '../Components/HOD/HODLayout';
 import SupervisorLayout from '../Components/Supervisor/SupervisorLayout';
 import StudentLayout from '../Components/Student/StudentLayout';
@@ -29,6 +31,22 @@ import AdminAnalytics from '../Components/Admin/pages/AdminAnalytics';
 import AdminAuditTrail from '../Components/Admin/pages/AdminAuditTrail';
 import AdminMessages from '../Components/Admin/pages/AdminMessages';
 import AdminSettings from '../Components/Admin/pages/AdminSettings';
+
+// College pages (Provost)
+import CollegeOverview   from '../Components/College/pages/CollegeOverview';
+import CollegeFaculties  from '../Components/College/pages/CollegeFaculties';
+import CollegeStudents   from '../Components/College/pages/CollegeStudents';
+import CollegeAnalytics  from '../Components/College/pages/CollegeAnalytics';
+import CollegeMessages   from '../Components/College/pages/CollegeMessages';
+import CollegeSettings   from '../Components/College/pages/CollegeSettings';
+
+// Faculty pages (Dean)
+import FacultyOverview     from '../Components/Faculty/pages/FacultyOverview';
+import FacultyDepartments  from '../Components/Faculty/pages/FacultyDepartments';
+import FacultyStudents     from '../Components/Faculty/pages/FacultyStudents';
+import FacultyAnalytics    from '../Components/Faculty/pages/FacultyAnalytics';
+import FacultyMessages     from '../Components/Faculty/pages/FacultyMessages';
+import FacultySettings     from '../Components/Faculty/pages/FacultySettings';
 
 // HOD pages
 import HODOverview from '../Components/HOD/pages/HODOverview';
@@ -93,6 +111,64 @@ export const router = createBrowserRouter([
           { path: 'audit-trail',  element: <AdminAuditTrail /> },
           { path: 'messages',     element: <AdminMessages /> },
           { path: 'settings',     element: <AdminSettings /> },
+        ],
+      },
+
+      // College (Provost)
+      {
+        path: '/college',
+        element: <CollegeLayout />,
+        children: [
+          { index: true,           element: <Navigate to="overview"   replace /> },
+          { path: 'overview',      element: <CollegeOverview />   },
+          { path: 'faculties',     element: <CollegeFaculties />  },
+          { path: 'students',      element: <CollegeStudents />   },
+          { path: 'analytics',     element: <CollegeAnalytics />  },
+          { path: 'messages',      element: <CollegeMessages />   },
+          { path: 'settings',      element: <CollegeSettings />   },
+        ],
+      },
+
+      // College Research Workspace (Provost)
+      {
+        path: '/college/research',
+        element: <ResearchLayout />,
+        children: [
+          { index: true,         element: <Navigate to="editor" replace /> },
+          { path: 'editor',      element: <ResearchEditor />    },
+          { path: 'export',      element: <ResearchExport />    },
+          { path: 'references',  element: <StudentReferences /> },
+          { path: 'ai-reviewer', element: <ResearchAIReviewer /> },
+          { path: 'plagiarism',  element: <ResearchPlagiarism /> },
+        ],
+      },
+
+      // Faculty (Dean)
+      {
+        path: '/faculty',
+        element: <FacultyLayout />,
+        children: [
+          { index: true,           element: <Navigate to="overview"    replace /> },
+          { path: 'overview',      element: <FacultyOverview />    },
+          { path: 'departments',   element: <FacultyDepartments /> },
+          { path: 'students',      element: <FacultyStudents />    },
+          { path: 'analytics',     element: <FacultyAnalytics />   },
+          { path: 'messages',      element: <FacultyMessages />    },
+          { path: 'settings',      element: <FacultySettings />    },
+        ],
+      },
+
+      // Faculty Research Workspace (Dean)
+      {
+        path: '/faculty/research',
+        element: <ResearchLayout />,
+        children: [
+          { index: true,         element: <Navigate to="editor" replace /> },
+          { path: 'editor',      element: <ResearchEditor />    },
+          { path: 'export',      element: <ResearchExport />    },
+          { path: 'references',  element: <StudentReferences /> },
+          { path: 'ai-reviewer', element: <ResearchAIReviewer /> },
+          { path: 'plagiarism',  element: <ResearchPlagiarism /> },
         ],
       },
 

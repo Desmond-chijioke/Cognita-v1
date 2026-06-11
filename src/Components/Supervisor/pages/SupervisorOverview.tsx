@@ -41,7 +41,19 @@ function formatRelativeTime(iso: string) {
 }
 
 function degreeBadgeColor(level: string) {
-  return level === 'PhD' ? 'blue' : level === "Master's" ? 'violet' : 'teal';
+  if (level === 'PhD')          return 'blue';
+  if (level === "Master's")     return 'violet';
+  if (level === 'Postgraduate') return 'grape';
+  return 'teal';
+}
+
+function normalizeDegreeLevel(raw: string): DegreeLevel {
+  const v = raw.toLowerCase();
+  if (v === 'phd' || v.includes('phd') || v.includes('doctoral')) return 'PhD';
+  if (v === "master's" || v.includes('master') || v.includes('msc') || v.includes('mba')) return "Master's";
+  if (v === 'postgraduate' || v.includes('postgrad')) return 'Postgraduate';
+  if (v === 'undergraduate' || v.includes('undergrad') || v.includes('bachelor')) return 'Undergraduate';
+  return 'PhD';
 }
 
 function statusBadgeColor(status: DBSubmission['status']) {
@@ -116,7 +128,7 @@ export default function SupervisorOverview() {
         ((usersData ?? []) as Record<string, string>[]).map(u => ({
           id:           u.id,
           name:         u.name,
-          degreeLevel:  (u.degree_level ?? u.role ?? 'PhD') as DegreeLevel,
+          degreeLevel:  normalizeDegreeLevel(u.degree_level ?? u.role ?? 'PhD'),
           projectTitle: u.project_title ?? 'Untitled Research',
           color:        nameToColor(u.name),
         }))
@@ -148,6 +160,7 @@ export default function SupervisorOverview() {
   const phd     = students.filter(s => s.degreeLevel === 'PhD').length;
   const masters  = students.filter(s => s.degreeLevel === "Master's").length;
   const ug       = students.filter(s => s.degreeLevel === 'Undergraduate').length;
+  const pg       = students.filter(s => s.degreeLevel === 'Postgraduate').length;
 
   const recentActivity = useMemo(
     () => [...submissions].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)).slice(0, 8),
@@ -197,7 +210,12 @@ export default function SupervisorOverview() {
           label="Total Students"
           value={students.length}
           color="brand"
-          sub={`${phd} PhD · ${masters} MSc · ${ug} UG`}
+          sub={[
+            phd     ? `${phd} PhD`  : '',
+            masters ? `${masters} MSc`  : '',
+            pg      ? `${pg} PG`    : '',
+            ug      ? `${ug} UG`    : '',
+          ].filter(Boolean).join(' · ') || 'No students yet'}
         />
         <StatCard
           icon={LuTrendingUp}

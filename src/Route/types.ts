@@ -16,6 +16,34 @@ export const APPROUTE_LIST = {
   ADMIN_SETTINGS: '/admin/settings',
   ADMIN_USERS:    '/admin/users',
 
+  // College (Provost)
+  COLLEGE_OVERVIEW:    '/college/overview',
+  COLLEGE_FACULTIES:   '/college/faculties',
+  COLLEGE_STUDENTS:    '/college/students',
+  COLLEGE_ANALYTICS:   '/college/analytics',
+  COLLEGE_MESSAGES:    '/college/messages',
+  COLLEGE_SETTINGS:    '/college/settings',
+
+  // College Research Workspace
+  COLLEGE_RESEARCH_EDITOR:      '/college/research/editor',
+  COLLEGE_RESEARCH_EXPORT:      '/college/research/export',
+  COLLEGE_RESEARCH_AI_REVIEWER: '/college/research/ai-reviewer',
+  COLLEGE_RESEARCH_PLAGIARISM:  '/college/research/plagiarism',
+
+  // Faculty (Dean)
+  FACULTY_OVERVIEW:    '/faculty/overview',
+  FACULTY_DEPARTMENTS: '/faculty/departments',
+  FACULTY_STUDENTS:    '/faculty/students',
+  FACULTY_ANALYTICS:   '/faculty/analytics',
+  FACULTY_MESSAGES:    '/faculty/messages',
+  FACULTY_SETTINGS:    '/faculty/settings',
+
+  // Faculty Research Workspace
+  FACULTY_RESEARCH_EDITOR:      '/faculty/research/editor',
+  FACULTY_RESEARCH_EXPORT:      '/faculty/research/export',
+  FACULTY_RESEARCH_AI_REVIEWER: '/faculty/research/ai-reviewer',
+  FACULTY_RESEARCH_PLAGIARISM:  '/faculty/research/plagiarism',
+
   // Head of Department
   HOD_OVERVIEW:    '/hod/overview',
   HOD_USERS:       '/hod/users',
@@ -69,10 +97,14 @@ export const ROLE_HOME: Record<string, string> = {
   'Director of Research':   APPROUTE_LIST.ADMIN_DASHBOARD,
   'schoolAdmin':            APPROUTE_LIST.ADMIN_DASHBOARD,
 
-  // ── HOD-level (College Dean, Faculty Dean, Head of Department) ────────────
-  'Dean':                   APPROUTE_LIST.HOD_OVERVIEW,
+  // ── College level ─────────────────────────────────────────────────────────
+  'Provost':                APPROUTE_LIST.COLLEGE_OVERVIEW,
+
+  // ── Faculty level ─────────────────────────────────────────────────────────
+  'Dean':                   APPROUTE_LIST.FACULTY_OVERVIEW,
+
+  // ── Department level ──────────────────────────────────────────────────────
   'Head of Department':     APPROUTE_LIST.HOD_OVERVIEW,
-  'Provost':                APPROUTE_LIST.HOD_OVERVIEW,
 
   // ── Supervisors — all variants route to supervisor workspace ─────────────
   'Supervisor':             APPROUTE_LIST.SUPERVISOR_OVERVIEW,

@@ -12,7 +12,7 @@ import heroBg from '../../assets/hero-bg.jpg';
 import { ROLE_HOME } from '../../Route/types';
 import { showsucessnotification } from '../../helper/notificationhelper';
 import { signInSupabase } from '../../supabase/auth';
-import { saveSession, clearSession } from '../../helper/storage';
+import { saveSession } from '../../helper/storage';
 
 export function fullyear() {
   return new Date().getFullYear();
@@ -66,6 +66,8 @@ export default function Login() {
         institutionName:  profile.institution_name  ?? undefined,
         institutionEmail: profile.institution_email ?? undefined,
         departmentName:   profile.department_name   ?? undefined,
+        collegeId:        profile.college_id        ?? undefined,
+        facultyId:        profile.faculty_id        ?? undefined,
         supervisorId:     profile.supervisor_id     ?? undefined,
         supervisorName:   profile.supervisor_name   ?? undefined,
         supervisorEmail:  profile.supervisor_email  ?? undefined,
@@ -83,6 +85,8 @@ export default function Login() {
         institutionName:  profile.institution_name  ?? undefined,
         institutionEmail: profile.institution_email ?? undefined,
         departmentName:   profile.department_name   ?? undefined,
+        collegeId:        profile.college_id        ?? undefined,
+        facultyId:        profile.faculty_id        ?? undefined,
         supervisorId:     profile.supervisor_id     ?? undefined,
         supervisorName:   profile.supervisor_name   ?? undefined,
         supervisorEmail:  profile.supervisor_email  ?? undefined,
