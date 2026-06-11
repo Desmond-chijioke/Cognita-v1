@@ -410,6 +410,7 @@ export default function PGSchoolSupervisors() {
         overlayProps={{ backgroundOpacity: 0.6, blur: 8, color: '#1e3a8a' }}
         styles={{ content: { overflow: 'hidden' } }}
       >
+        
         {selectedSup && (
           <>
             {/* Gradient header */}
