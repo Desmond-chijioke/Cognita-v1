@@ -1,36 +1,48 @@
 import { useEffect, useState } from 'react';
 import {
-  Badge, Box, Button, Checkbox, Divider, Group, Loader, Paper, Progress,
+  Anchor, Badge, Box, Button, Checkbox, Divider, Group, Loader, Paper, Progress,
   SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
   LuShield, LuCircleCheck, LuTriangleAlert,
-  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuFileText,
+  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuFileText, LuLink,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../Redux/hooks';
 import { fetchSectionDrafts } from '../../supabase/drafts';
 import type { DBDraft } from '../../supabase/drafts';
-import { fetchAIReport, saveAIReport } from '../../supabase/aiReports';
-import { generateJSON, isGeminiConfigured, GeminiError } from '../../helper/gemini';
+import { fetchAIReport } from '../../supabase/aiReports';
+import { runInternalScan } from '../../supabase/plagiarismEngine';
+import type { PlagiarismReport, SourceMatch } from '../../supabase/plagiarismEngine';
 
-// ── Report shape produced by Gemini ───────────────────────────────────────────
+// ── Commented out — restore when Gemini API key is ready ─────────────────────
+// import { generateJSON, isGeminiConfigured, GeminiError } from '../../helper/gemini';
+//
+// function buildGeminiPrompt(sections: { id: string; title: string; content: string }[]): string {
+//   return `You are an academic-integrity assistant helping a researcher review their own work.
+// Analyse the sections below for similar phrasing, weak paraphrasing, and AI-like writing style.
+// You do NOT have web search — base scores purely on linguistic characteristics.
+// Respond with ONLY JSON:
+// { "overallSimilarity": number, "overallAi": number, "summary": string,
+//   "sections": [{ "sectionId": string, "sectionTitle": string, "similarity": number,
+//                  "aiScore": number, "flags": string[], "notes": string }] }
+// SECTIONS: ${sections.map(s => `\n--- ${s.title} ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
+// }
+//
+// Gemini scan (restore when API key is set):
+// const runGeminiScan = async (sections, userId, saveReport) => {
+//   if (!isGeminiConfigured()) {
+//     notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY missing.', color: 'red' });
+//     return null;
+//   }
+//   const prompt = buildGeminiPrompt(sections);
+//   const result = await generateJSON<PlagiarismReport>(prompt);
+//   if (!isPlagiarismReport(result)) throw new GeminiError('Unexpected response shape.');
+//   await saveReport(userId, 'plagiarism', { ...result, engine: 'gemini' });
+//   return result;
+// };
 
-interface SectionFinding {
-  sectionId:    string;
-  sectionTitle: string;
-  similarity:   number;
-  aiScore:      number;
-  flags:        string[];
-  notes:        string;
-}
-
-interface PlagiarismReport {
-  overallSimilarity: number;
-  overallAi:         number;
-  summary:           string;
-  sections:          SectionFinding[];
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function isPlagiarismReport(v: unknown): v is PlagiarismReport {
   if (!v || typeof v !== 'object') return false;
@@ -43,8 +55,8 @@ function isPlagiarismReport(v: unknown): v is PlagiarismReport {
 
 function simRisk(v: number) {
   return v <= 20 ? { label: 'Acceptable', color: '#2f9e44' }
-       : v <= 35 ? { label: 'Borderline',  color: '#f08c00' }
-       :           { label: 'Critical',    color: '#e03131' };
+       : v <= 35 ? { label: 'Borderline', color: '#f08c00' }
+       :           { label: 'Critical',   color: '#e03131' };
 }
 function aiRisk(v: number) {
   return v <= 20 ? { label: 'Low',      color: '#2f9e44' }
@@ -75,43 +87,50 @@ function isMetaRow(draft: DBDraft) {
   return META_PREFIXES.some(p => draft.section_id.startsWith(p));
 }
 
-function buildPrompt(sections: { id: string; title: string; content: string }[]): string {
-  return `You are an academic-integrity assistant helping a researcher review their own research before submission.
+// ── Sources list ──────────────────────────────────────────────────────────────
 
-Analyse the sections below for:
-- Similar phrasing or repeated ideas (within the document, or that closely mirror common phrasing found in published academic work on similar topics)
-- Weak paraphrasing (text that closely mirrors typical source phrasing without being substantially reworded or critically engaged with)
-- Suspicious "AI-like" or formulaic writing style (generic templated structure, repetitive sentence patterns, lack of a personal analytical voice)
-- Whether the section reads as original work or looks unoriginal / copied / AI-generated
-
-You do NOT have web search or access to a plagiarism database — do not invent matched sources, titles, or percentages from real documents. Base every score purely on the linguistic characteristics of the text itself.
-
-For each section return:
-- "similarity": 0-100 risk score for unoriginal / closely-mirrored phrasing (0 = clearly original voice, 100 = reads as copied)
-- "aiScore": 0-100 likelihood the text reads as AI-generated or AI-paraphrased (0 = clearly human/personal voice, 100 = reads as machine-generated)
-- "flags": short array of specific concerns spotted, e.g. ["weak paraphrasing", "repeated transition phrases", "generic templated structure"] (empty array if none)
-- "notes": one or two plain-language sentences explaining the score, with a concrete suggestion for improving originality where relevant
-
-Then provide an overall verdict across the whole document.
-
-Respond with ONLY JSON in exactly this shape (no markdown fences, no extra commentary):
-{
-  "overallSimilarity": number,
-  "overallAi": number,
-  "summary": string,
-  "sections": [
-    { "sectionId": string, "sectionTitle": string, "similarity": number, "aiScore": number, "flags": string[], "notes": string }
-  ]
+function SourcesList({ sources }: { sources: SourceMatch[] }) {
+  if (sources.length === 0) return (
+    <Paper withBorder p="xl" radius="md" ta="center" bg="white">
+      <LuLink size={32} color="#ced4da" style={{ margin: '0 auto 12px' }} />
+      <Text size="sm" c="dimmed">No related academic sources found for the scanned content.</Text>
+    </Paper>
+  );
+  return (
+    <Stack gap="sm">
+      <Paper withBorder p="sm" radius="md" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
+        <Group gap="xs" align="flex-start" wrap="nowrap">
+          <LuInfo size={14} color="#748ffc" style={{ flexShrink: 0, marginTop: 2 }} />
+          <Text size="xs" c="dimmed">
+            Academically published papers matched via CrossRef (140M+ papers). Not evidence of copying —
+            useful for confirming citations and checking undisclosed source overlap.
+          </Text>
+        </Group>
+      </Paper>
+      {sources.map((s, i) => (
+        <Paper key={i} withBorder p="md" radius="md" bg="white">
+          <Group gap="sm" wrap="nowrap" align="flex-start">
+            <ThemeIcon size={30} radius="md" color="brand" variant="light" style={{ flexShrink: 0, marginTop: 2 }}>
+              <LuLink size={14} />
+            </ThemeIcon>
+            <Box style={{ minWidth: 0 }}>
+              <Text size="sm" fw={600} lineClamp={2} mb={4}>{s.title}</Text>
+              <Anchor size="xs" href={s.url} target="_blank" rel="noopener noreferrer"
+                style={{ wordBreak: 'break-all' }}>
+                {s.url}
+              </Anchor>
+            </Box>
+          </Group>
+        </Paper>
+      ))}
+    </Stack>
+  );
 }
 
-SECTIONS TO ANALYSE:
-${sections.map(s => `\n--- ${s.title} (id: ${s.id}) ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
-}
-
-// ── Inline draft picker ────────────────────────────────────────────────────────
+// ── Draft picker ──────────────────────────────────────────────────────────────
 
 function DraftPicker({ drafts, selected, onChange }: {
-  drafts: DBDraft[];
+  drafts:   DBDraft[];
   selected: Set<string>;
   onChange: (s: Set<string>) => void;
 }) {
@@ -134,7 +153,7 @@ function DraftPicker({ drafts, selected, onChange }: {
       <Group justify="space-between" align="flex-start" mb="sm">
         <Box>
           <Text size="sm" fw={600}>Choose sections to scan</Text>
-          <Text size="xs" c="dimmed">The AI analyses only the sections you select below.</Text>
+          <Text size="xs" c="dimmed">The engine analyses only the sections you select below.</Text>
         </Box>
         <Group gap={6}>
           <Button size="compact-xs" variant="subtle" onClick={() => onChange(new Set(drafts.map(d => d.section_id)))}>
@@ -157,13 +176,8 @@ function DraftPicker({ drafts, selected, onChange }: {
                 border: checked ? '1.5px solid #3b5bdb' : undefined,
               }}>
               <Group gap="sm" wrap="nowrap">
-                <Checkbox
-                  checked={checked}
-                  onChange={() => toggle(d.section_id)}
-                  onClick={e => e.stopPropagation()}
-                  radius="sm"
-                  color="brand"
-                />
+                <Checkbox checked={checked} onChange={() => toggle(d.section_id)}
+                  onClick={e => e.stopPropagation()} radius="sm" color="brand" />
                 <LuFileText size={15} color="#748ffc" style={{ flexShrink: 0 }} />
                 <Box style={{ flex: 1, minWidth: 0 }}>
                   <Text size="sm" fw={500} truncate>{d.section_title}</Text>
@@ -178,15 +192,15 @@ function DraftPicker({ drafts, selected, onChange }: {
   );
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ResearchPlagiarism() {
   const user = useAppSelector(s => s.auth.user);
 
-  const [loading,   setLoading]   = useState(true);
-  const [scanning,  setScanning]  = useState(false);
-  const [report,    setReport]    = useState<PlagiarismReport | null>(null);
-  const [scannedAt, setScannedAt] = useState<string | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [scanning,   setScanning]   = useState(false);
+  const [report,     setReport]     = useState<PlagiarismReport | null>(null);
+  const [scannedAt,  setScannedAt]  = useState<string | null>(null);
   const [expandedSim, setExpandedSim] = useState<string | null>(null);
   const [expandedAi,  setExpandedAi]  = useState<string | null>(null);
 
@@ -210,11 +224,7 @@ export default function ResearchPlagiarism() {
   }, [user?.id]);
 
   const runScan = async () => {
-    if (!user?.id) return;
-    if (!isGeminiConfigured()) {
-      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing — ask an admin to add it to the environment.', color: 'red' });
-      return;
-    }
+    if (!user?.id || !user.institutionId) return;
 
     const chosen = drafts.filter(d => selected.has(d.section_id));
     if (chosen.length === 0) {
@@ -224,23 +234,22 @@ export default function ResearchPlagiarism() {
 
     setScanning(true);
     try {
-      const prompt = buildPrompt(chosen.map(d => ({ id: d.section_id, title: d.section_title, content: d.content })));
-      const result = await generateJSON<PlagiarismReport>(prompt);
-
-      if (!isPlagiarismReport(result)) throw new GeminiError('Unexpected response shape from Gemini.');
+      const result = await runInternalScan({
+        studentId:     user.id,
+        institutionId: user.institutionId,
+        sections: chosen.map(d => ({ id: d.section_id, title: d.section_title, content: d.content })),
+      });
 
       setReport(result);
-      const now = new Date().toISOString();
-      setScannedAt(now);
-      await saveAIReport(user.id, 'plagiarism', result);
-
+      setScannedAt(result.scannedAt ?? new Date().toISOString());
       notifications.show({ title: 'Scan complete', message: 'Integrity report updated.', color: 'green' });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not complete the scan.';
-      notifications.show({ title: 'Scan failed', message, color: 'red' });
-    } finally {
-      setScanning(false);
-    }
+      notifications.show({
+        title: 'Scan failed',
+        message: err instanceof Error ? err.message : 'Could not complete the scan.',
+        color: 'red',
+      });
+    } finally { setScanning(false); }
   };
 
   const overallSim = report?.overallSimilarity ?? 0;
@@ -248,30 +257,42 @@ export default function ResearchPlagiarism() {
   const simColor   = simRisk(overallSim).color;
   const aiColor    = aiRisk(overallAi).color;
   const sections   = report?.sections ?? [];
+  const sources    = report?.sources   ?? [];
 
   return (
     <Box p="xl">
       <Group justify="space-between" align="flex-start" mb="xl" wrap="wrap" gap="sm">
         <Box>
           <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Integrity Report</Title>
-          <Text size="sm" c="dimmed" mt={4}>AI-driven originality and writing-style analysis of your saved research drafts.</Text>
+          <Text size="sm" c="dimmed" mt={4}>
+            Internal similarity check · AI detection · Academic source matching
+          </Text>
         </Box>
-        <Text size="xs" c="dimmed">
-          {scannedAt ? `Last scanned ${new Date(scannedAt).toLocaleString()}` : 'Not scanned yet'}
-        </Text>
+        <Group gap="xs" align="center">
+          {report?.engine && (
+            <Badge size="xs" variant="light" color={report.engine === 'internal' ? 'teal' : 'violet'}>
+              {report.engine === 'internal' ? 'Internal Engine' : 'Gemini AI'}
+            </Badge>
+          )}
+          <Text size="xs" c="dimmed">
+            {scannedAt ? `Last scanned ${new Date(scannedAt).toLocaleString()}` : 'Not scanned yet'}
+          </Text>
+        </Group>
       </Group>
 
+      {/* Info banner */}
       <Paper withBorder p="sm" radius="md" mb="xl" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
         <Group gap="xs" wrap="nowrap" align="flex-start">
           <LuInfo size={14} color="#748ffc" style={{ flexShrink: 0, marginTop: 2 }} />
           <Text size="xs" c="dimmed">
-            This report is generated by AI from the linguistic characteristics of your writing — phrasing patterns, paraphrasing strength, and stylistic
-            originality. It does not cross-check against a web or database index of real sources, so treat scores as a self-review aid, not a formal
-            plagiarism-database result.
+            Powered by Cognita's internal engine: phrasing similarity is computed against submissions in your
+            institution, AI detection uses an open-source classifier (HuggingFace), and related papers are
+            retrieved from CrossRef. Use alongside formal checks before submitting.
           </Text>
         </Group>
       </Paper>
 
+      {/* Draft picker + scan */}
       {loading ? (
         <Group justify="center" py="xl"><Loader size="sm" color="brand" /></Group>
       ) : (
@@ -286,15 +307,20 @@ export default function ResearchPlagiarism() {
         </Paper>
       )}
 
-      {loading ? null : !report ? (
+      {/* Empty state */}
+      {!loading && !report && (
         <Paper withBorder p="xl" radius="md" bg="white" ta="center">
-          <ThemeIcon size={48} radius="xl" variant="light" color="brand" mx="auto" mb="md"><LuShield size={22} /></ThemeIcon>
+          <ThemeIcon size={48} radius="xl" variant="light" color="brand" mx="auto" mb="md">
+            <LuShield size={22} />
+          </ThemeIcon>
           <Text fw={600} mb={4}>No integrity report yet</Text>
-          <Text size="sm" c="dimmed">Select sections above and run a scan to get an AI-driven originality and AI-writing-style analysis.</Text>
+          <Text size="sm" c="dimmed">Select sections above and run a scan to get originality, AI detection, and source analysis.</Text>
         </Paper>
-      ) : (
+      )}
+
+      {/* Results */}
+      {!loading && report && (
         <>
-          {/* ── Score cards ── */}
           <SimpleGrid cols={{ base: 1, sm: 2 }} mb="xl">
             <Paper withBorder p="xl" radius="md" bg="white">
               <Group gap="xl" align="center" wrap="nowrap">
@@ -311,7 +337,11 @@ export default function ResearchPlagiarism() {
                   </Badge>
                   <Text size="xs" c="dimmed" mb="sm">{sections.length} section{sections.length !== 1 ? 's' : ''} analysed</Text>
                   <Stack gap={4}>
-                    {[{ label: '<= 20%  Safe', color: '#2f9e44' }, { label: '21-35%  Borderline', color: '#f08c00' }, { label: '> 35%   Critical', color: '#e03131' }].map(({ label, color }) => (
+                    {[
+                      { label: '≤ 20%  Acceptable', color: '#2f9e44' },
+                      { label: '21–35%  Borderline', color: '#f08c00' },
+                      { label: '> 35%  Critical',    color: '#e03131' },
+                    ].map(({ label, color }) => (
                       <Group key={label} gap="xs">
                         <Box style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
                         <Text size="xs" c="dimmed">{label}</Text>
@@ -335,9 +365,13 @@ export default function ResearchPlagiarism() {
                   <Badge variant="light" size="sm" mb="sm" style={{ background: aiColor + '20', color: aiColor }}>
                     {aiRisk(overallAi).label}
                   </Badge>
-                  <Text size="xs" c="dimmed" mb="sm">Reflects how strongly the writing reads as AI-generated or AI-paraphrased</Text>
+                  <Text size="xs" c="dimmed" mb="sm">Likelihood the writing reads as AI-generated or AI-paraphrased</Text>
                   <Stack gap={4}>
-                    {[{ label: '<= 20%  Low', color: '#2f9e44' }, { label: '21-45%  Moderate', color: '#f08c00' }, { label: '> 45%   High', color: '#e03131' }].map(({ label, color }) => (
+                    {[
+                      { label: '≤ 20%  Low',      color: '#2f9e44' },
+                      { label: '21–45%  Moderate', color: '#f08c00' },
+                      { label: '> 45%  High',      color: '#e03131' },
+                    ].map(({ label, color }) => (
                       <Group key={label} gap="xs">
                         <Box style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
                         <Text size="xs" c="dimmed">{label}</Text>
@@ -354,17 +388,21 @@ export default function ResearchPlagiarism() {
             <Text size="sm" c="dimmed">{report.summary}</Text>
           </Paper>
 
-          {/* ── Section breakdown ── */}
           <Tabs defaultValue="similarity">
             <Tabs.List mb="lg">
               <Tabs.Tab value="similarity" leftSection={<LuShield size={14} />}>Originality</Tabs.Tab>
               <Tabs.Tab value="ai"         leftSection={<LuBot    size={14} />}>AI Writing Style</Tabs.Tab>
+              <Tabs.Tab value="sources"    leftSection={<LuLink   size={14} />}>
+                Academic Sources
+                {sources.length > 0 && <Badge size="xs" ml={6} variant="light" color="brand">{sources.length}</Badge>}
+              </Tabs.Tab>
             </Tabs.List>
 
             <Tabs.Panel value="similarity">
               <Paper withBorder p="sm" radius="md" mb="md" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
                 <Text size="xs" c="dimmed">
-                  Scores above <strong>20%</strong> are worth a closer look. Above <strong>35%</strong>, consider rewriting in your own analytical voice and ensuring proper citation.
+                  Scores above <strong>20%</strong> indicate phrasing overlap with other submissions.
+                  Above <strong>35%</strong>, consider rewriting in your own analytical voice.
                 </Text>
               </Paper>
               <Stack gap="sm">
@@ -398,7 +436,19 @@ export default function ResearchPlagiarism() {
                               {sec.flags.map((f, i) => <Badge key={i} size="xs" variant="light" color="orange">{f}</Badge>)}
                             </Group>
                           )}
-                          <Text size="xs" c="dimmed">{sec.notes}</Text>
+                          <Text size="xs" c="dimmed" mb="xs">{sec.notes}</Text>
+                          {sec.sources && sec.sources.length > 0 && (
+                            <Box mt="xs">
+                              <Text size="xs" fw={600} c="dimmed" mb={4}>Related papers:</Text>
+                              <Stack gap={4}>
+                                {sec.sources.map((src, i) => (
+                                  <Anchor key={i} size="xs" href={src.url} target="_blank" rel="noopener noreferrer" lineClamp={1}>
+                                    {src.title}
+                                  </Anchor>
+                                ))}
+                              </Stack>
+                            </Box>
+                          )}
                         </Box>
                       )}
                     </Paper>
@@ -410,7 +460,7 @@ export default function ResearchPlagiarism() {
             <Tabs.Panel value="ai">
               <Paper withBorder p="sm" radius="md" mb="md" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
                 <Text size="xs" c="dimmed">
-                  Scores above <strong>20%</strong> indicate AI-like characteristics. Above <strong>45%</strong>, consider substantially rewriting in your own voice.
+                  Scores above <strong>20%</strong> indicate AI-like characteristics. Above <strong>45%</strong>, consider substantially rewriting.
                 </Text>
               </Paper>
               <Stack gap="sm">
@@ -452,9 +502,12 @@ export default function ResearchPlagiarism() {
                 })}
               </Stack>
             </Tabs.Panel>
+
+            <Tabs.Panel value="sources">
+              <SourcesList sources={sources} />
+            </Tabs.Panel>
           </Tabs>
 
-          {/* ── Legend ── */}
           <Paper withBorder p="sm" radius="md" mt="lg" style={{ background: '#f8f9fa', border: '1px dashed #dee2e6' }}>
             <Group gap="xl" wrap="wrap">
               {[
