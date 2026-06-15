@@ -2,16 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   ActionIcon, Avatar, Badge, Box, Button, Group, Loader,
-  Paper, ScrollArea, Stack, Text, TextInput,
+  Modal, Paper, ScrollArea, Stack, Text, TextInput, Tooltip,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
-import { LuSearch, LuSend, LuCircle, LuMessageSquare, LuMic, LuX, LuPhone, LuVideo, LuArrowLeft } from 'react-icons/lu';
+import {
+  LuSearch, LuSend, LuCircle, LuMessageSquare, LuMic, LuX,
+  LuPhone, LuVideo, LuArrowLeft, LuImage, LuPaperclip,
+  LuDownload, LuFileText,
+} from 'react-icons/lu';
 import { useGlobalCall } from '../../context/GlobalCallProvider';
 import { useAppSelector } from '../../Redux/hooks';
 import { supabase } from '../../supabase/client';
 import { showerrornotification } from '../../helper/notificationhelper';
 
-// ── Role groups — used for contact visibility rules ────────────────────────────
+// ── Role groups ────────────────────────────────────────────────────────────────
 const STUDENT_ROLES    = ['Student', 'PhD Student', 'Undergraduate Student', "Master's Student", 'Postgraduate Student', 'Researcher'];
 const SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supervisor', 'Assistant Supervisor'];
 const MANAGEMENT_ROLES = ['schoolAdmin', 'Head of Department', 'PG Coordinator', 'Dean', 'Provost', 'Director of Research', 'Vice Chancellor', 'External Examiner', 'Internal Examiner'];
@@ -19,15 +23,15 @@ const MANAGEMENT_ROLES = ['schoolAdmin', 'Head of Department', 'PG Coordinator',
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Contact {
-  id:              string;
-  name:            string;
-  email:           string;
-  role:            string;
-  unread:          number;
-  avatar_url?:     string;
-  lastMessage?:    string;
-  lastTime?:       string;   // formatted display string
-  lastTimestamp?:  string;   // raw ISO for sorting
+  id:             string;
+  name:           string;
+  email:          string;
+  role:           string;
+  unread:         number;
+  avatar_url?:    string;
+  lastMessage?:   string;
+  lastTime?:      string;
+  lastTimestamp?: string;
 }
 
 interface DBMessage {
@@ -36,7 +40,10 @@ interface DBMessage {
   receiver_id:   string;
   text:          string;
   audio_url?:    string;
-  message_type?: 'text' | 'voice' | 'call-invite' | 'call-ended';
+  file_url?:     string;
+  file_name?:    string;
+  file_size?:    number;
+  message_type?: 'text' | 'voice' | 'call-invite' | 'call-ended' | 'image' | 'file';
   created_at:    string;
   read_at:       string | null;
 }
@@ -53,6 +60,28 @@ function getInitials(name: string) {
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtFileSize(bytes: number): string {
+  if (bytes < 1024)        return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Download a cross-origin file by fetching it as a blob first. */
+async function downloadFile(url: string, filename: string) {
+  try {
+    const res    = await fetch(url);
+    const blob   = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a      = Object.assign(document.createElement('a'), { href: objUrl, download: filename });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objUrl);
+  } catch {
+    window.open(url, '_blank');
+  }
 }
 
 const COLORS = ['blue', 'teal', 'violet', 'orange', 'grape', 'cyan', 'green', 'red'];
@@ -82,6 +111,29 @@ function VoicePlayer({ url }: { url: string }) {
   );
 }
 
+// ── Bubble background helper ───────────────────────────────────────────────────
+
+function bubbleBg(msg: Message): string {
+  switch (msg.message_type) {
+    case 'voice':
+      return msg.isOwn ? 'var(--mantine-color-brand-1)' : 'var(--mantine-color-gray-1)';
+    case 'call-invite':
+      return msg.isOwn ? 'var(--mantine-color-green-7)' : 'var(--mantine-color-green-0)';
+    case 'image':
+      return 'transparent';
+    case 'file':
+      return msg.isOwn ? 'var(--mantine-color-brand-6)' : 'var(--mantine-color-gray-1)';
+    default:
+      return msg.isOwn ? 'var(--mantine-color-brand-6)' : 'var(--mantine-color-gray-1)';
+  }
+}
+
+function bubbleColor(msg: Message): string {
+  if (msg.message_type === 'call-invite' && !msg.isOwn) return 'var(--mantine-color-dark-7)';
+  if (msg.isOwn && msg.message_type !== 'voice' && msg.message_type !== 'image') return 'white';
+  return 'var(--mantine-color-dark-7)';
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function MessagingPanel() {
@@ -104,31 +156,34 @@ export default function MessagingPanel() {
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending,         setSending]         = useState(false);
+  const [uploading,       setUploading]       = useState(false);
+  const [preview,         setPreview]         = useState<{ url: string; name: string; size?: number; msgType: 'image' | 'file' } | null>(null);
+  const [previewBlobUrl,  setPreviewBlobUrl]  = useState<string | null>(null);
+  const [previewLoading,  setPreviewLoading]  = useState(false);
+  const [onlineUsers,     setOnlineUsers]     = useState<Set<string>>(new Set());
 
-  // Responsive
-  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
+  const isMobile  = useMediaQuery('(max-width: 768px)') ?? false;
   const [mobileView, setMobileView] = useState<'contacts' | 'chat'>('contacts');
 
   const { startCall, joinCall, endedCallUrls, creatingCall } = useGlobalCall();
 
-  // Keep a ref to contacts so the realtime handler can read the latest value
-  const contactsRef = useRef<Contact[]>([]);
+  const contactsRef   = useRef<Contact[]>([]);
+  const activeIdRef   = useRef<string | null>(null);
+  const bottomRef     = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef  = useRef<HTMLInputElement>(null);
+
   useEffect(() => { contactsRef.current = contacts; }, [contacts]);
+  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
 
   // Voice recording
-  const [recording,    setRecording]  = useState(false);
+  const [recording,    setRecording]   = useState(false);
   const [recDuration,  setRecDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef   = useRef<Blob[]>([]);
   const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const bottomRef    = useRef<HTMLDivElement>(null);
-  const activeIdRef  = useRef<string | null>(null);
-
-  // Keep ref in sync so realtime callback has latest activeId
-  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
-
-  // ── 1. Load contacts — filtered by role-based visibility rules ───────────
+  // ── 1. Load contacts ────────────────────────────────────────────────────────
 
   const loadContacts = useCallback(async () => {
     if (!myId || !institutionId) return;
@@ -146,18 +201,14 @@ export default function MessagingPanel() {
 
       let users = (data ?? []) as unknown as UserRow[];
 
-      // Apply role-based contact visibility
       if (STUDENT_ROLES.includes(myRole)) {
-        // Students can only message their assigned supervisor
         users = supervisorId ? users.filter(u => u.id === supervisorId) : [];
       } else if (SUPERVISOR_ROLES.includes(myRole)) {
-        // Supervisors see their assigned students + all management roles
         users = users.filter(u =>
           (STUDENT_ROLES.includes(u.role) && u.supervisor_id === myId) ||
           MANAGEMENT_ROLES.includes(u.role),
         );
       } else if (MANAGEMENT_ROLES.includes(myRole)) {
-        // Management sees other management roles + supervisors (not students)
         users = users.filter(u =>
           MANAGEMENT_ROLES.includes(u.role) || SUPERVISOR_ROLES.includes(u.role),
         );
@@ -165,7 +216,6 @@ export default function MessagingPanel() {
 
       if (!users.length) { setContacts([]); return; }
 
-      // For each visible contact: count unread + get last message (batched)
       const enriched = await Promise.all(users.map(async (u: UserRow) => {
         const [{ count: unread }, { data: last }] = await Promise.all([
           supabase.from('messages').select('*', { count: 'exact', head: true })
@@ -194,7 +244,7 @@ export default function MessagingPanel() {
     }
   }, [institutionId, myId, myRole, supervisorId]);
 
-  // ── 2. Load messages for the active conversation ──────────────────────────
+  // ── 2. Load messages ────────────────────────────────────────────────────────
 
   const loadMessages = useCallback(async (contactId: string) => {
     if (!myId) return;
@@ -202,13 +252,12 @@ export default function MessagingPanel() {
     try {
       const { data } = await supabase
         .from('messages')
-        .select('id, sender_id, receiver_id, text, audio_url, message_type, created_at, read_at')
+        .select('id, sender_id, receiver_id, text, audio_url, file_url, file_name, file_size, message_type, created_at, read_at')
         .or(`and(sender_id.eq.${myId},receiver_id.eq.${contactId}),and(sender_id.eq.${contactId},receiver_id.eq.${myId})`)
         .order('created_at', { ascending: true });
 
       setMessages((data ?? []).map(m => ({ ...m, isOwn: m.sender_id === myId })));
 
-      // Mark received messages as read
       await supabase.from('messages')
         .update({ read_at: new Date().toISOString() })
         .eq('sender_id', contactId)
@@ -221,7 +270,7 @@ export default function MessagingPanel() {
     }
   }, [myId]);
 
-  // ── 3. Send a text message ────────────────────────────────────────────────
+  // ── 3. Send text message ────────────────────────────────────────────────────
 
   const sendMessage = async () => {
     const text = draft.trim();
@@ -246,7 +295,61 @@ export default function MessagingPanel() {
     }
   };
 
-  // ── 4. Voice recording ───────────────────────────────────────────────────
+  // ── 4. Send file (image or document) ───────────────────────────────────────
+
+  const sendFile = async (file: File, type: 'image' | 'file') => {
+    if (!activeId || !myId || !institutionId) return;
+
+    const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+    if (file.size > MAX_BYTES) {
+      showerrornotification({ message: `File too large — maximum size is 5 MB (your file is ${fmtFileSize(file.size)}).` });
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path     = `${institutionId}/${myId}/${Date.now()}_${safeName}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from('chat-files')
+        .upload(path, file, { contentType: file.type });
+      if (uploadErr) throw uploadErr;
+
+      const { data: { publicUrl } } = supabase.storage.from('chat-files').getPublicUrl(path);
+
+      const preview = type === 'image' ? '[Image]' : `[File: ${file.name}]`;
+
+      const { data: newMsg } = await supabase
+        .from('messages')
+        .insert({
+          institution_id: institutionId,
+          sender_id:      myId,
+          receiver_id:    activeId,
+          text:           preview,
+          file_url:       publicUrl,
+          file_name:      file.name,
+          file_size:      file.size,
+          message_type:   type,
+        })
+        .select()
+        .single();
+
+      if (newMsg) {
+        setMessages(prev => [...prev, { ...newMsg, isOwn: true }]);
+        setContacts(prev => prev.map(c => c.id === activeId
+          ? { ...c, lastMessage: preview, lastTime: fmtTime(newMsg.created_at), lastTimestamp: newMsg.created_at }
+          : c));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showerrornotification({ message: `Upload failed: ${msg}` });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ── 5. Voice recording ──────────────────────────────────────────────────────
 
   const sendVoiceNote = async (blob: Blob, mimeType: string) => {
     if (!activeId || !myId || !institutionId) return;
@@ -284,7 +387,6 @@ export default function MessagingPanel() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showerrornotification({ message: `Voice note failed: ${msg}` });
-      console.error('[voice-note]', err);
     } finally {
       setSending(false);
       setRecDuration(0);
@@ -309,7 +411,7 @@ export default function MessagingPanel() {
       setRecDuration(0);
       timerRef.current = setInterval(() => setRecDuration(d => d + 1), 1000);
     } catch {
-      // microphone permission denied — nothing to do
+      // microphone permission denied
     }
   };
 
@@ -323,7 +425,7 @@ export default function MessagingPanel() {
 
   const cancelRecording = () => {
     if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.onstop = null; // discard blob — don't send
+      mediaRecorderRef.current.onstop = null;
       if (mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
     }
@@ -332,7 +434,40 @@ export default function MessagingPanel() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   };
 
-  // ── 5. Realtime — receive incoming messages instantly ─────────────────────
+  // ── 6. PDF blob loader — fetch PDF and create a local blob URL so the
+  //        browser's native renderer works without any cross-origin issues.
+  useEffect(() => {
+    let objectUrl: string | null = null;
+
+    if (!preview || preview.msgType !== 'file') {
+      setPreviewBlobUrl(null);
+      return;
+    }
+
+    const ext = preview.name.split('.').pop()?.toLowerCase() ?? '';
+    if (ext !== 'pdf') {
+      setPreviewBlobUrl(null);
+      return;
+    }
+
+    setPreviewLoading(true);
+    setPreviewBlobUrl(null);
+
+    fetch(preview.url)
+      .then(r => r.blob())
+      .then(blob => {
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewBlobUrl(objectUrl);
+      })
+      .catch(() => setPreviewBlobUrl(null))
+      .finally(() => setPreviewLoading(false));
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [preview?.url]);
+
+  // ── 7. Realtime ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!myId) return;
@@ -348,14 +483,12 @@ export default function MessagingPanel() {
         const msg = payload.new as DBMessage;
 
         if (msg.sender_id === activeIdRef.current) {
-          // Currently viewing this conversation — append and mark read
           setMessages(prev => [...prev, { ...msg, isOwn: false }]);
           supabase.from('messages')
             .update({ read_at: new Date().toISOString() })
             .eq('id', msg.id)
             .then(() => {});
         } else {
-          // Background message — increment unread + update preview
           setContacts(prev => prev.map(c => c.id === msg.sender_id
             ? { ...c, unread: c.unread + 1, lastMessage: msg.text, lastTime: fmtTime(msg.created_at), lastTimestamp: msg.created_at }
             : c));
@@ -366,15 +499,35 @@ export default function MessagingPanel() {
     return () => { supabase.removeChannel(channel); };
   }, [myId]);
 
-  // ── Effects ───────────────────────────────────────────────────────────────
+  // ── Presence — track who is online within the same institution ───────────────
+  useEffect(() => {
+    if (!myId || !institutionId) return;
 
-  // Clean up timers and sounds on unmount
+    const presence = supabase.channel(`presence-${institutionId}`, {
+      config: { presence: { key: myId } },
+    });
+
+    presence
+      .on('presence', { event: 'sync' }, () => {
+        const state   = presence.presenceState<{ user_id: string }>();
+        const ids     = new Set(Object.values(state).flat().map(p => p.user_id));
+        ids.delete(myId); // don't count yourself
+        setOnlineUsers(ids);
+      })
+      .subscribe(async status => {
+        if (status === 'SUBSCRIBED') {
+          await presence.track({ user_id: myId });
+        }
+      });
+
+    return () => { supabase.removeChannel(presence); };
+  }, [myId, institutionId]);
+
+  // ── Effects ──────────────────────────────────────────────────────────────────
+
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
-
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
-  // Auto-select contact from router state (e.g. "Message Supervisor" button)
-  // or auto-open the only contact for students who have exactly one visible contact
   useEffect(() => {
     if (!contacts.length || activeId) return;
     if (preselectedId && contacts.find(c => c.id === preselectedId)) {
@@ -399,7 +552,6 @@ export default function MessagingPanel() {
 
   const activeContact = contacts.find(c => c.id === activeId) ?? null;
 
-  // Sort: unread first, then by most recent message (raw ISO) descending
   const sorted = [...contacts].sort((a, b) => {
     if (b.unread !== a.unread) return b.unread - a.unread;
     const ta = a.lastTimestamp ? new Date(a.lastTimestamp).getTime() : 0;
@@ -414,6 +566,8 @@ export default function MessagingPanel() {
     : sorted;
 
   const totalUnread = contacts.reduce((s, c) => s + c.unread, 0);
+
+  const busy = sending || uploading;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -470,14 +624,22 @@ export default function MessagingPanel() {
                 }}
               >
                 <Group gap="sm" wrap="nowrap">
-                  <Avatar src={contact.avatar_url} color={roleColor(contact.role)} radius="xl" size={38}>
-                    {getInitials(contact.name)}
-                  </Avatar>
+                  <Box style={{ position: 'relative', flexShrink: 0 }}>
+                    <Avatar src={contact.avatar_url} color={roleColor(contact.role)} radius="xl" size={38}>
+                      {getInitials(contact.name)}
+                    </Avatar>
+                    {onlineUsers.has(contact.id) && (
+                      <Box style={{
+                        position: 'absolute', bottom: 1, right: 1,
+                        width: 11, height: 11, borderRadius: '50%',
+                        background: '#40c057',
+                        border: '2px solid white',
+                      }} />
+                    )}
+                  </Box>
                   <Box style={{ flex: 1, minWidth: 0 }}>
                     <Group justify="space-between" wrap="nowrap">
-                      <Text size="sm" fw={contact.unread > 0 ? 700 : 600} truncate>
-                        {contact.name}
-                      </Text>
+                      <Text size="sm" fw={contact.unread > 0 ? 700 : 600} truncate>{contact.name}</Text>
                       {contact.lastTime && (
                         <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>{contact.lastTime}</Text>
                       )}
@@ -518,35 +680,59 @@ export default function MessagingPanel() {
                 <LuArrowLeft size={16} />
               </ActionIcon>
             )}
-            <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={isMobile ? 34 : 40} style={{ flexShrink: 0 }}>
-              {getInitials(activeContact.name)}
-            </Avatar>
+            <Box style={{ position: 'relative', flexShrink: 0 }}>
+              <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={isMobile ? 34 : 40}>
+                {getInitials(activeContact.name)}
+              </Avatar>
+              {onlineUsers.has(activeContact.id) && (
+                <Box style={{
+                  position: 'absolute', bottom: 1, right: 1,
+                  width: 11, height: 11, borderRadius: '50%',
+                  background: '#40c057',
+                  border: '2px solid white',
+                }} />
+              )}
+            </Box>
             <Box style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
               <Text fw={700} size="sm" truncate>{activeContact.name}</Text>
-              {!isMobile && (
+              {!isMobile ? (
                 <Group gap={4} wrap="nowrap">
-                  <LuCircle size={8} color="#adb5bd" fill="#adb5bd" style={{ flexShrink: 0 }} />
-                  <Text size="xs" c="dimmed" truncate>{activeContact.role} · {activeContact.email}</Text>
+                  {onlineUsers.has(activeContact.id) ? (
+                    <>
+                      <LuCircle size={8} color="#40c057" fill="#40c057" style={{ flexShrink: 0 }} />
+                      <Text size="xs" c="green.6" fw={500}>Online</Text>
+                      <Text size="xs" c="dimmed">· {activeContact.role}</Text>
+                    </>
+                  ) : (
+                    <>
+                      <LuCircle size={8} color="#adb5bd" fill="#adb5bd" style={{ flexShrink: 0 }} />
+                      <Text size="xs" c="dimmed" truncate>{activeContact.role} · {activeContact.email}</Text>
+                    </>
+                  )}
                 </Group>
-              )}
-              {isMobile && (
-                <Text size="xs" c="dimmed" truncate>{activeContact.role}</Text>
+              ) : (
+                <Group gap={4} wrap="nowrap">
+                  {onlineUsers.has(activeContact.id) && (
+                    <LuCircle size={7} color="#40c057" fill="#40c057" style={{ flexShrink: 0 }} />
+                  )}
+                  <Text size="xs" c={onlineUsers.has(activeContact.id) ? 'green.6' : 'dimmed'} truncate>
+                    {onlineUsers.has(activeContact.id) ? 'Online' : activeContact.role}
+                  </Text>
+                </Group>
               )}
             </Box>
             <Group gap={isMobile ? 2 : 4} wrap="nowrap" style={{ flexShrink: 0 }}>
               <ActionIcon
                 variant="subtle" color="green" radius="xl" size={isMobile ? 'md' : 'lg'}
                 onClick={() => startCall('voice', { id: activeContact.id, name: activeContact.name, avatar: activeContact.avatar_url })}
-                loading={creatingCall}
-                title="Voice call"
+                loading={creatingCall} title="Voice call"
               >
                 <LuPhone size={isMobile ? 15 : 17} />
               </ActionIcon>
               <ActionIcon
                 variant="subtle" color="brand" radius="xl" size={isMobile ? 'md' : 'lg'}
                 onClick={() => startCall('video', { id: activeContact.id, name: activeContact.name, avatar: activeContact.avatar_url })}
-                loading={creatingCall}
-                title="Video call"
+                loading={creatingCall} title="Video call"
               >
                 <LuVideo size={isMobile ? 15 : 17} />
               </ActionIcon>
@@ -564,10 +750,13 @@ export default function MessagingPanel() {
                     No messages yet. Say hello to {activeContact.name}!
                   </Text>
                 )}
+
                 {messages.map(msg => (
                   <Box key={msg.id} style={{ display: 'flex', justifyContent: msg.isOwn ? 'flex-end' : 'flex-start' }}>
+
                     {!msg.isOwn && (
-                      <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)} radius="xl" size={28} mr={8} style={{ flexShrink: 0, alignSelf: 'flex-end' }}>
+                      <Avatar src={activeContact.avatar_url} color={roleColor(activeContact.role)}
+                        radius="xl" size={28} mr={8} style={{ flexShrink: 0, alignSelf: 'flex-end' }}>
                         {getInitials(activeContact.name)}
                       </Avatar>
                     )}
@@ -578,31 +767,98 @@ export default function MessagingPanel() {
                         </Avatar>
                       </Box>
                     )}
+
                     <Box style={{ maxWidth: '70%' }}>
                       <Box style={{
-                        padding: '10px 14px',
+                        padding:      msg.message_type === 'image' ? 0 : '10px 14px',
                         borderRadius: msg.isOwn ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                        background:
-                          msg.message_type === 'voice'
-                            ? (msg.isOwn ? 'var(--mantine-color-brand-1)' : 'var(--mantine-color-gray-1)')
-                          : msg.message_type === 'call-invite'
-                            ? (msg.isOwn ? 'var(--mantine-color-green-7)' : 'var(--mantine-color-green-0)')
-                            : (msg.isOwn ? 'var(--mantine-color-brand-6)' : 'var(--mantine-color-gray-1)'),
-                        color:
-                          msg.message_type === 'call-invite' && !msg.isOwn
-                            ? 'var(--mantine-color-dark-7)'
-                          : msg.isOwn && msg.message_type !== 'voice'
-                            ? 'white'
-                            : 'var(--mantine-color-dark-7)',
-                        fontSize: '0.875rem',
-                        lineHeight: 1.5,
+                        background:   bubbleBg(msg),
+                        color:        bubbleColor(msg),
+                        fontSize:     '0.875rem',
+                        lineHeight:   1.5,
+                        overflow:     'hidden',
                       }}>
-                        {msg.message_type === 'call-ended' ? (
+
+                        {/* ── Image message ── */}
+                        {msg.message_type === 'image' && msg.file_url ? (
+                          <Box>
+                            <Tooltip label="Click to preview" withArrow position="top">
+                              <Box
+                                style={{
+                                  borderRadius: msg.isOwn ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                                  overflow: 'hidden', cursor: 'zoom-in',
+                                }}
+                                onClick={() => setPreview({ url: msg.file_url!, name: msg.file_name ?? 'Image', size: msg.file_size, msgType: 'image' })}
+                              >
+                                <img
+                                  src={msg.file_url}
+                                  alt={msg.file_name ?? 'Image'}
+                                  style={{ display: 'block', width: '100%', maxWidth: 260, maxHeight: 280, objectFit: 'cover' }}
+                                />
+                              </Box>
+                            </Tooltip>
+                            <Group gap={4} px={10} py={6} justify="space-between" wrap="nowrap">
+                              <Text size="10px" c="dimmed" truncate style={{ flex: 1 }}>
+                                {msg.file_name}
+                              </Text>
+                              <Tooltip label="Download" withArrow>
+                                <ActionIcon
+                                  size="xs" variant="subtle" color="gray"
+                                  onClick={() => downloadFile(msg.file_url!, msg.file_name ?? 'image')}
+                                >
+                                  <LuDownload size={11} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                          </Box>
+
+                        ) : msg.message_type === 'file' && msg.file_url ? (
+                          /* ── Document / file message ── */
+                          <Group
+                            gap="sm" wrap="nowrap"
+                            style={{ minWidth: 220, cursor: 'pointer' }}
+                            onClick={() => setPreview({ url: msg.file_url!, name: msg.file_name ?? 'Document', size: msg.file_size, msgType: 'file' })}
+                          >
+                            <Box style={{
+                              width: 40, height: 40, borderRadius: 8, flexShrink: 0,
+                              background: msg.isOwn ? 'rgba(255,255,255,0.2)' : '#e9ecef',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            }}>
+                              <LuFileText size={20} color={msg.isOwn ? 'white' : '#3b5bdb'} />
+                            </Box>
+                            <Box style={{ flex: 1, minWidth: 0 }}>
+                              <Text size="xs" fw={600} truncate style={{ color: msg.isOwn ? 'white' : 'var(--mantine-color-dark-7)' }}>
+                                {msg.file_name ?? 'Document'}
+                              </Text>
+                              {msg.file_size != null && (
+                                <Text size="10px" style={{ color: msg.isOwn ? 'rgba(255,255,255,0.65)' : 'var(--mantine-color-dimmed)' }}>
+                                  {fmtFileSize(msg.file_size)}
+                                </Text>
+                              )}
+                              <Text size="10px" style={{ color: msg.isOwn ? 'rgba(255,255,255,0.5)' : 'var(--mantine-color-brand-5)' }}>
+                                Tap to preview
+                              </Text>
+                            </Box>
+                            <Tooltip label="Download" withArrow>
+                              <ActionIcon
+                                size="sm" variant="subtle"
+                                style={{ flexShrink: 0, color: msg.isOwn ? 'white' : 'var(--mantine-color-brand-6)' }}
+                                onClick={e => { e.stopPropagation(); downloadFile(msg.file_url!, msg.file_name ?? 'file'); }}
+                              >
+                                <LuDownload size={14} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+
+                        ) : msg.message_type === 'call-ended' ? (
+                          /* ── Call ended ── */
                           <Group gap={8} wrap="nowrap">
                             <LuPhone size={14} />
                             <Text size="sm" c="dimmed">Call ended</Text>
                           </Group>
+
                         ) : msg.message_type === 'call-invite' && msg.audio_url ? (
+                          /* ── Call invite ── */
                           <Box>
                             <Group gap={8} wrap="nowrap" mb={msg.isOwn ? 0 : 8}>
                               <Box style={{
@@ -632,26 +888,58 @@ export default function MessagingPanel() {
                               )
                             )}
                           </Box>
+
                         ) : msg.message_type === 'voice' && msg.audio_url ? (
+                          /* ── Voice note ── */
                           <VoicePlayer url={msg.audio_url} />
+
                         ) : (
+                          /* ── Plain text ── */
                           msg.text
                         )}
                       </Box>
+
                       <Text size="xs" c="dimmed" mt={2} style={{ textAlign: msg.isOwn ? 'right' : 'left' }}>
                         {msg.isOwn ? myName : activeContact.name} · {fmtTime(msg.created_at)}
                       </Text>
                     </Box>
                   </Box>
                 ))}
+
                 <div ref={bottomRef} />
               </Stack>
             )}
           </ScrollArea>
 
-          {/* Input */}
+          {/* ── Input bar ── */}
           <Box style={{ padding: '12px 16px', borderTop: '1px solid #f1f3f5' }}>
+
+            {/* Hidden file inputs */}
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) sendFile(file, 'image');
+                e.target.value = '';
+              }}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv"
+              style={{ display: 'none' }}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) sendFile(file, 'file');
+                e.target.value = '';
+              }}
+            />
+
             {recording ? (
+              /* Recording bar */
               <Group gap="sm">
                 <Box style={{
                   display: 'flex', alignItems: 'center', gap: 10, flex: 1,
@@ -670,25 +958,54 @@ export default function MessagingPanel() {
                 </ActionIcon>
               </Group>
             ) : (
-              <Group gap="sm">
+              /* Normal input bar */
+              <Group gap={6} wrap="nowrap">
+
+                {/* Image upload button */}
+                <Tooltip label="Share image" withArrow>
+                  <ActionIcon
+                    size="lg" radius="xl" color="brand" variant="subtle"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={busy}
+                  >
+                    <LuImage size={18} />
+                  </ActionIcon>
+                </Tooltip>
+
+                {/* Document upload button */}
+                <Tooltip label="Share document" withArrow>
+                  <ActionIcon
+                    size="lg" radius="xl" color="brand" variant="subtle"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={busy}
+                  >
+                    <LuPaperclip size={18} />
+                  </ActionIcon>
+                </Tooltip>
+
                 <TextInput
                   style={{ flex: 1 }}
-                  placeholder={`Message ${activeContact.name}…`}
+                  placeholder={uploading ? 'Uploading…' : `Message ${activeContact.name}…`}
                   value={draft}
                   onChange={e => setDraft(e.currentTarget.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                   radius="xl"
                   size="md"
-                  disabled={sending}
+                  disabled={busy}
                 />
-                {draft.trim() ? (
+
+                {uploading ? (
+                  <ActionIcon size="lg" radius="xl" color="brand" variant="light" loading>
+                    <LuSend size={16} />
+                  </ActionIcon>
+                ) : draft.trim() ? (
                   <ActionIcon size="lg" radius="xl" color="brand" variant="filled"
                     onClick={sendMessage} disabled={sending} loading={sending}>
                     <LuSend size={16} />
                   </ActionIcon>
                 ) : (
                   <ActionIcon size="lg" radius="xl" color="brand" variant="light"
-                    onClick={startRecording} disabled={sending} title="Record voice note">
+                    onClick={startRecording} disabled={busy} title="Record voice note">
                     <LuMic size={16} />
                   </ActionIcon>
                 )}
@@ -706,6 +1023,97 @@ export default function MessagingPanel() {
           </Stack>
         </Paper>
       ) : null}
+
+      {/* ── Preview modal ── */}
+      <Modal
+        opened={preview !== null}
+        onClose={() => setPreview(null)}
+        title={
+          <Group gap="xs" wrap="nowrap">
+            {preview?.msgType === 'image' ? <LuImage size={16} /> : <LuFileText size={16} />}
+            <Text size="sm" fw={600} truncate style={{ maxWidth: 320 }}>
+              {preview?.name}
+            </Text>
+          </Group>
+        }
+        size={preview?.msgType === 'image' ? 'lg' : 'xl'}
+        centered
+        padding="md"
+      >
+        {preview && (
+          <Stack gap="md">
+            {preview.msgType === 'image' ? (
+              /* Full-size image */
+              <Box ta="center" style={{ background: '#000', borderRadius: 8, overflow: 'hidden' }}>
+                <img
+                  src={preview.url}
+                  alt={preview.name}
+                  style={{ maxWidth: '100%', maxHeight: '65vh', objectFit: 'contain', display: 'block', margin: '0 auto' }}
+                />
+              </Box>
+            ) : (() => {
+              const ext      = preview.name.split('.').pop()?.toLowerCase() ?? '';
+              const isOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext);
+
+              if (ext === 'pdf') {
+                /* PDF — fetched as blob and rendered by the browser's native engine */
+                return previewLoading ? (
+                  <Box ta="center" py="xl"><Loader color="brand" /></Box>
+                ) : previewBlobUrl ? (
+                  <Box style={{ height: '70vh', borderRadius: 8, overflow: 'hidden', border: '1px solid #e9ecef' }}>
+                    <iframe
+                      src={previewBlobUrl}
+                      title={preview.name}
+                      style={{ width: '100%', height: '100%', border: 'none' }}
+                    />
+                  </Box>
+                ) : (
+                  <Text ta="center" c="dimmed" py="xl">Could not load PDF preview — please download to view.</Text>
+                );
+              }
+
+              if (isOffice) {
+                /* Word / Excel / PowerPoint — Microsoft Office Online viewer */
+                return (
+                  <Box style={{ height: '70vh', borderRadius: 8, overflow: 'hidden', border: '1px solid #e9ecef' }}>
+                    <iframe
+                      key={preview.url}
+                      src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(preview.url)}`}
+                      title={preview.name}
+                      style={{ width: '100%', height: '100%', border: 'none' }}
+                    />
+                  </Box>
+                );
+              }
+
+              /* Other file types (txt, csv, zip …) — no in-browser preview */
+              return (
+                <Box ta="center" py="xl">
+                  <LuFileText size={48} color="#adb5bd" />
+                  <Text c="dimmed" mt="sm">No preview available for .{ext} files.</Text>
+                  <Text size="xs" c="dimmed">Download the file to open it.</Text>
+                </Box>
+              );
+            })()}
+
+            <Group justify="space-between" align="center">
+              {preview.size != null && (
+                <Text size="xs" c="dimmed">{fmtFileSize(preview.size)}</Text>
+              )}
+              <Button
+                ml="auto"
+                size="sm"
+                variant="light"
+                color="brand"
+                leftSection={<LuDownload size={14} />}
+                onClick={() => downloadFile(preview.url, preview.name)}
+              >
+                Download
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Box>
   );
 }

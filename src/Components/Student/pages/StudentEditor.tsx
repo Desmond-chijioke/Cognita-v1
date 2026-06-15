@@ -16,9 +16,10 @@ import {
   LuUpload, LuMessageSquareDot, LuEye,
   LuMenu, LuArrowLeft,
 } from 'react-icons/lu';
-import { STUDENT_REFERENCES, REVIEW_SCORES, REVIEW_ISSUES } from '../studentData';
+import { STUDENT_REFERENCES } from '../studentData';
 import { STUDENT_SECTIONS } from '../studentData';
-import type { ReviewScore, ReviewIssue } from '../studentData';
+import type { IssueSeverity } from '../studentData';
+import { fetchAIReport } from '../../../supabase/aiReports';
 import {
   PROJECT_TYPES, buildSections, mapSections,
 } from '../editorTemplates';
@@ -48,6 +49,20 @@ interface ChatMessage {
   text: string;
 }
 
+interface ReviewScoreAI { category: string; score: number; maxScore: number }
+interface ReviewIssueAI {
+  sectionId:    string;
+  sectionTitle: string;
+  severity:     IssueSeverity;
+  message:      string;
+  suggestion:   string | null;
+}
+interface AIReviewReport {
+  scores:  ReviewScoreAI[];
+  issues:  ReviewIssueAI[];
+  summary: string;
+}
+
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function sectionStatusIcon(status: SectionStatus) {
@@ -62,7 +77,7 @@ function sectionStatusIcon(status: SectionStatus) {
   }
 }
 
-function severityColor(s: ReviewIssue['severity']): string {
+function severityColor(s: IssueSeverity): string {
   switch (s) {
     case 'critical':   return 'red';
     case 'major':      return 'orange';
@@ -282,6 +297,8 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const [showResolvedAnnos, setShowResolvedAnnos] = useState(false);
   const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
   const [refSearch,     setRefSearch]     = useState('');
+  const [aiReview,      setAiReview]      = useState<AIReviewReport | null>(null);
+  const [aiReviewAt,    setAiReviewAt]    = useState<string | null>(null);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: 'ai-1', role: 'ai', text: 'Hello! I am your AI writing assistant. I can help you refine arguments, suggest citations, improve clarity, or expand sections. What would you like to work on?' },
@@ -289,7 +306,9 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   ]);
   const [chatInput, setChatInput] = useState('');
 
-  const centerRef = useRef<HTMLDivElement>(null);
+  const centerRef    = useRef<HTMLDivElement>(null);
+  const textareaRef  = useRef<HTMLTextAreaElement>(null);
+  const savedCursorPos = useRef<number | null>(null);
 
   // â”€â”€ Redux + Supabase submissions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const dispatch    = useAppDispatch();
@@ -417,6 +436,13 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
         });
       });
 
+    }).catch(() => {});
+
+    fetchAIReport<AIReviewReport>(user.id, 'ai_review').then(row => {
+      if (row?.data && Array.isArray((row.data as AIReviewReport).scores)) {
+        setAiReview(row.data as AIReviewReport);
+        setAiReviewAt(row.created_at);
+      }
     }).catch(() => {});
   }, [user?.id]);
 
@@ -550,8 +576,10 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const inProgressCount = sections.filter(s => s.status === 'in-progress' && getSubStatus(s.id) !== 'approved').length;
   const notStartedMandatory = sections.filter(s => s.status === 'not-started' && s.mandatory).length;
 
-  const totalScore    = REVIEW_SCORES.reduce((acc, r) => acc + r.score, 0);
-  const maxTotalScore = REVIEW_SCORES.reduce((acc, r) => acc + r.maxScore, 0);
+  const reviewScores  = aiReview?.scores ?? [];
+  const reviewIssues  = aiReview?.issues ?? [];
+  const totalScore    = reviewScores.reduce((acc, r) => acc + r.score, 0);
+  const maxTotalScore = reviewScores.reduce((acc, r) => acc + r.maxScore, 0) || 1;
   const reviewPct     = Math.round((totalScore / maxTotalScore) * 100);
 
   const filteredRefs      = STUDENT_REFERENCES.filter(r =>
@@ -809,19 +837,34 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
     }
   };
 
-  // Section content insert (citations)
+  const saveCursorPos = () => {
+    if (textareaRef.current) savedCursorPos.current = textareaRef.current.selectionStart;
+  };
+
+  // Section content insert (citations) — inserts at saved cursor position
   const insertCitation = useCallback((refId: string) => {
     const ref = STUDENT_REFERENCES.find(r => r.id === refId);
     if (!ref) return;
     const lastName = ref.authors[0]?.split(',')[0] ?? 'Author';
     const cite     = ` (${lastName} et al., ${ref.year})`;
-    setSections(prev => prev.map(s =>
-      s.id === activeSection?.id ? { ...s, content: s.content + cite } : s
-    ));
+    let insertPos  = savedCursorPos.current;
+    setSections(prev => prev.map(s => {
+      if (s.id !== activeSection?.id) return s;
+      const pos        = insertPos ?? s.content.length;
+      const newContent = s.content.slice(0, pos) + cite + s.content.slice(pos);
+      return { ...s, content: newContent, wordCount: countWords(newContent), status: 'in-progress' as SectionStatus };
+    }));
+    const newCursorPos = (insertPos ?? content.length) + cite.length;
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    }, 0);
     notifications.show({ title: 'Citation inserted', message: `(${lastName} et al., ${ref.year})`, color: 'blue' });
     setCiteModalOpen(false);
     setCiteSearch('');
-  }, [activeSection?.id]);
+  }, [activeSection?.id, content.length]);
 
   // Section rename
   const startEdit = (sec: EditorSection) => { setEditingId(sec.id); setEditingTitle(sec.title); };
@@ -903,7 +946,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
     <Tabs value={rightTab} onChange={v => v && setRightTab(v)}
       style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       <Tabs.List style={{ flexShrink: 0 }}>
-        <Tabs.Tab value="chat"      leftSection={<LuBot      size={13} />} style={{ fontSize: 12 }}>AI Chat</Tabs.Tab>
+        {/* <Tabs.Tab value="chat"      leftSection={<LuBot      size={13} />} style={{ fontSize: 12 }}>AI Chat</Tabs.Tab> */}
         <Tabs.Tab value="reviewer"  leftSection={<LuActivity size={13} />} style={{ fontSize: 12 }}>Reviewer</Tabs.Tab>
         <Tabs.Tab value="citations" leftSection={<LuQuote    size={13} />} style={{ fontSize: 12 }}>Citations</Tabs.Tab>
         <Tabs.Tab value="comments"  leftSection={<LuMessageSquare size={13} />} style={{ fontSize: 12 }}>
@@ -941,7 +984,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
         )}
       </Tabs.List>
 
-      {/* AI Chat */}
+      {/* AI Chat — commented out
       <Tabs.Panel value="chat" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 10px' }}>
           <Stack gap={10}>
@@ -976,6 +1019,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
           </Group>
         </Box>
       </Tabs.Panel>
+      */}
 
       {/* Reviewer */}
       <Tabs.Panel value="reviewer" style={{ overflowY: 'auto', padding: '14px 12px' }}>
@@ -989,11 +1033,11 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
           <Box>
             <Text size="xs" fw={600} mb={2}>Overall Score</Text>
             <Text size="xs" c="dimmed">{totalScore} / {maxTotalScore} points</Text>
-            <Text size="10px" c="dimmed" mt={2}>Based on {REVIEW_SCORES.length} categories</Text>
+            <Text size="10px" c="dimmed" mt={2}>Based on {reviewScores.length} categories</Text>
           </Box>
         </Box>
         <Stack gap={8} mb={16}>
-          {REVIEW_SCORES.map((rs: ReviewScore) => (
+          {reviewScores.map((rs) => (
             <Box key={rs.category}>
               <Group justify="space-between" mb={3}>
                 <Text size="xs">{rs.category}</Text>
@@ -1005,18 +1049,26 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
             </Box>
           ))}
         </Stack>
-        <Text size="xs" fw={600} mb={8}>Issues</Text>
+        {aiReview?.summary && (
+          <Box mb={12} style={{ background: '#f8f9ff', borderRadius: 8, padding: '8px 10px', borderLeft: `3px solid ${BRAND}` }}>
+            <Text size="xs" fw={600} mb={4}>Summary</Text>
+            <Text size="xs" c="dimmed">{aiReview.summary}</Text>
+          </Box>
+        )}
+        <Text size="xs" fw={600} mb={8}>Issues ({reviewIssues.length})</Text>
         <Stack gap={6}>
-          {REVIEW_ISSUES.map((issue: ReviewIssue) => (
-            <Box key={issue.id}
-              style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', background: expandedIssueId === issue.id ? '#f8f9fa' : '#fff' }}
-              onClick={() => setExpandedIssueId(id => id === issue.id ? null : issue.id)}>
+          {reviewIssues.length === 0 ? (
+            <Text size="xs" c="dimmed" ta="center" py={12}>No issues found.</Text>
+          ) : reviewIssues.map((issue, idx) => (
+            <Box key={idx}
+              style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px', cursor: 'pointer', background: expandedIssueId === String(idx) ? '#f8f9fa' : '#fff' }}
+              onClick={() => setExpandedIssueId(id => id === String(idx) ? null : String(idx))}>
               <Group gap={6} mb={4}>
                 <Badge size="xs" color={severityColor(issue.severity)} variant="light" tt="capitalize">{issue.severity}</Badge>
                 <Text size="10px" c="dimmed">{issue.sectionTitle}</Text>
               </Group>
               <Text size="xs">{issue.message}</Text>
-              {expandedIssueId === issue.id && issue.suggestion && (
+              {expandedIssueId === String(idx) && issue.suggestion && (
                 <Box mt={8} style={{ background: '#f0f4ff', borderRadius: 6, padding: '6px 8px', borderLeft: `3px solid ${BRAND}` }}>
                   <Text size="xs" c="brand">{issue.suggestion}</Text>
                 </Box>
@@ -1330,7 +1382,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
           </Group>
           <Group gap={6} wrap="nowrap">
             {!focusMode && !isMobile && (
-              <Button size="xs" variant="subtle" leftSection={<LuQuote size={14} />} onClick={() => setCiteModalOpen(true)}>Cite</Button>
+              <Button size="xs" variant="subtle" leftSection={<LuQuote size={14} />} onClick={() => { saveCursorPos(); setCiteModalOpen(true); }}>Cite</Button>
             )}
             <Button
               size="xs"
@@ -1685,8 +1737,10 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
           {/* Mobile: plain full-screen textarea */}
           {isMobile ? (
             <textarea
+              ref={textareaRef}
               value={content}
               onChange={e => updateContent(e.target.value)}
+              onBlur={saveCursorPos}
               spellCheck
               placeholder={activeSection?.placeholder ?? 'Start writing hereâ€¦'}
               style={{
@@ -1717,8 +1771,10 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
                   }}>
                     {i === 0 && (
                       <textarea
+                        ref={textareaRef}
                         value={content}
                         onChange={e => updateContent(e.target.value)}
+                        onBlur={saveCursorPos}
                         style={{ ...textareaStyle, height: Math.max(600, pageCount * 912) } as React.CSSProperties}
                         spellCheck
                         placeholder={activeSection?.placeholder ?? 'Start writing hereâ€¦'}
@@ -1759,7 +1815,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
             paddingTop: 8, paddingBottom: 8, gap: 2,
           }}>
             {([
-              { tab: 'chat',      Icon: LuBot,            label: 'AI Chat',   badgeColor: 'brand',  badge: 0 },
+              // { tab: 'chat',      Icon: LuBot,            label: 'AI Chat',   badgeColor: 'brand',  badge: 0 },
               { tab: 'reviewer',  Icon: LuActivity,       label: 'Reviewer',  badgeColor: 'brand',  badge: 0 },
               { tab: 'citations', Icon: LuQuote,          label: 'Citations', badgeColor: 'brand',  badge: 0 },
               { tab: 'comments',  Icon: LuMessageSquare,  label: 'Comments',  badgeColor: 'brand',

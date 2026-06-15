@@ -124,31 +124,55 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
   const wakeLockRef     = useRef<WakeLockSentinel | null>(null);
 
   // ── Draggable window ─────────────────────────────────────────────────────
-  const posRef     = useRef({ x: window.innerWidth - 380, y: window.innerHeight - 500 });
+  const isMobileDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  const canScreenShare = typeof (navigator.mediaDevices as MediaDevices & { getDisplayMedia?: unknown })?.getDisplayMedia === 'function';
+
+  const posRef     = useRef({
+    x: isMobileDevice ? 8 : window.innerWidth - 380,
+    y: window.innerHeight - 500,
+  });
   const [pos, setPos] = useState(posRef.current);
   const isDragging  = useRef(false);
   const dragOffset  = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const clamp = (touch: { clientX: number; clientY: number }) => ({
+      x: Math.max(0, Math.min(window.innerWidth  - 360, touch.clientX - dragOffset.current.x)),
+      y: Math.max(0, Math.min(window.innerHeight - 480, touch.clientY - dragOffset.current.y)),
+    });
+
+    // ── Mouse (desktop) ──────────────────────────────────────────────────────
+    const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
-      const next = {
-        x: Math.max(0, Math.min(window.innerWidth  - 360, e.clientX - dragOffset.current.x)),
-        y: Math.max(0, Math.min(window.innerHeight - 480, e.clientY - dragOffset.current.y)),
-      };
+      const next = clamp(e);
       posRef.current = next;
       setPos(next);
     };
-    const onUp = () => {
+    const onMouseUp = () => {
       if (!isDragging.current) return;
       isDragging.current = false;
       document.body.style.cursor = '';
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup',   onUp);
+
+    // ── Touch (mobile) ───────────────────────────────────────────────────────
+    const onTouchMove = (e: TouchEvent) => {
+      if (!isDragging.current) return;
+      e.preventDefault(); // block page scroll while dragging the call window
+      const next = clamp(e.touches[0]);
+      posRef.current = next;
+      setPos(next);
+    };
+    const onTouchEnd = () => { isDragging.current = false; };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup',   onMouseUp);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend',  onTouchEnd);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup',   onUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup',   onMouseUp);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend',  onTouchEnd);
       document.body.style.cursor = '';
     };
   }, []);
@@ -156,11 +180,15 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
   const onDragStart = (e: React.MouseEvent) => {
     isDragging.current = true;
     document.body.style.cursor = 'grabbing';
-    dragOffset.current = {
-      x: e.clientX - posRef.current.x,
-      y: e.clientY - posRef.current.y,
-    };
+    dragOffset.current = { x: e.clientX - posRef.current.x, y: e.clientY - posRef.current.y };
     e.preventDefault();
+  };
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    isDragging.current = true;
+    dragOffset.current = { x: t.clientX - posRef.current.x, y: t.clientY - posRef.current.y };
+    // don't call preventDefault here — passive listener on the element is fine
   };
 
   // Join room on mount
@@ -274,11 +302,21 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
       fontFamily: 'inherit',
     }}>
 
+      {/* ── Drag pill — visible hint on mobile ── */}
+      <Box style={{
+        display: 'flex', justifyContent: 'center',
+        padding: '6px 0 2px', flexShrink: 0,
+        background: '#1a1a1a',
+      }}>
+        <Box style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.22)' }} />
+      </Box>
+
       {/* ── Header bar — drag handle ── */}
       <Box
         onMouseDown={onDragStart}
+        onTouchStart={onTouchStart}
         style={{
-          padding: '10px 14px',
+          padding: '8px 14px 10px',
           background: '#1a1a1a',
           borderBottom: '1px solid rgba(255,255,255,0.08)',
           display: 'flex', alignItems: 'center', gap: 10,
@@ -286,6 +324,7 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
           zIndex: 3,
           cursor: 'grab',
           userSelect: 'none',
+          touchAction: 'none', // critical — stops browser scroll from competing with drag
         }}
       >
         <Avatar src={contactAvatar} size={30} radius="50%" color="brand" style={{ flexShrink: 0 }}>
@@ -423,11 +462,22 @@ function CallUI({ type, roomUrl, contactName, contactAvatar, myName, myAvatar, o
           </ActionIcon>
         </Tooltip>
 
-        <Tooltip label={isSharingScreen ? 'Stop sharing' : 'Share screen'} withArrow color="dark">
+        <Tooltip
+          label={
+            !canScreenShare
+              ? 'Screen sharing is not supported on mobile browsers'
+              : isSharingScreen ? 'Stop sharing' : 'Share screen'
+          }
+          withArrow color="dark"
+        >
           <ActionIcon
             size={44} radius="50%"
-            style={isSharingScreen ? CTRL_BTN_SCREEN : CTRL_BTN}
-            onClick={toggleScreen}
+            style={{
+              ...(isSharingScreen ? CTRL_BTN_SCREEN : CTRL_BTN),
+              opacity: canScreenShare ? 1 : 0.35,
+              cursor: canScreenShare ? 'pointer' : 'not-allowed',
+            }}
+            onClick={canScreenShare ? toggleScreen : undefined}
             aria-label={isSharingScreen ? 'Stop share' : 'Share screen'}
           >
             {isSharingScreen ? <LuMonitorOff size={18} color="white" /> : <LuMonitor size={18} color="white" />}

@@ -26,6 +26,7 @@ import {
 } from '../../../supabase/submissions';
 import { useCollaborativeDoc } from '../../../hooks/useCollaborativeDoc';
 import type { CollabComment } from '../../../hooks/useCollaborativeDoc';
+import TTSPlayer from '../TTSPlayer';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -1101,8 +1102,11 @@ export default function SupervisorStudentDetail() {
                           <Badge color={statusColor} variant="light" radius="sm" size="sm" style={{ flexShrink: 0 }}>{statusLabel}</Badge>
                         </Group>
 
+                        {/* TTS player */}
+                        <TTSPlayer text={sub.content} />
+
                         {/* Selectable content with highlights */}
-                        <Text size="9px" c="dimmed" mb={4} style={{ textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
+                        <Text size="9px" c="dimmed" mt={8} mb={4} style={{ textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
                           Select any text to highlight and comment
                         </Text>
                         <Paper
@@ -1326,8 +1330,11 @@ export default function SupervisorStudentDetail() {
                         </Badge>
                       </Group>
 
+                      {/* TTS player */}
+                      <TTSPlayer text={sub.content} />
+
                       {/* Content preview — approved chapters show clean text, no highlights */}
-                      <Paper p="md" radius="md" mb="sm"
+                      <Paper p="md" radius="md" mt={8} mb="sm"
                         style={{ background: '#f6fef9', border: '1px solid #b2f2bb', maxHeight: 180, overflowY: 'auto' }}
                       >
                         <Text size="sm" style={{ fontFamily: 'Georgia, serif', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
