@@ -5,7 +5,7 @@ import { supabase } from './client';
 // previous report so the page always shows the latest result without
 // regenerating it on every visit.
 
-export type AIReportType = 'plagiarism' | 'ai_review' | 'references' | 'analysis';
+export type AIReportType = 'plagiarism' | 'ai_review' | 'references' | 'analysis' | 'datasets';
 
 export interface AIReportRow<T = unknown> {
   id:           string;

@@ -20,7 +20,7 @@ import { STUDENT_SECTIONS } from '../studentData';
 import type { IssueSeverity } from '../studentData';
 import { fetchRefs } from '../../../supabase/references';
 import type { DBReference } from '../../../supabase/references';
-import { fetchResultTables } from '../../../supabase/resultTables';
+import { fetchResultTables, createResultTable, saveResultTable } from '../../../supabase/resultTables';
 import type { DBResultTable } from '../../../supabase/resultTables';
 import { uploadEditorImage, listEditorImages } from '../../../supabase/editorImages';
 import { fetchAIReport } from '../../../supabase/aiReports';
@@ -559,6 +559,13 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const [liveRefs,      setLiveRefs]      = useState<DBReference[]>([]);
   const [liveTables,    setLiveTables]    = useState<DBResultTable[]>([]);
   const [tableSearch,   setTableSearch]   = useState('');
+
+  // Create-table modal state
+  const [createTableOpen,  setCreateTableOpen]  = useState(false);
+  const [ctName,           setCtName]           = useState('');
+  const [ctHeaders,        setCtHeaders]        = useState<string[]>(['Column 1', 'Column 2', 'Column 3']);
+  const [ctRows,           setCtRows]           = useState<string[][]>([['', '', ''], ['', '', '']]);
+  const [savingTable,      setSavingTable]      = useState(false);
   const [sectionTables, setSectionTables] = useState<Record<string, DocTable[]>>({});
   const userModifiedLayout = useRef(false);
   const saveLayoutTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1690,6 +1697,14 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
 
       {/* Tables */}
       <Tabs.Panel value="tables" style={{ overflowY: 'auto', padding: '12px 10px' }}>
+        <Button size="xs" fullWidth color="brand" variant="light" leftSection={<LuPlus size={13} />}
+          mb={10} onClick={() => {
+            setCtName(''); setCtHeaders(['Column 1', 'Column 2', 'Column 3']);
+            setCtRows([['', '', ''], ['', '', '']]);
+            setCreateTableOpen(true);
+          }}>
+          Create Table
+        </Button>
         <TextInput placeholder="Search tables…" leftSection={<LuSearch size={14} />}
           size="xs" mb={10} value={tableSearch} onChange={e => setTableSearch(e.currentTarget.value)} />
         <Stack gap={6}>
@@ -1708,7 +1723,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
           {filteredTables.length === 0 && (
             <Text size="xs" c="dimmed" ta="center" py={20}>
               {liveTables.length === 0
-                ? 'No tables yet — go to Results Builder to create one.'
+                ? 'No tables yet — click "Create Table" to add one.'
                 : 'No tables match your search.'}
             </Text>
           )}
@@ -2710,6 +2725,114 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
       </Modal>
 
       {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CITATION MODAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* ════ CREATE TABLE MODAL ════ */}
+      <Modal
+        opened={createTableOpen}
+        onClose={() => setCreateTableOpen(false)}
+        title={<Text fw={700} size="sm">Create Table</Text>}
+        size="90%"
+        styles={{ body: { padding: 0 } }}
+      >
+        <Box p="md" style={{ borderBottom: '1px solid #f1f3f5' }}>
+          <TextInput
+            label="Table name"
+            placeholder="e.g. Table 1: Model Accuracy"
+            value={ctName}
+            onChange={e => setCtName(e.currentTarget.value)}
+            mb="sm"
+          />
+          <Group gap="xs">
+            <Button size="xs" variant="light" color="brand" leftSection={<LuPlus size={12} />}
+              onClick={() => { setCtHeaders(h => [...h, `Column ${h.length + 1}`]); setCtRows(r => r.map(row => [...row, ''])); }}>
+              Add Column
+            </Button>
+            <Button size="xs" variant="light" color="teal" leftSection={<LuPlus size={12} />}
+              onClick={() => setCtRows(r => [...r, ctHeaders.map(() => '')])}>
+              Add Row
+            </Button>
+            <Text size="xs" c="dimmed" ml="auto">{ctHeaders.length} cols · {ctRows.length} rows</Text>
+          </Group>
+        </Box>
+
+        <Box style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(80vh - 240px)', padding: '0 16px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto', marginTop: 8 }}>
+            <thead>
+              <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+                <th style={{ width: 36, padding: '6px 8px', borderRight: '1px solid #dee2e6', color: '#adb5bd', fontSize: 11 }}>#</th>
+                {ctHeaders.map((h, ci) => (
+                  <th key={ci} style={{ borderRight: ci < ctHeaders.length - 1 ? '1px solid #dee2e6' : undefined, minWidth: 120 }}>
+                    <Group gap={4} wrap="nowrap">
+                      <Box component="input" value={h}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCtHeaders(prev => prev.map((x, i) => i === ci ? e.target.value : x))}
+                        style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: 13, fontWeight: 700, color: '#3b5bdb', padding: '6px 8px', fontFamily: 'inherit' }}
+                      />
+                      {ctHeaders.length > 1 && (
+                        <Box component="button"
+                          onClick={() => { setCtHeaders(h => h.filter((_, i) => i !== ci)); setCtRows(r => r.map(row => row.filter((_, i) => i !== ci))); }}
+                          style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#e03131', padding: 2, flexShrink: 0, marginRight: 4 }}>
+                          <LuX size={11} />
+                        </Box>
+                      )}
+                    </Group>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ctRows.map((row, ri) => (
+                <tr key={ri} style={{ borderBottom: '1px solid #f1f3f5' }}>
+                  <td style={{ width: 36, padding: '0 8px', borderRight: '1px solid #f1f3f5', textAlign: 'center' }}>
+                    <Group gap={2} justify="center" wrap="nowrap">
+                      <Text size="10px" c="dimmed">{ri + 1}</Text>
+                      {ctRows.length > 1 && (
+                        <Box component="button"
+                          onClick={() => setCtRows(r => r.filter((_, i) => i !== ri))}
+                          style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#e03131', padding: 2 }}>
+                          <LuX size={10} />
+                        </Box>
+                      )}
+                    </Group>
+                  </td>
+                  {row.map((cell, ci) => (
+                    <td key={ci} style={{ borderRight: ci < row.length - 1 ? '1px solid #f1f3f5' : undefined }}>
+                      <Box component="input" value={cell}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          setCtRows(prev => prev.map((r, i) => i !== ri ? r : r.map((c, j) => j !== ci ? c : e.target.value)))}
+                        placeholder="—"
+                        style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: '#343a40', padding: '6px 8px', fontFamily: 'inherit' }}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Box>
+
+        <Group p="md" justify="flex-end" gap="sm" style={{ borderTop: '1px solid #f1f3f5' }}>
+          <Button variant="subtle" color="gray" onClick={() => setCreateTableOpen(false)}>Cancel</Button>
+          <Button color="brand" loading={savingTable} disabled={!ctName.trim()}
+            leftSection={<LuCheck size={14} />}
+            onClick={async () => {
+              if (!ctName.trim() || !user?.id) return;
+              setSavingTable(true);
+              const created = await createResultTable(user.id, user.institutionId ?? '', ctName.trim());
+              if (created) {
+                await saveResultTable(created.id, { headers: ctHeaders, rows: ctRows });
+                const full: DBResultTable = { ...created, headers: ctHeaders, rows: ctRows };
+                setLiveTables(prev => [...prev, full]);
+                notifications.show({ message: `"${ctName}" saved and ready to insert.`, color: 'teal' });
+                setCreateTableOpen(false);
+              } else {
+                notifications.show({ title: 'Save failed', message: 'Could not save table to database.', color: 'red' });
+              }
+              setSavingTable(false);
+            }}>
+            Save Table
+          </Button>
+        </Group>
+      </Modal>
+
       <Modal
         opened={citeModalOpen}
         onClose={() => { setCiteModalOpen(false); setCiteSearch(''); }}
