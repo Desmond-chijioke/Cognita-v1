@@ -170,7 +170,7 @@ export default function StudentReferences() {
     setBibtexSaving(true);
     let count = 0;
     for (const ref of bibtexParsed) {
-      const saved = await addRef(user.id, user.institutionId ?? '', { ...ref, tags: [], cited: false });
+      const saved = await addRef(user.id, user.institutionId ?? '', { ...ref, doi: ref.doi ?? null, tags: [], cited: false });
       if (saved) { setRefs(prev => [...prev, saved]); count++; }
     }
     setBibtexSaving(false);
@@ -234,7 +234,7 @@ export default function StudentReferences() {
       const now = new Date().toISOString();
       setIntegrityCheckedAt(now);
       await saveAIReport(user.id, 'references', result);
-      notifications.show({ title: 'Integrity check complete', color: 'green' });
+      notifications.show({ title: 'Integrity check complete', message: 'All references have been reviewed.', color: 'green' });
     } catch (err) {
       notifications.show({ title: 'Check failed', message: err instanceof Error ? err.message : 'Error', color: 'red' });
     } finally {
