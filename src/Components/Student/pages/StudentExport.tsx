@@ -9,7 +9,7 @@ import {
   LuClock, LuSettings, LuLock, LuCircleCheckBig, LuClock3, LuCircleAlert,
 } from 'react-icons/lu';
 import jsPDF from 'jspdf';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, Table, TableRow, TableCell, WidthType } from 'docx';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
@@ -32,6 +32,16 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 };
 
 const FONT = 'Times New Roman';
+
+// ── Snapshot tables ────────────────────────────────────────────────────────────
+
+interface SnapshotTable { name: string; headers: string[]; rows: string[][] }
+
+function parseTablesSnapshot(json: string | null | undefined): SnapshotTable[] {
+  if (!json) return [];
+  try { return JSON.parse(json) as SnapshotTable[]; }
+  catch { return []; }
+}
 
 // ── Document builders ──────────────────────────────────────────────────────────
 
@@ -109,6 +119,55 @@ function buildPDF(
       });
       y += lh(12) * 0.5;
     });
+
+    // Draw result tables
+    const snapTables = parseTablesSnapshot(ch.tables_snapshot);
+    snapTables.forEach(tbl => {
+      const nCols = tbl.headers.length;
+      if (nCols === 0) return;
+      const colW  = cW / nCols;
+      const cellH = 6; // mm
+
+      y += 4;
+      // Table caption
+      doc.setFont('times', 'bolditalic');
+      doc.setFontSize(10);
+      checkPage(cellH + 6);
+      doc.text(tbl.name, mL, y);
+      y += 5;
+
+      // Header row — blue background
+      checkPage(cellH);
+      doc.setFillColor(59, 91, 219);
+      doc.rect(mL, y, cW, cellH, 'F');
+      doc.setFont('times', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(255, 255, 255);
+      tbl.headers.forEach((h, ci) => {
+        doc.text(String(h).slice(0, 24), mL + ci * colW + 1.5, y + 4);
+      });
+      doc.setTextColor(0, 0, 0);
+      y += cellH;
+
+      // Data rows
+      doc.setFont('times', 'normal');
+      doc.setFontSize(9);
+      tbl.rows.forEach((row, ri) => {
+        checkPage(cellH);
+        if (ri % 2 === 1) {
+          doc.setFillColor(248, 249, 255);
+          doc.rect(mL, y, cW, cellH, 'F');
+        }
+        doc.setDrawColor(200, 200, 200);
+        doc.rect(mL, y, cW, cellH);
+        row.forEach((cell, ci) => {
+          doc.rect(mL + ci * colW, y, colW, cellH);
+          doc.text(String(cell || '—').slice(0, 24), mL + ci * colW + 1.5, y + 4);
+        });
+        y += cellH;
+      });
+      y += 6;
+    });
   });
 
   doc.save(fileName);
@@ -180,6 +239,41 @@ async function buildDocx(
         children: [new TextRun({ text: para.trim(), size: sz, font: FONT })],
       }));
     });
+
+    // Append result tables
+    parseTablesSnapshot(ch.tables_snapshot).forEach(tbl => {
+      // Table caption
+      children.push(new Paragraph({
+        spacing: { before: 240, after: 120 },
+        children: [new TextRun({ text: tbl.name, bold: true, italics: true, size: 20, font: FONT })],
+      }));
+
+      const headerRow = new TableRow({
+        tableHeader: true,
+        children: tbl.headers.map(h => new TableCell({
+          shading: { fill: '3b5bdb' },
+          children: [new Paragraph({
+            children: [new TextRun({ text: h, bold: true, size: 18, color: 'FFFFFF', font: FONT })],
+          })],
+        })),
+      });
+
+      const dataRows = tbl.rows.map((row, ri) => new TableRow({
+        children: row.map(cell => new TableCell({
+          shading: ri % 2 === 1 ? { fill: 'f0f4ff' } : undefined,
+          children: [new Paragraph({
+            children: [new TextRun({ text: cell || '—', size: 18, font: FONT })],
+          })],
+        })),
+      }));
+
+      children.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [headerRow, ...dataRows],
+      }));
+
+      children.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
+    });
   });
 
   const wordDoc = new Document({
@@ -214,6 +308,8 @@ function buildLatex(
     '\\geometry{margin=2.5cm}',
     '\\usepackage{setspace}',
     '\\doublespacing',
+    '\\usepackage{booktabs}',
+    '\\usepackage{array}',
     citeLib,
     '',
     `\\title{${esc(meta.name)} --- Thesis}`,
@@ -238,6 +334,26 @@ function buildLatex(
     lines.push('');
     ch.content.split(/\n{2,}/).forEach(para => {
       if (para.trim()) lines.push(esc(para.trim()), '');
+    });
+
+    // Emit result tables
+    parseTablesSnapshot(ch.tables_snapshot).forEach((tbl, ti) => {
+      if (!tbl.headers.length) return;
+      const colSpec = tbl.headers.map(() => 'l').join(' | ');
+      lines.push(
+        `\\begin{table}[h!]`,
+        `\\centering`,
+        `\\caption{${esc(tbl.name)}}`,
+        `\\label{tab:${ch.section_id ?? 'ch'}_${ti}}`,
+        `\\begin{tabular}{| ${colSpec} |}`,
+        `\\hline`,
+        tbl.headers.map(h => esc(h)).join(' & ') + ' \\\\',
+        `\\hline`,
+      );
+      tbl.rows.forEach(row => {
+        lines.push(row.map(c => esc(c || '—')).join(' & ') + ' \\\\');
+      });
+      lines.push(`\\hline`, `\\end{tabular}`, `\\end{table}`, '');
     });
   });
 

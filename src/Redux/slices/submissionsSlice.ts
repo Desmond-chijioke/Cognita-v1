@@ -19,6 +19,7 @@ export interface Submission {
   sectionId:         string;
   sectionTitle:      string;
   content:           string;
+  tablesSnapshot:    string | null;
   submittedAt:       string;
   status:            SubmissionStatus;
   supervisorComment: string;
@@ -40,18 +41,18 @@ const submissionsSlice = createSlice({
       state,
       action: PayloadAction<
         Pick<Submission, 'studentId' | 'studentName' | 'sectionId' | 'sectionTitle' | 'content'>
-        & { id?: string }   // optional: pass Supabase UUID so Redux ID matches DB
+        & { id?: string; tablesSnapshot?: string | null }
       >,
     ) {
       const existing = state.list.findIndex(
         s => s.studentId === action.payload.studentId && s.sectionId === action.payload.sectionId,
       );
-      // Use provided id (from Supabase) > existing Redux id > new random UUID
       const resolvedId = action.payload.id
         ?? (existing >= 0 ? state.list[existing].id : crypto.randomUUID());
       const entry: Submission = {
         ...action.payload,
         id:                resolvedId,
+        tablesSnapshot:    action.payload.tablesSnapshot ?? null,
         status:            'pending',
         supervisorComment: '',
         reviewedAt:        '',

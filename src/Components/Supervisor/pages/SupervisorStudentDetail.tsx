@@ -197,6 +197,50 @@ function reduxUserToStudent(u: StoredUser): SupervisedStudent {
   };
 }
 
+// ── Read-only table view (for supervisor) ─────────────────────────────────────
+
+interface SnapshotTable { name: string; headers: string[]; rows: string[][] }
+
+function StudentTableView({ table }: { table: SnapshotTable }) {
+  return (
+    <Paper withBorder radius="md" mb="sm" style={{ overflow: 'hidden' }}>
+      <Box px="sm" py={6} style={{ background: '#3b5bdb' }}>
+        <Text size="xs" fw={700} c="white">{table.name}</Text>
+      </Box>
+      <Box style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+              {table.headers.map((h, ci) => (
+                <th key={ci} style={{ border: '1px solid #dee2e6', padding: '5px 10px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#1c2840' }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, ri) => (
+              <tr key={ri} style={{ background: ri % 2 === 0 ? '#fff' : '#fafbff', borderBottom: '1px solid #f1f3f5' }}>
+                {row.map((cell, ci) => (
+                  <td key={ci} style={{ border: '1px solid #f1f3f5', padding: '4px 10px', fontSize: 11, color: '#343a40' }}>
+                    {cell || '—'}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Box>
+    </Paper>
+  );
+}
+
+function parseTablesSnapshot(snapshot: string | null | undefined): SnapshotTable[] {
+  if (!snapshot) return [];
+  try { return JSON.parse(snapshot) as SnapshotTable[]; }
+  catch { return []; }
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function SupervisorStudentDetail() {
@@ -284,12 +328,13 @@ export default function SupervisorStudentDetail() {
       dbSubs.forEach(dbSub => {
         // Use Supabase UUID as Redux id so annotations link correctly
         dispatch(submitSection({
-          id:           dbSub.id,            // ← Supabase UUID → Redux id
-          studentId:    dbSub.student_id,
-          studentName:  student?.name ?? dbSub.student_id,
-          sectionId:    dbSub.section_id,
-          sectionTitle: dbSub.section_title,
-          content:      dbSub.content,
+          id:             dbSub.id,
+          studentId:      dbSub.student_id,
+          studentName:    student?.name ?? dbSub.student_id,
+          sectionId:      dbSub.section_id,
+          sectionTitle:   dbSub.section_title,
+          content:        dbSub.content,
+          tablesSnapshot: dbSub.tables_snapshot ?? null,
         }));
         if (dbSub.status === 'approved') {
           dispatch(approveSubmission({ id: dbSub.id }));
@@ -1130,6 +1175,18 @@ export default function SupervisorStudentDetail() {
                           </Text>
                         </Paper>
 
+                        {/* Student result tables snapshotted at submission time */}
+                        {parseTablesSnapshot(sub.tablesSnapshot).length > 0 && (
+                          <Box mb="md">
+                            <Text size="9px" c="dimmed" mb={6} style={{ textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
+                              Result Tables
+                            </Text>
+                            {parseTablesSnapshot(sub.tablesSnapshot).map((tbl, i) => (
+                              <StudentTableView key={i} table={tbl} />
+                            ))}
+                          </Box>
+                        )}
+
                         {/* Annotations list — active and resolved */}
                         {sub.annotations.length > 0 && (() => {
                           const active   = sub.annotations.filter(a => !a.resolved);
@@ -1341,6 +1398,18 @@ export default function SupervisorStudentDetail() {
                           {sub.content || '(No content)'}
                         </Text>
                       </Paper>
+
+                      {/* Student result tables snapshotted at submission time */}
+                      {parseTablesSnapshot(sub.tablesSnapshot).length > 0 && (
+                        <Box mb="sm">
+                          <Text size="9px" c="dimmed" mb={6} style={{ textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
+                            Result Tables
+                          </Text>
+                          {parseTablesSnapshot(sub.tablesSnapshot).map((tbl, i) => (
+                            <StudentTableView key={i} table={tbl} />
+                          ))}
+                        </Box>
+                      )}
 
                       {/* Reviewer Notes side-panel style — resolved / active split */}
                       {sub.annotations.length > 0 && (() => {

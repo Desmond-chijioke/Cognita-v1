@@ -14,7 +14,8 @@ import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
 import { fetchAIReport, saveAIReport } from '../../../supabase/aiReports';
-import { generateJSON, isGeminiConfigured, GeminiError } from '../../../helper/gemini';
+import { generateEngineJSON, isEngineConfigured, AI_ENGINE_OPTIONS, AIEngineError } from '../../../helper/aiEngines';
+import type { AIEngine } from '../../../helper/aiEngines';
 import ChapterPicker from '../ChapterPicker';
 
 type Step = 'context' | 'recommend' | 'review';
@@ -177,6 +178,7 @@ export default function StudentAnalysis() {
 
   const [step, setStep]                 = useState<Step>('context');
   const [selectedTest, setSelectedTest] = useState(0);
+  const [aiEngine,     setAiEngine]     = useState<AIEngine>('gemini');
 
   const [ctx, setCtx] = useState<ResearchContext>({
     researchType: 'Quantitative',
@@ -221,16 +223,17 @@ export default function StudentAnalysis() {
   const handleGetRecommendations = async () => {
     setStep('recommend');
     if (!user?.id) return;
-    if (!isGeminiConfigured()) {
-      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing — ask an admin to add it to the environment.', color: 'red' });
+    if (!isEngineConfigured(aiEngine)) {
+      const opt = AI_ENGINE_OPTIONS.find(o => o.value === aiEngine);
+      notifications.show({ title: 'AI engine not configured', message: `No API key found for ${opt?.label ?? aiEngine}. Add the key to your .env file.`, color: 'red' });
       return;
     }
 
     setGeneratingAdvisor(true);
     try {
       const prompt = buildAdvisorPrompt(ctx, variables);
-      const result = await generateJSON<{ tests: RecommendedTestAI[] }>(prompt);
-      if (!isAnalysisAdvisorReport(result)) throw new GeminiError('Unexpected response shape from Gemini.');
+      const result = await generateEngineJSON<{ tests: RecommendedTestAI[] }>(prompt, aiEngine);
+      if (!isAnalysisAdvisorReport(result)) throw new AIEngineError('Unexpected response shape from AI engine.');
 
       const merged: AnalysisAdvisorReport = { tests: result.tests, chapterReview };
       setAdvisorReport(merged);
@@ -251,8 +254,9 @@ export default function StudentAnalysis() {
 
   const handleReviewChapter = async () => {
     if (!user?.id) return;
-    if (!isGeminiConfigured()) {
-      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing — ask an admin to add it to the environment.', color: 'red' });
+    if (!isEngineConfigured(aiEngine)) {
+      const opt = AI_ENGINE_OPTIONS.find(o => o.value === aiEngine);
+      notifications.show({ title: 'AI engine not configured', message: `No API key found for ${opt?.label ?? aiEngine}. Add the key to your .env file.`, color: 'red' });
       return;
     }
     const chapterId = [...selectedChapter][0];
@@ -265,8 +269,8 @@ export default function StudentAnalysis() {
     setReviewing(true);
     try {
       const prompt = buildChapterReviewPrompt({ id: chapter.section_id, title: chapter.section_title, content: chapter.content }, ctx);
-      const payload = await generateJSON<{ summary: string; findings: ChapterAnalysisFinding[] }>(prompt);
-      if (!isChapterReviewPayload(payload)) throw new GeminiError('Unexpected response shape from Gemini.');
+      const payload = await generateEngineJSON<{ summary: string; findings: ChapterAnalysisFinding[] }>(prompt, aiEngine);
+      if (!isChapterReviewPayload(payload)) throw new AIEngineError('Unexpected response shape from AI engine.');
 
       const review: ChapterAnalysisReview = {
         chapterId:    chapter.section_id,
@@ -349,7 +353,38 @@ export default function StudentAnalysis() {
             Add Variable
           </Button>
 
-          <Group justify="flex-end" mt="xl">
+          <Group justify="space-between" align="flex-end" mt="xl">
+            <Box style={{ width: 300 }}>
+              <Select
+                label="AI Engine"
+                description="Select which AI model generates your recommendations"
+                value={aiEngine}
+                onChange={v => setAiEngine((v ?? 'gemini') as AIEngine)}
+                data={AI_ENGINE_OPTIONS.map(o => ({
+                  value: o.value,
+                  label: o.label,
+                }))}
+                renderOption={({ option }) => {
+                  const opt = AI_ENGINE_OPTIONS.find(o => o.value === option.value)!;
+                  const configured = isEngineConfigured(opt.value);
+                  return (
+                    <Group gap="xs" wrap="nowrap" style={{ width: '100%' }}>
+                      <Box style={{ flex: 1, minWidth: 0 }}>
+                        <Text size="sm" fw={500} truncate>{opt.label}</Text>
+                        <Text size="10px" c="dimmed">{opt.description}</Text>
+                      </Box>
+                      {opt.free && <Badge size="xs" color="teal" variant="light">Free</Badge>}
+                      {!configured && <Badge size="xs" color="gray" variant="outline">No key</Badge>}
+                    </Group>
+                  );
+                }}
+              />
+              {!isEngineConfigured(aiEngine) && (
+                <Text size="10px" c="orange" mt={4}>
+                  Add {aiEngine === 'openai' ? 'VITE_OPENAI_API_KEY' : aiEngine === 'groq' ? 'VITE_GROQ_API_KEY' : aiEngine === 'mistral' ? 'VITE_MISTRAL_API_KEY' : 'VITE_GEMINI_API_KEY'} to your .env to use this engine.
+                </Text>
+              )}
+            </Box>
             <Button color="brand" rightSection={<LuArrowRight size={14} />} loading={generatingAdvisor} onClick={handleGetRecommendations}>
               Get AI Recommendations
             </Button>

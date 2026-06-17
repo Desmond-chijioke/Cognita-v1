@@ -14,11 +14,14 @@ import {
   LuMessageSquare, LuPlus, LuSearch, LuSend, LuBot, LuUser,
   LuActivity, LuPencil, LuTrash2, LuCheck, LuX, LuLock,
   LuUpload, LuMessageSquareDot, LuEye,
-  LuMenu, LuArrowLeft,
+  LuMenu, LuArrowLeft, LuTable,
 } from 'react-icons/lu';
-import { STUDENT_REFERENCES } from '../studentData';
 import { STUDENT_SECTIONS } from '../studentData';
 import type { IssueSeverity } from '../studentData';
+import { fetchRefs } from '../../../supabase/references';
+import type { DBReference } from '../../../supabase/references';
+import { fetchResultTables } from '../../../supabase/resultTables';
+import type { DBResultTable } from '../../../supabase/resultTables';
 import { fetchAIReport } from '../../../supabase/aiReports';
 import {
   PROJECT_TYPES, buildSections, mapSections,
@@ -147,7 +150,8 @@ function RingProgress({ value, size = 80 }: { value: number; size?: number }) {
 }
 
 // â”€â”€ Custom templates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const TPL_META_PREFIX = 'template_def_';
+const TPL_META_PREFIX   = 'template_def_';
+const TABLE_LAYOUT_KEY  = 'tbl_layout_v1';
 
 interface CustomTemplate {
   id:       string;   // template_def_<timestamp>
@@ -225,6 +229,131 @@ function hydrateFromDrafts(
   return [...updated, ...customSections];
 }
 
+// ── Doc table blocks ──────────────────────────────────────────────────────────
+
+interface DocTable {
+  id:    string;
+  table: DBResultTable;
+  x:     number;
+  y:     number;
+  w:     number;
+}
+type DocTableLayout = Record<string, Array<{ id: string; tableId: string; x: number; y: number; w: number }>>;
+
+function DocTableBlock({
+  dt, onMove, onResize, onDelete,
+}: {
+  dt:       DocTable;
+  onMove:   (id: string, x: number, y: number) => void;
+  onResize: (id: string, w: number) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [pos, setPos] = useState({ x: dt.x, y: dt.y });
+  const [w,   setW]   = useState(dt.w);
+  const posRef        = useRef({ x: dt.x, y: dt.y });
+  const wRef          = useRef(dt.w);
+
+  const startDrag = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).tagName === 'BUTTON') return;
+    e.preventDefault();
+    const sx = e.clientX, sy = e.clientY;
+    const ox = posRef.current.x, oy = posRef.current.y;
+    const onMM = (ev: MouseEvent) => {
+      const nx = Math.max(0, ox + ev.clientX - sx);
+      const ny = Math.max(0, oy + ev.clientY - sy);
+      posRef.current = { x: nx, y: ny };
+      setPos({ x: nx, y: ny });
+    };
+    const onMU = () => {
+      onMove(dt.id, posRef.current.x, posRef.current.y);
+      window.removeEventListener('mousemove', onMM);
+      window.removeEventListener('mouseup',   onMU);
+    };
+    window.addEventListener('mousemove', onMM);
+    window.addEventListener('mouseup',   onMU);
+  };
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sx = e.clientX;
+    const ow = wRef.current;
+    const onMM = (ev: MouseEvent) => {
+      const nw = Math.max(200, ow + ev.clientX - sx);
+      wRef.current = nw;
+      setW(nw);
+    };
+    const onMU = () => {
+      onResize(dt.id, wRef.current);
+      window.removeEventListener('mousemove', onMM);
+      window.removeEventListener('mouseup',   onMU);
+    };
+    window.addEventListener('mousemove', onMM);
+    window.addEventListener('mouseup',   onMU);
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', left: pos.x, top: pos.y, width: w,
+      zIndex: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.15)', borderRadius: 6, overflow: 'hidden',
+    }}>
+      {/* Drag handle */}
+      <div
+        onMouseDown={startDrag}
+        style={{
+          background: '#3b5bdb', color: '#fff', padding: '5px 10px',
+          cursor: 'grab', display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', userSelect: 'none',
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 700 }}>⠿ {dt.table.name}</span>
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onClick={() => onDelete(dt.id)}
+          style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0 }}
+        >×</button>
+      </div>
+
+      {/* Table */}
+      <div style={{ overflowX: 'auto', background: '#fff' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'auto' }}>
+          <thead>
+            <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+              {dt.table.headers.map((h, ci) => (
+                <th key={ci} style={{
+                  border: '1px solid #dee2e6', padding: '5px 10px',
+                  textAlign: 'left', minWidth: 80, fontSize: 11, fontWeight: 700, color: '#1c2840',
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {dt.table.rows.map((row, ri) => (
+              <tr key={ri} style={{ borderBottom: '1px solid #f1f3f5', background: ri % 2 === 0 ? '#fff' : '#fafbff' }}>
+                {row.map((cell, ci) => (
+                  <td key={ci} style={{ border: '1px solid #f1f3f5', padding: '4px 10px', fontSize: 11, color: '#343a40' }}>
+                    {cell || '—'}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Resize handle */}
+      <div
+        onMouseDown={startResize}
+        style={{
+          position: 'absolute', bottom: 0, right: 0,
+          width: 12, height: 12, cursor: 'se-resize',
+          background: '#3b5bdb', borderRadius: '4px 0 0 0', opacity: 0.75,
+        }}
+      />
+    </div>
+  );
+}
+
 // â”€â”€ Initial sections â€” empty; Supabase drafts + submissions populate content â”€â”€â”€
 function buildInitialSections(): EditorSection[] {
   return STUDENT_SECTIONS.map(s => ({
@@ -299,6 +428,17 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const [refSearch,     setRefSearch]     = useState('');
   const [aiReview,      setAiReview]      = useState<AIReviewReport | null>(null);
   const [aiReviewAt,    setAiReviewAt]    = useState<string | null>(null);
+  const [liveRefs,      setLiveRefs]      = useState<DBReference[]>([]);
+  const [liveTables,    setLiveTables]    = useState<DBResultTable[]>([]);
+  const [tableSearch,   setTableSearch]   = useState('');
+  const [sectionTables, setSectionTables] = useState<Record<string, DocTable[]>>({});
+  const userModifiedLayout = useRef(false);
+  const saveLayoutTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // â"€â"€ Redux + Supabase submissions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  const dispatch    = useAppDispatch();
+  const user        = useAppSelector(s => s.auth.user);
+  const [projectTitle, setProjectTitle] = useState('');
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: 'ai-1', role: 'ai', text: 'Hello! I am your AI writing assistant. I can help you refine arguments, suggest citations, improve clarity, or expand sections. What would you like to work on?' },
@@ -311,9 +451,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const savedCursorPos = useRef<number | null>(null);
 
   // â”€â”€ Redux + Supabase submissions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const dispatch    = useAppDispatch();
-  const user        = useAppSelector(s => s.auth.user);
-  const [projectTitle, setProjectTitle] = useState('');
+  
 
   // â”€â”€ Fetch project title â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
@@ -339,15 +477,39 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
     Promise.all([
       fetchSectionDrafts(user.id),
       fetchStudentSubmissions(user.id),
-    ]).then(([rawDrafts, dbSubs]) => {
+      fetchResultTables(user.id),
+    ]).then(([rawDrafts, dbSubs, tables]) => {
+
+      // Load result tables
+      setLiveTables(tables);
 
       // Separate row types by prefix
       const projMetaRows = rawDrafts.filter(d => d.section_id.startsWith(PROJ_META_PREFIX));
       const tplDefs      = rawDrafts.filter(d => d.section_id.startsWith(TPL_META_PREFIX));
+      const layoutRow    = rawDrafts.find(d => d.section_id === TABLE_LAYOUT_KEY);
       const sectionRows  = rawDrafts.filter(d =>
         !d.section_id.startsWith(PROJ_META_PREFIX) &&
-        !d.section_id.startsWith(TPL_META_PREFIX),
+        !d.section_id.startsWith(TPL_META_PREFIX) &&
+        d.section_id !== TABLE_LAYOUT_KEY,
       );
+
+      // Restore table layout
+      if (layoutRow?.content) {
+        try {
+          const layout = JSON.parse(layoutRow.content) as DocTableLayout;
+          const restored: Record<string, DocTable[]> = {};
+          for (const [sectionId, entries] of Object.entries(layout)) {
+            const dts = entries
+              .map(e => {
+                const tbl = tables.find(t => t.id === e.tableId);
+                return tbl ? { id: e.id, table: tbl, x: e.x, y: e.y, w: e.w } as DocTable : null;
+              })
+              .filter((dt): dt is DocTable => dt !== null);
+            if (dts.length) restored[sectionId] = dts;
+          }
+          setSectionTables(restored);
+        } catch { /* ignore corrupt data */ }
+      }
 
       // Cache all section rows for fast project switching (no re-fetch needed)
       allDraftsRef.current = sectionRows;
@@ -444,7 +606,30 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
         setAiReviewAt(row.created_at);
       }
     }).catch(() => {});
+
+    fetchRefs(user.id).then(setLiveRefs).catch(() => {});
   }, [user?.id]);
+
+  // Debounced save of table layout to Supabase whenever user modifies it
+  useEffect(() => {
+    if (!user?.id || !userModifiedLayout.current) return;
+    if (saveLayoutTimer.current) clearTimeout(saveLayoutTimer.current);
+    saveLayoutTimer.current = setTimeout(() => {
+      const layout: DocTableLayout = {};
+      for (const [sectionId, dts] of Object.entries(sectionTables)) {
+        if (dts.length) {
+          layout[sectionId] = dts.map(dt => ({
+            id: dt.id, tableId: dt.table.id, x: dt.x, y: dt.y, w: dt.w,
+          }));
+        }
+      }
+      saveSectionDrafts(user.id!, [{
+        sectionId:    TABLE_LAYOUT_KEY,
+        sectionTitle: 'Table Layout',
+        content:      JSON.stringify(layout),
+      }]).catch(() => {});
+    }, 800);
+  }, [sectionTables, user?.id]);
 
   const getSubStatus = (sectionId: string): SubmissionStatus | null =>
     mySubmissions.find(s => s.sectionId === sectionId)?.status ?? null;
@@ -460,6 +645,16 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
       return;
     }
 
+    // Snapshot any tables placed in this section so the supervisor can see them
+    const sectionDocTables = sectionTables[activeSection.id] ?? [];
+    const tablesSnapshot = sectionDocTables.length > 0
+      ? JSON.stringify(sectionDocTables.map(dt => ({
+          name:    dt.table.name,
+          headers: dt.table.headers,
+          rows:    dt.table.rows,
+        })))
+      : null;
+
     // Save draft first so the submitted content matches what's in the database
     saveSectionDrafts(user.id, [{
       sectionId:    activeSection.id,
@@ -469,20 +664,22 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
 
     // Save to Redux for immediate UI update
     dispatch(submitSection({
-      studentId:    user.id,
-      studentName:  user.name,
-      sectionId:    activeSection.id,
-      sectionTitle: activeSection.title,
-      content:      activeSection.content,
+      studentId:      user.id,
+      studentName:    user.name,
+      sectionId:      activeSection.id,
+      sectionTitle:   activeSection.title,
+      content:        activeSection.content,
+      tablesSnapshot,
     }));
     // Persist submission to Supabase
     submitChapter({
-      studentId:     user.id,
-      supervisorId:  user.supervisorId ?? null,
-      institutionId: user.institutionId ?? '',
-      sectionId:     activeSection.id,
-      sectionTitle:  activeSection.title,
-      content:       activeSection.content,
+      studentId:       user.id,
+      supervisorId:    user.supervisorId ?? null,
+      institutionId:   user.institutionId ?? '',
+      sectionId:       activeSection.id,
+      sectionTitle:    activeSection.title,
+      content:         activeSection.content,
+      tablesSnapshot:  tablesSnapshot ?? undefined,
     }).catch(err => console.error('submitChapter failed:', err));
 
     notifications.show({ title: 'Chapter submitted', message: `"${activeSection.title}" sent to your supervisor for review.`, color: 'blue' });
@@ -582,13 +779,16 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const maxTotalScore = reviewScores.reduce((acc, r) => acc + r.maxScore, 0) || 1;
   const reviewPct     = Math.round((totalScore / maxTotalScore) * 100);
 
-  const filteredRefs      = STUDENT_REFERENCES.filter(r =>
+  const filteredRefs      = liveRefs.filter(r =>
     r.title.toLowerCase().includes(refSearch.toLowerCase()) ||
     r.authors[0]?.toLowerCase().includes(refSearch.toLowerCase())
   );
-  const filteredModalRefs = STUDENT_REFERENCES.filter(r =>
+  const filteredModalRefs = liveRefs.filter(r =>
     r.title.toLowerCase().includes(citeSearch.toLowerCase()) ||
     r.authors[0]?.toLowerCase().includes(citeSearch.toLowerCase())
+  );
+  const filteredTables = liveTables.filter(t =>
+    t.name.toLowerCase().includes(tableSearch.toLowerCase())
   );
 
   // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -843,7 +1043,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
 
   // Section content insert (citations) — inserts at saved cursor position
   const insertCitation = useCallback((refId: string) => {
-    const ref = STUDENT_REFERENCES.find(r => r.id === refId);
+    const ref = liveRefs.find(r => r.id === refId);
     if (!ref) return;
     const lastName = ref.authors[0]?.split(',')[0] ?? 'Author';
     const cite     = ` (${lastName} et al., ${ref.year})`;
@@ -865,6 +1065,48 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
     setCiteModalOpen(false);
     setCiteSearch('');
   }, [activeSection?.id, content.length]);
+
+  const insertTable = useCallback((table: DBResultTable) => {
+    if (!activeSectionId) return;
+    const existing = sectionTables[activeSectionId]?.length ?? 0;
+    const dt: DocTable = {
+      id:    `dctbl_${Date.now()}`,
+      table,
+      x:     80 + existing * 16,
+      y:     120 + existing * 16,
+      w:     500,
+    };
+    userModifiedLayout.current = true;
+    setSectionTables(prev => ({
+      ...prev,
+      [activeSectionId]: [...(prev[activeSectionId] ?? []), dt],
+    }));
+    notifications.show({ title: 'Table inserted', message: `"${table.name}" added — drag it anywhere on the page.`, color: 'teal' });
+  }, [activeSectionId, sectionTables]);
+
+  const handleTableMove = useCallback((sectionId: string, id: string, x: number, y: number) => {
+    userModifiedLayout.current = true;
+    setSectionTables(prev => ({
+      ...prev,
+      [sectionId]: (prev[sectionId] ?? []).map(dt => dt.id === id ? { ...dt, x, y } : dt),
+    }));
+  }, []);
+
+  const handleTableResize = useCallback((sectionId: string, id: string, w: number) => {
+    userModifiedLayout.current = true;
+    setSectionTables(prev => ({
+      ...prev,
+      [sectionId]: (prev[sectionId] ?? []).map(dt => dt.id === id ? { ...dt, w } : dt),
+    }));
+  }, []);
+
+  const handleTableDelete = useCallback((sectionId: string, id: string) => {
+    userModifiedLayout.current = true;
+    setSectionTables(prev => ({
+      ...prev,
+      [sectionId]: (prev[sectionId] ?? []).filter(dt => dt.id !== id),
+    }));
+  }, []);
 
   // Section rename
   const startEdit = (sec: EditorSection) => { setEditingId(sec.id); setEditingTitle(sec.title); };
@@ -949,6 +1191,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
         {/* <Tabs.Tab value="chat"      leftSection={<LuBot      size={13} />} style={{ fontSize: 12 }}>AI Chat</Tabs.Tab> */}
         <Tabs.Tab value="reviewer"  leftSection={<LuActivity size={13} />} style={{ fontSize: 12 }}>Reviewer</Tabs.Tab>
         <Tabs.Tab value="citations" leftSection={<LuQuote    size={13} />} style={{ fontSize: 12 }}>Citations</Tabs.Tab>
+        <Tabs.Tab value="tables"    leftSection={<LuTable    size={13} />} style={{ fontSize: 12 }}>Tables</Tabs.Tab>
         <Tabs.Tab value="comments"  leftSection={<LuMessageSquare size={13} />} style={{ fontSize: 12 }}>
           Comments
           {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length > 0 && (
@@ -1177,7 +1420,40 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
               <Button size="xs" variant="light" color="brand" onClick={() => insertCitation(ref.id)}>Insert</Button>
             </Box>
           ))}
-          {filteredRefs.length === 0 && <Text size="xs" c="dimmed" ta="center" py={20}>No references found.</Text>}
+          {filteredRefs.length === 0 && (
+            <Text size="xs" c="dimmed" ta="center" py={20}>
+              {liveRefs.length === 0
+                ? 'No references yet — go to the References page to add some.'
+                : 'No references match your search.'}
+            </Text>
+          )}
+        </Stack>
+      </Tabs.Panel>
+
+      {/* Tables */}
+      <Tabs.Panel value="tables" style={{ overflowY: 'auto', padding: '12px 10px' }}>
+        <TextInput placeholder="Search tables…" leftSection={<LuSearch size={14} />}
+          size="xs" mb={10} value={tableSearch} onChange={e => setTableSearch(e.currentTarget.value)} />
+        <Stack gap={6}>
+          {filteredTables.map(tbl => (
+            <Box key={tbl.id} style={{ border: '1px solid #f1f3f5', borderRadius: 8, padding: '8px 10px' }}>
+              <Group gap={6} mb={4} wrap="nowrap">
+                <LuTable size={13} color="#3b5bdb" style={{ flexShrink: 0 }} />
+                <Text size="xs" fw={500} lineClamp={1} style={{ flex: 1 }}>{tbl.name}</Text>
+              </Group>
+              <Text size="10px" c="dimmed" mb={6}>
+                {tbl.rows.length} rows · {tbl.headers.length} columns
+              </Text>
+              <Button size="xs" variant="light" color="brand" onClick={() => insertTable(tbl)}>Insert</Button>
+            </Box>
+          ))}
+          {filteredTables.length === 0 && (
+            <Text size="xs" c="dimmed" ta="center" py={20}>
+              {liveTables.length === 0
+                ? 'No tables yet — go to Results Builder to create one.'
+                : 'No tables match your search.'}
+            </Text>
+          )}
         </Stack>
       </Tabs.Panel>
 
@@ -1780,6 +2056,15 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
                         placeholder={activeSection?.placeholder ?? 'Start writing hereâ€¦'}
                       />
                     )}
+                    {i === 0 && (sectionTables[activeSectionId] ?? []).map(dt => (
+                      <DocTableBlock
+                        key={dt.id}
+                        dt={dt}
+                        onMove={(id, x, y) => handleTableMove(activeSectionId, id, x, y)}
+                        onResize={(id, w)  => handleTableResize(activeSectionId, id, w)}
+                        onDelete={id       => handleTableDelete(activeSectionId, id)}
+                      />
+                    ))}
                     <Box style={{ position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center' }}>
                       <Text size="xs" c="dimmed">Page {i + 1}</Text>
                     </Box>

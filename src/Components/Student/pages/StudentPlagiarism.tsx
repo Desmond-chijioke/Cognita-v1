@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  Anchor, Badge, Box, Button, Divider, Group, Loader, Paper, Progress,
-  SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
+  Anchor, Badge, Box, Button, Divider, Group, Loader, Modal, Paper, Progress,
+  Select, SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   LuShield, LuCircleCheck, LuTriangleAlert,
-  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuLink,
+  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuLink, LuExternalLink,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
@@ -118,6 +119,20 @@ function SourcesList({ sources }: { sources: SourceMatch[] }) {
   );
 }
 
+// ── Engine options ────────────────────────────────────────────────────────────
+
+const ENGINES = [
+  { value: 'cognita',  label: 'Cognita Engine — Free',  reliability: 20,  paid: false, url: null },
+  { value: 'queltext', label: 'Queltext — Free',         reliability: 45,  paid: false, url: 'https://queltext.com' },
+  { value: 'unicheck', label: 'Unicheck — Paid',         reliability: 85,  paid: true,  url: 'https://unicheck.com' },
+  { value: 'turnitin', label: 'Turnitin — Paid',         reliability: 100, paid: true,  url: 'https://www.turnitin.com' },
+] as const;
+
+const ENGINE_SELECT_DATA = ENGINES.map(e => ({
+  value: e.value,
+  label: `${e.label}  (${e.reliability}% reliability)`,
+}));
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function StudentPlagiarism() {
@@ -132,6 +147,8 @@ export default function StudentPlagiarism() {
 
   const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
   const [selected,    setSelected]    = useState<Set<string>>(new Set());
+  const [engine,      setEngine]      = useState<string>('cognita');
+  const [extOpen,     { open: openExt, close: closeExt }] = useDisclosure(false);
 
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
@@ -158,6 +175,9 @@ export default function StudentPlagiarism() {
       return;
     }
 
+    // External engines — redirect the user to the service
+    if (engine !== 'cognita') { openExt(); return; }
+
     setScanning(true);
     try {
       const result = await runInternalScan({
@@ -177,6 +197,8 @@ export default function StudentPlagiarism() {
       });
     } finally { setScanning(false); }
   };
+
+  const selectedEngine = ENGINES.find(e => e.value === engine) ?? ENGINES[0];
 
   const overallSim = report?.overallSimilarity ?? 0;
   const overallAi  = report?.overallAi ?? 0;
@@ -223,6 +245,40 @@ export default function StudentPlagiarism() {
         <Group justify="center" py="xl"><Loader size="sm" color="brand" /></Group>
       ) : (
         <Paper withBorder p="lg" radius="md" bg="white" mb="xl">
+          {/* Engine selector */}
+          <Box mb="lg">
+            <Text size="sm" fw={600} mb={6}>Plagiarism Check Engine</Text>
+            <Group gap="md" align="flex-end" wrap="wrap">
+              <Select
+                data={ENGINE_SELECT_DATA}
+                value={engine}
+                onChange={v => setEngine(v ?? 'cognita')}
+                style={{ flex: 1, minWidth: 280 }}
+                size="sm"
+              />
+              <Group gap={6}>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={selectedEngine.reliability >= 85 ? 'green' : selectedEngine.reliability >= 45 ? 'yellow' : 'blue'}
+                >
+                  {selectedEngine.reliability}% reliability
+                </Badge>
+                {selectedEngine.paid && (
+                  <Badge size="sm" variant="light" color="grape">Paid</Badge>
+                )}
+                {!selectedEngine.paid && (
+                  <Badge size="sm" variant="light" color="teal">Free</Badge>
+                )}
+              </Group>
+            </Group>
+            {engine !== 'cognita' && (
+              <Text size="xs" c="dimmed" mt={6}>
+                This engine is an external service. Clicking "Run Scan" will guide you to submit your document there.
+              </Text>
+            )}
+          </Box>
+
           <ChapterPicker
             submissions={submissions}
             selected={selected}
@@ -465,6 +521,74 @@ export default function StudentPlagiarism() {
           <Divider my="xl" />
         </>
       )}
+
+      {/* ── External engine modal ── */}
+      <Modal
+        opened={extOpen}
+        onClose={closeExt}
+        title={
+          <Group gap="xs">
+            <LuShield size={16} />
+            <Text fw={600} size="sm">{selectedEngine.label}</Text>
+            <Badge size="xs" variant="light" color={selectedEngine.paid ? 'grape' : 'teal'}>
+              {selectedEngine.paid ? 'Paid' : 'Free'}
+            </Badge>
+          </Group>
+        }
+        size="md"
+        centered
+      >
+        <Stack gap="md">
+          <Paper withBorder p="md" radius="md" style={{ background: '#f8f9ff' }}>
+            <Group gap="xs" wrap="nowrap" align="flex-start">
+              <LuInfo size={15} color="#748ffc" style={{ flexShrink: 0, marginTop: 2 }} />
+              <Text size="sm" c="dimmed">
+                <strong>{selectedEngine.label}</strong> is an external service not integrated directly into Cognita.
+                To use it, submit your document on their platform and record the results manually.
+              </Text>
+            </Group>
+          </Paper>
+
+          <Stack gap="xs">
+            <Group gap="sm">
+              <Badge variant="filled" color={selectedEngine.reliability >= 85 ? 'green' : 'yellow'} size="sm">
+                {selectedEngine.reliability}% reliability
+              </Badge>
+              <Text size="xs" c="dimmed">Industry reliability score as rated by academic institutions</Text>
+            </Group>
+          </Stack>
+
+          <Text size="sm" fw={500}>Steps to use {selectedEngine.label.split('—')[0].trim()}:</Text>
+          <Stack gap={6}>
+            {['Download or copy your chapter content from the Results Builder or Editor.',
+              `Visit the ${selectedEngine.label.split('—')[0].trim()} website and create / log in to your account.`,
+              'Submit your document for scanning and wait for the report.',
+              'Note your similarity and AI scores from their report.',
+            ].map((step, i) => (
+              <Group key={i} gap="xs" align="flex-start" wrap="nowrap">
+                <Badge size="xs" circle variant="light" color="brand" style={{ flexShrink: 0, marginTop: 2 }}>{i + 1}</Badge>
+                <Text size="sm">{step}</Text>
+              </Group>
+            ))}
+          </Stack>
+
+          {selectedEngine.url && (
+            <Button
+              component="a"
+              href={selectedEngine.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              leftSection={<LuExternalLink size={14} />}
+              color="brand"
+              variant="light"
+            >
+              Open {selectedEngine.label.split('—')[0].trim()} Website
+            </Button>
+          )}
+
+          <Button variant="subtle" color="gray" onClick={closeExt}>Close</Button>
+        </Stack>
+      </Modal>
     </Box>
   );
 }

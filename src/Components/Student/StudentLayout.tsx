@@ -28,14 +28,14 @@ const NAV_ITEMS = [
   { label: 'Dashboard',          icon: LuLayoutDashboard, path: APPROUTE_LIST.STUDENT_DASHBOARD },
   { label: 'Editor',             icon: LuPenLine,         path: APPROUTE_LIST.STUDENT_EDITOR },
   { label: 'References',         icon: LuBook,            path: APPROUTE_LIST.STUDENT_REFERENCES },
-  { label: 'Data & Files',       icon: LuDatabase,        path: APPROUTE_LIST.STUDENT_DATA_FILES },
+  // { label: 'Data & Files',       icon: LuDatabase,        path: APPROUTE_LIST.STUDENT_DATA_FILES },
   { label: 'Analysis',           icon: LuActivity,        path: APPROUTE_LIST.STUDENT_ANALYSIS },
   { label: 'Results',            icon: LuClipboard,       path: APPROUTE_LIST.STUDENT_RESULTS },
   { label: 'AI Reviewer',        icon: LuBot,             path: APPROUTE_LIST.STUDENT_AI_REVIEWER },
   { label: 'Plagiarism Checker', icon: LuShield,          path: APPROUTE_LIST.STUDENT_PLAGIARISM },
   { label: 'Export',             icon: LuDownload,        path: APPROUTE_LIST.STUDENT_EXPORT },
   { label: 'Messages',           icon: LuMessageSquare,   path: APPROUTE_LIST.STUDENT_MESSAGES },
-  { label: 'Collaboration',      icon: LuUsers,           path: APPROUTE_LIST.STUDENT_COLLABORATION },
+  // { label: 'Collaboration',      icon: LuUsers,           path: APPROUTE_LIST.STUDENT_COLLABORATION },
   { label: 'Settings',           icon: LuSettings,        path: APPROUTE_LIST.STUDENT_SETTINGS },
 ];
 

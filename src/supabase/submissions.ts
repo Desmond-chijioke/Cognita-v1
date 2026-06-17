@@ -10,6 +10,7 @@ export interface DBSubmission {
   section_id:         string;
   section_title:      string;
   content:            string;
+  tables_snapshot:    string | null;
   status:             'pending' | 'approved' | 'needs-revision';
   supervisor_comment: string | null;
   submitted_at:       string;
@@ -30,24 +31,26 @@ export interface DBAnnotation {
 // ── Submit / update a chapter ─────────────────────────────────────────────────
 
 export async function submitChapter(params: {
-  studentId:     string;
-  supervisorId:  string | null;
-  institutionId: string;
-  sectionId:     string;
-  sectionTitle:  string;
-  content:       string;
+  studentId:       string;
+  supervisorId:    string | null;
+  institutionId:   string;
+  sectionId:       string;
+  sectionTitle:    string;
+  content:         string;
+  tablesSnapshot?: string;
 }): Promise<DBSubmission> {
   const { data, error } = await supabase
     .from('submissions')
     .upsert({
-      student_id:    params.studentId,
-      supervisor_id: params.supervisorId,
-      institution_id: params.institutionId,
-      section_id:    params.sectionId,
-      section_title: params.sectionTitle,
-      content:       params.content,
-      status:        'pending',
-      submitted_at:  new Date().toISOString(),
+      student_id:      params.studentId,
+      supervisor_id:   params.supervisorId,
+      institution_id:  params.institutionId,
+      section_id:      params.sectionId,
+      section_title:   params.sectionTitle,
+      content:         params.content,
+      tables_snapshot: params.tablesSnapshot ?? null,
+      status:          'pending',
+      submitted_at:    new Date().toISOString(),
     }, { onConflict: 'student_id,section_id' })
     .select()
     .single();
