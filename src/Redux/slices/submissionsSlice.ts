@@ -20,6 +20,7 @@ export interface Submission {
   sectionTitle:      string;
   content:           string;
   tablesSnapshot:    string | null;
+  imagesSnapshot:    string | null;
   submittedAt:       string;
   status:            SubmissionStatus;
   supervisorComment: string;
@@ -41,7 +42,7 @@ const submissionsSlice = createSlice({
       state,
       action: PayloadAction<
         Pick<Submission, 'studentId' | 'studentName' | 'sectionId' | 'sectionTitle' | 'content'>
-        & { id?: string; tablesSnapshot?: string | null }
+        & { id?: string; tablesSnapshot?: string | null; imagesSnapshot?: string | null }
       >,
     ) {
       const existing = state.list.findIndex(
@@ -53,6 +54,7 @@ const submissionsSlice = createSlice({
         ...action.payload,
         id:                resolvedId,
         tablesSnapshot:    action.payload.tablesSnapshot ?? null,
+        imagesSnapshot:    action.payload.imagesSnapshot ?? null,
         status:            'pending',
         supervisorComment: '',
         reviewedAt:        '',

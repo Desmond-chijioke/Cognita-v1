@@ -14,7 +14,7 @@ import {
   LuMessageSquare, LuPlus, LuSearch, LuSend, LuBot, LuUser,
   LuActivity, LuPencil, LuTrash2, LuCheck, LuX, LuLock,
   LuUpload, LuMessageSquareDot, LuEye,
-  LuMenu, LuArrowLeft, LuTable,
+  LuMenu, LuArrowLeft, LuTable, LuImage, 
 } from 'react-icons/lu';
 import { STUDENT_SECTIONS } from '../studentData';
 import type { IssueSeverity } from '../studentData';
@@ -22,6 +22,7 @@ import { fetchRefs } from '../../../supabase/references';
 import type { DBReference } from '../../../supabase/references';
 import { fetchResultTables } from '../../../supabase/resultTables';
 import type { DBResultTable } from '../../../supabase/resultTables';
+import { uploadEditorImage, listEditorImages } from '../../../supabase/editorImages';
 import { fetchAIReport } from '../../../supabase/aiReports';
 import {
   PROJECT_TYPES, buildSections, mapSections,
@@ -152,6 +153,7 @@ function RingProgress({ value, size = 80 }: { value: number; size?: number }) {
 // â”€â”€ Custom templates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TPL_META_PREFIX   = 'template_def_';
 const TABLE_LAYOUT_KEY  = 'tbl_layout_v1';
+const IMG_LAYOUT_KEY    = 'img_layout_v1';
 
 interface CustomTemplate {
   id:       string;   // template_def_<timestamp>
@@ -248,10 +250,11 @@ function DocTableBlock({
   onResize: (id: string, w: number) => void;
   onDelete: (id: string) => void;
 }) {
-  const [pos, setPos] = useState({ x: dt.x, y: dt.y });
-  const [w,   setW]   = useState(dt.w);
-  const posRef        = useRef({ x: dt.x, y: dt.y });
-  const wRef          = useRef(dt.w);
+  const [pos,     setPos]     = useState({ x: dt.x, y: dt.y });
+  const [w,       setW]       = useState(dt.w);
+  const [hovered, setHovered] = useState(false);
+  const posRef                = useRef({ x: dt.x, y: dt.y });
+  const wRef                  = useRef(dt.w);
 
   const startDrag = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).tagName === 'BUTTON') return;
@@ -293,15 +296,19 @@ function DocTableBlock({
   };
 
   return (
-    <div style={{
-      position: 'absolute', left: pos.x, top: pos.y, width: w,
-      zIndex: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.15)', borderRadius: 6, overflow: 'hidden',
-    }}>
+    <div
+      style={{
+        position: 'absolute', left: pos.x, top: pos.y, width: w,
+        zIndex: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.15)', borderRadius: 6, overflow: 'hidden',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {/* Drag handle */}
       <div
         onMouseDown={startDrag}
         style={{
-          background: '#3b5bdb', color: '#fff', padding: '5px 10px',
+          background: '#3b5bdb', color: '#fff', padding: '4px 8px',
           cursor: 'grab', display: 'flex', alignItems: 'center',
           justifyContent: 'space-between', userSelect: 'none',
         }}
@@ -310,7 +317,11 @@ function DocTableBlock({
         <button
           onMouseDown={e => e.stopPropagation()}
           onClick={() => onDelete(dt.id)}
-          style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0 }}
+          style={{
+            background: 'none', border: 'none', color: '#e03131', cursor: 'pointer',
+            fontSize: 15, lineHeight: 1, padding: 0,
+            opacity: hovered ? 1 : 0, transition: 'opacity 0.15s',
+          }}
         >×</button>
       </div>
 
@@ -354,7 +365,124 @@ function DocTableBlock({
   );
 }
 
-// â”€â”€ Initial sections â€” empty; Supabase drafts + submissions populate content â”€â”€â”€
+// ── Doc image blocks ──────────────────────────────────────────────────────────
+
+interface DocImage {
+  id:  string;
+  url: string;
+  alt: string;
+  x:   number;
+  y:   number;
+  w:   number;
+}
+type DocImageLayout = Record<string, Array<{ id: string; url: string; alt: string; x: number; y: number; w: number }>>;
+
+function DocImageBlock({
+  di, onMove, onResize, onDelete,
+}: {
+  di:       DocImage;
+  onMove:   (id: string, x: number, y: number) => void;
+  onResize: (id: string, w: number) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [pos,     setPos]     = useState({ x: di.x, y: di.y });
+  const [w,       setW]       = useState(di.w);
+  const [hovered, setHovered] = useState(false);
+  const posRef                = useRef({ x: di.x, y: di.y });
+  const wRef                  = useRef(di.w);
+
+  const startDrag = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).tagName === 'BUTTON') return;
+    e.preventDefault();
+    const sx = e.clientX, sy = e.clientY;
+    const ox = posRef.current.x, oy = posRef.current.y;
+    const onMM = (ev: MouseEvent) => {
+      const nx = Math.max(0, ox + ev.clientX - sx);
+      const ny = Math.max(0, oy + ev.clientY - sy);
+      posRef.current = { x: nx, y: ny };
+      setPos({ x: nx, y: ny });
+    };
+    const onMU = () => {
+      onMove(di.id, posRef.current.x, posRef.current.y);
+      window.removeEventListener('mousemove', onMM);
+      window.removeEventListener('mouseup',   onMU);
+    };
+    window.addEventListener('mousemove', onMM);
+    window.addEventListener('mouseup',   onMU);
+  };
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sx = e.clientX;
+    const ow = wRef.current;
+    const onMM = (ev: MouseEvent) => {
+      const nw = Math.max(100, ow + ev.clientX - sx);
+      wRef.current = nw;
+      setW(nw);
+    };
+    const onMU = () => {
+      onResize(di.id, wRef.current);
+      window.removeEventListener('mousemove', onMM);
+      window.removeEventListener('mouseup',   onMU);
+    };
+    window.addEventListener('mousemove', onMM);
+    window.addEventListener('mouseup',   onMU);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'absolute', left: pos.x, top: pos.y, width: w,
+        zIndex: 11, boxShadow: '0 2px 12px rgba(0,0,0,0.18)', borderRadius: 6, overflow: 'hidden',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Transparent drag strip — visible only on hover */}
+      <div
+        onMouseDown={startDrag}
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0,
+          height: 28, cursor: 'grab', userSelect: 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+          padding: '0 6px',
+          background: hovered ? 'rgba(0,0,0,0.25)' : 'transparent',
+          transition: 'background 0.15s',
+          zIndex: 2,
+        }}
+      >
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onClick={() => onDelete(di.id)}
+          style={{
+            background: 'none', border: 'none', color: '#e03131', cursor: 'pointer',
+            fontSize: 18, lineHeight: 1, padding: '0 2px',
+            opacity: hovered ? 1 : 0, transition: 'opacity 0.15s',
+          }}
+        >&#x00D7;</button>
+      </div>
+      <img
+        src={di.url}
+        alt={di.alt}
+        style={{ display: 'block', width: '100%', height: 'auto', background: '#f8f9fa' }}
+        draggable={false}
+      />
+      <div
+        onMouseDown={startResize}
+        style={{
+          position: 'absolute', bottom: 0, right: 0,
+          width: 14, height: 14, cursor: 'se-resize',
+          background: hovered ? 'rgba(0,0,0,0.4)' : 'transparent',
+          borderRadius: '4px 0 0 0', transition: 'background 0.15s',
+          zIndex: 2,
+        }}
+      />
+    </div>
+  );
+}
+
+// ── Initial sections — empty; Supabase drafts + submissions populate content ───
 function buildInitialSections(): EditorSection[] {
   return STUDENT_SECTIONS.map(s => ({
     id:          s.id,
@@ -434,6 +562,13 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const [sectionTables, setSectionTables] = useState<Record<string, DocTable[]>>({});
   const userModifiedLayout = useRef(false);
   const saveLayoutTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sectionImages, setSectionImages] = useState<Record<string, DocImage[]>>({});
+  const [liveImages,    setLiveImages]    = useState<{ name: string; url: string }[]>([]);
+  const [uploadingImg,  setUploadingImg]  = useState(false);
+  const [dragOver,      setDragOver]      = useState(false);
+  const userModifiedImages = useRef(false);
+  const saveImagesTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imageInputRef      = useRef<HTMLInputElement>(null);
 
   // â"€â"€ Redux + Supabase submissions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   const dispatch    = useAppDispatch();
@@ -484,14 +619,33 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
       setLiveTables(tables);
 
       // Separate row types by prefix
-      const projMetaRows = rawDrafts.filter(d => d.section_id.startsWith(PROJ_META_PREFIX));
-      const tplDefs      = rawDrafts.filter(d => d.section_id.startsWith(TPL_META_PREFIX));
-      const layoutRow    = rawDrafts.find(d => d.section_id === TABLE_LAYOUT_KEY);
-      const sectionRows  = rawDrafts.filter(d =>
+      const projMetaRows  = rawDrafts.filter(d => d.section_id.startsWith(PROJ_META_PREFIX));
+      const tplDefs       = rawDrafts.filter(d => d.section_id.startsWith(TPL_META_PREFIX));
+      const layoutRow     = rawDrafts.find(d => d.section_id === TABLE_LAYOUT_KEY);
+      const imgLayoutRow  = rawDrafts.find(d => d.section_id === IMG_LAYOUT_KEY);
+      const sectionRows   = rawDrafts.filter(d =>
         !d.section_id.startsWith(PROJ_META_PREFIX) &&
         !d.section_id.startsWith(TPL_META_PREFIX) &&
-        d.section_id !== TABLE_LAYOUT_KEY,
+        d.section_id !== TABLE_LAYOUT_KEY &&
+        d.section_id !== IMG_LAYOUT_KEY,
       );
+
+      // Restore image layout
+      if (imgLayoutRow?.content) {
+        try {
+          const layout = JSON.parse(imgLayoutRow.content) as DocImageLayout;
+          const restored: Record<string, DocImage[]> = {};
+          for (const [sectionId, entries] of Object.entries(layout)) {
+            if (entries.length) restored[sectionId] = entries as DocImage[];
+          }
+          setSectionImages(restored);
+        } catch { /* ignore corrupt data */ }
+      }
+
+      // Refresh the image library sidebar
+      if (user?.id) {
+        listEditorImages(user.id).then(setLiveImages).catch(() => {});
+      }
 
       // Restore table layout
       if (layoutRow?.content) {
@@ -631,6 +785,23 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
     }, 800);
   }, [sectionTables, user?.id]);
 
+  // Debounced save of image layout to Supabase whenever user modifies it
+  useEffect(() => {
+    if (!user?.id || !userModifiedImages.current) return;
+    if (saveImagesTimer.current) clearTimeout(saveImagesTimer.current);
+    saveImagesTimer.current = setTimeout(() => {
+      const layout: DocImageLayout = {};
+      for (const [sectionId, imgs] of Object.entries(sectionImages)) {
+        if (imgs.length) layout[sectionId] = imgs;
+      }
+      saveSectionDrafts(user.id!, [{
+        sectionId:    IMG_LAYOUT_KEY,
+        sectionTitle: 'Image Layout',
+        content:      JSON.stringify(layout),
+      }]).catch(() => {});
+    }, 800);
+  }, [sectionImages, user?.id]);
+
   const getSubStatus = (sectionId: string): SubmissionStatus | null =>
     mySubmissions.find(s => s.sectionId === sectionId)?.status ?? null;
 
@@ -655,6 +826,12 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
         })))
       : null;
 
+    // Snapshot images placed in this section
+    const sectionDocImages = sectionImages[activeSection.id] ?? [];
+    const imagesSnapshot = sectionDocImages.length > 0
+      ? JSON.stringify(sectionDocImages.map(di => ({ url: di.url, alt: di.alt, w: di.w })))
+      : null;
+
     // Save draft first so the submitted content matches what's in the database
     saveSectionDrafts(user.id, [{
       sectionId:    activeSection.id,
@@ -670,6 +847,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
       sectionTitle:   activeSection.title,
       content:        activeSection.content,
       tablesSnapshot,
+      imagesSnapshot,
     }));
     // Persist submission to Supabase
     submitChapter({
@@ -680,6 +858,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
       sectionTitle:    activeSection.title,
       content:         activeSection.content,
       tablesSnapshot:  tablesSnapshot ?? undefined,
+      imagesSnapshot:  imagesSnapshot ?? undefined,
     }).catch(err => console.error('submitChapter failed:', err));
 
     notifications.show({ title: 'Chapter submitted', message: `"${activeSection.title}" sent to your supervisor for review.`, color: 'blue' });
@@ -1108,6 +1287,84 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
     }));
   }, []);
 
+  // ── Image callbacks ──────────────────────────────────────────────────────────
+
+  const insertImage = useCallback((url: string, filename: string) => {
+    if (!activeSectionId) return;
+    const existing = sectionImages[activeSectionId]?.length ?? 0;
+    const di: DocImage = {
+      id:  `docimg_${Date.now()}`,
+      url,
+      alt: filename,
+      x:   80 + existing * 16,
+      y:   140 + existing * 16,
+      w:   320,
+    };
+    userModifiedImages.current = true;
+    setSectionImages(prev => ({
+      ...prev,
+      [activeSectionId]: [...(prev[activeSectionId] ?? []), di],
+    }));
+    notifications.show({ title: 'Image inserted', message: `"${filename}" added — drag it anywhere on the page.`, color: 'green' });
+  }, [activeSectionId, sectionImages]);
+
+  const handleImageMove = useCallback((sectionId: string, id: string, x: number, y: number) => {
+    userModifiedImages.current = true;
+    setSectionImages(prev => ({
+      ...prev,
+      [sectionId]: (prev[sectionId] ?? []).map(di => di.id === id ? { ...di, x, y } : di),
+    }));
+  }, []);
+
+  const handleImageResize = useCallback((sectionId: string, id: string, w: number) => {
+    userModifiedImages.current = true;
+    setSectionImages(prev => ({
+      ...prev,
+      [sectionId]: (prev[sectionId] ?? []).map(di => di.id === id ? { ...di, w } : di),
+    }));
+  }, []);
+
+  const handleImageDelete = useCallback((sectionId: string, id: string) => {
+    userModifiedImages.current = true;
+    setSectionImages(prev => ({
+      ...prev,
+      [sectionId]: (prev[sectionId] ?? []).filter(di => di.id !== id),
+    }));
+  }, []);
+
+  const handleFileDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (!user?.id) return;
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+    setUploadingImg(true);
+    for (const file of files) {
+      const result = await uploadEditorImage(user.id, file);
+      if (result) {
+        insertImage(result.url, result.filename);
+        setLiveImages(prev => [{ name: result.filename, url: result.url }, ...prev]);
+      }
+    }
+    setUploadingImg(false);
+  }, [user?.id, insertImage]);
+
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user?.id) return;
+    const files = Array.from(e.target.files ?? []).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+    setUploadingImg(true);
+    for (const file of files) {
+      const result = await uploadEditorImage(user.id, file);
+      if (result) {
+        insertImage(result.url, result.filename);
+        setLiveImages(prev => [{ name: result.filename, url: result.url }, ...prev]);
+      }
+    }
+    setUploadingImg(false);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  }, [user?.id, insertImage]);
+
   // Section rename
   const startEdit = (sec: EditorSection) => { setEditingId(sec.id); setEditingTitle(sec.title); };
   const commitEdit = () => {
@@ -1192,6 +1449,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
         <Tabs.Tab value="reviewer"  leftSection={<LuActivity size={13} />} style={{ fontSize: 12 }}>Reviewer</Tabs.Tab>
         <Tabs.Tab value="citations" leftSection={<LuQuote    size={13} />} style={{ fontSize: 12 }}>Citations</Tabs.Tab>
         <Tabs.Tab value="tables"    leftSection={<LuTable    size={13} />} style={{ fontSize: 12 }}>Tables</Tabs.Tab>
+        <Tabs.Tab value="images"    leftSection={<LuImage    size={13} />} style={{ fontSize: 12 }}>Images</Tabs.Tab>
         <Tabs.Tab value="comments"  leftSection={<LuMessageSquare size={13} />} style={{ fontSize: 12 }}>
           Comments
           {collab.comments.filter(c => c.sectionId === activeSectionId && !c.resolved).length > 0 && (
@@ -1452,6 +1710,51 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
               {liveTables.length === 0
                 ? 'No tables yet — go to Results Builder to create one.'
                 : 'No tables match your search.'}
+            </Text>
+          )}
+        </Stack>
+      </Tabs.Panel>
+
+      {/* Images */}
+      <Tabs.Panel value="images" style={{ overflowY: 'auto', padding: '12px 10px' }}>
+        {/* Hidden file input */}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFileInputChange}
+        />
+        <Button
+          size="xs" fullWidth variant="light" color="green" mb={10}
+          leftSection={uploadingImg ? undefined : <LuUpload size={12} />}
+          loading={uploadingImg}
+          onClick={() => imageInputRef.current?.click()}
+        >
+          {uploadingImg ? 'Uploading…' : 'Upload Image'}
+        </Button>
+        <Text size="9px" c="dimmed" mb={8} ta="center" style={{ lineHeight: 1.4 }}>
+          Or drag &amp; drop an image file directly onto the page
+        </Text>
+        <Stack gap={6}>
+          {liveImages.map((img, i) => (
+            <Box key={i} style={{ border: '1px solid #f1f3f5', borderRadius: 8, overflow: 'hidden' }}>
+              <img
+                src={img.url} alt={img.name}
+                style={{ width: '100%', height: 64, objectFit: 'cover', display: 'block' }}
+              />
+              <Box p={6}>
+                <Text size="10px" c="dimmed" lineClamp={1} mb={4}>{img.name}</Text>
+                <Button size="xs" variant="light" color="green" fullWidth onClick={() => insertImage(img.url, img.name)}>
+                  Insert
+                </Button>
+              </Box>
+            </Box>
+          ))}
+          {liveImages.length === 0 && !uploadingImg && (
+            <Text size="xs" c="dimmed" ta="center" py={20}>
+              No images yet — upload one above or drag an image onto the page.
             </Text>
           )}
         </Stack>
@@ -2039,12 +2342,18 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
             <Box style={{ padding: '24px 48px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, minWidth: 912 }}>
               {Array.from({ length: pageCount }, (_, i) => (
                 <Box key={i} style={{ marginBottom: i < pageCount - 1 ? 24 : 0, position: 'relative' }}>
-                  <Box style={{
-                    width: 816, minHeight: 1056, background: '#fff',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
-                    paddingTop: 72, paddingBottom: 72, paddingLeft: 80, paddingRight: 80,
-                    boxSizing: 'border-box', position: 'relative',
-                  }}>
+                  <Box
+                    style={{
+                      width: 816, minHeight: 1056, background: '#fff',
+                      boxShadow: dragOver ? '0 0 0 3px #2f9e44' : '0 2px 8px rgba(0,0,0,0.10)',
+                      paddingTop: 72, paddingBottom: 72, paddingLeft: 80, paddingRight: 80,
+                      boxSizing: 'border-box', position: 'relative',
+                      transition: 'box-shadow 0.15s',
+                    }}
+                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={handleFileDrop}
+                  >
                     {i === 0 && (
                       <textarea
                         ref={textareaRef}
@@ -2053,7 +2362,7 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
                         onBlur={saveCursorPos}
                         style={{ ...textareaStyle, height: Math.max(600, pageCount * 912) } as React.CSSProperties}
                         spellCheck
-                        placeholder={activeSection?.placeholder ?? 'Start writing hereâ€¦'}
+                        placeholder={activeSection?.placeholder ?? 'Start writing here…'}
                       />
                     )}
                     {i === 0 && (sectionTables[activeSectionId] ?? []).map(dt => (
@@ -2065,6 +2374,27 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
                         onDelete={id       => handleTableDelete(activeSectionId, id)}
                       />
                     ))}
+                    {i === 0 && (sectionImages[activeSectionId] ?? []).map(di => (
+                      <DocImageBlock
+                        key={di.id}
+                        di={di}
+                        onMove={(id, x, y) => handleImageMove(activeSectionId, id, x, y)}
+                        onResize={(id, w)  => handleImageResize(activeSectionId, id, w)}
+                        onDelete={id       => handleImageDelete(activeSectionId, id)}
+                      />
+                    ))}
+                    {dragOver && i === 0 && (
+                      <Box style={{
+                        position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', background: 'rgba(47,158,68,0.08)',
+                        pointerEvents: 'none', borderRadius: 2,
+                      }}>
+                        <Box style={{ textAlign: 'center' }}>
+                          <LuImage size={36} color="#2f9e44" />
+                          <Text size="sm" fw={600} c="green" mt={8}>Drop image here</Text>
+                        </Box>
+                      </Box>
+                    )}
                     <Box style={{ position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center' }}>
                       <Text size="xs" c="dimmed">Page {i + 1}</Text>
                     </Box>

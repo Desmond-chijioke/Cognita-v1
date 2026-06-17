@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ActionIcon, Avatar, Badge, Box, Button, Divider, Group, Modal, Paper, Progress,
-  SimpleGrid, Stack, Table, Tabs, Text, Textarea, ThemeIcon, Tooltip,
+  SimpleGrid, Stack, Table, Tabs, Text, Textarea, ThemeIcon, Tooltip,Center
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -241,6 +241,37 @@ function parseTablesSnapshot(snapshot: string | null | undefined): SnapshotTable
   catch { return []; }
 }
 
+// ── Read-only image view (for supervisor) ─────────────────────────────────────
+
+interface SnapshotImage { url: string; alt: string; w?: number }
+
+function StudentImageView({ image, index }: { image: SnapshotImage; index: number }) {
+  return (
+    <Center>
+      <Box p="sm">
+        <img
+          src={image.url}
+          alt={image.alt || `Figure ${index + 1}`}
+          style={{
+            display: 'block',
+            width:   image.w ? `${image.w}px` : '100%',
+            maxWidth: '100%',
+            height:  'auto',
+            borderRadius: 4,
+          }}
+        />
+      </Box>
+    </Center>
+   
+  );
+}
+
+function parseImagesSnapshot(snapshot: string | null | undefined): SnapshotImage[] {
+  if (!snapshot) return [];
+  try { return JSON.parse(snapshot) as SnapshotImage[]; }
+  catch { return []; }
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function SupervisorStudentDetail() {
@@ -334,7 +365,8 @@ export default function SupervisorStudentDetail() {
           sectionId:      dbSub.section_id,
           sectionTitle:   dbSub.section_title,
           content:        dbSub.content,
-          tablesSnapshot: dbSub.tables_snapshot ?? null,
+          tablesSnapshot: dbSub.tables_snapshot  ?? null,
+          imagesSnapshot: dbSub.images_snapshot  ?? null,
         }));
         if (dbSub.status === 'approved') {
           dispatch(approveSubmission({ id: dbSub.id }));
@@ -1175,16 +1207,23 @@ export default function SupervisorStudentDetail() {
                           </Text>
                         </Paper>
 
-                        {/* Student result tables snapshotted at submission time */}
-                        {parseTablesSnapshot(sub.tablesSnapshot).length > 0 && (
-                          <Box mb="md">
-                            <Text size="9px" c="dimmed" mb={6} style={{ textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
-                              Result Tables
-                            </Text>
-                            {parseTablesSnapshot(sub.tablesSnapshot).map((tbl, i) => (
-                              <StudentTableView key={i} table={tbl} />
-                            ))}
-                          </Box>
+                        {/* Tables & images — unified */}
+                        {(parseTablesSnapshot(sub.tablesSnapshot).length > 0 || parseImagesSnapshot(sub.imagesSnapshot).length > 0) && (
+                          <Paper withBorder radius="md" mb="md" style={{ background: '#f8f9fa' }}>
+                            <Box px="sm" py={6} style={{ borderBottom: '1px solid #e9ecef' }}>
+                              <Text size="9px" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                                Result Tables &amp; Figures
+                              </Text>
+                            </Box>
+                            <Box p="sm">
+                              {parseTablesSnapshot(sub.tablesSnapshot).map((tbl, i) => (
+                                <StudentTableView key={`tbl-${i}`} table={tbl} />
+                              ))}
+                              {parseImagesSnapshot(sub.imagesSnapshot).map((img, i) => (
+                                <StudentImageView key={`img-${i}`} image={img} index={i} />
+                              ))}
+                            </Box>
+                          </Paper>
                         )}
 
                         {/* Annotations list — active and resolved */}
@@ -1399,16 +1438,23 @@ export default function SupervisorStudentDetail() {
                         </Text>
                       </Paper>
 
-                      {/* Student result tables snapshotted at submission time */}
-                      {parseTablesSnapshot(sub.tablesSnapshot).length > 0 && (
-                        <Box mb="sm">
-                          <Text size="9px" c="dimmed" mb={6} style={{ textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>
-                            Result Tables
-                          </Text>
-                          {parseTablesSnapshot(sub.tablesSnapshot).map((tbl, i) => (
-                            <StudentTableView key={i} table={tbl} />
-                          ))}
-                        </Box>
+                      {/* Tables & images — unified */}
+                      {(parseTablesSnapshot(sub.tablesSnapshot).length > 0 || parseImagesSnapshot(sub.imagesSnapshot).length > 0) && (
+                        <Paper withBorder radius="md" mb="sm" style={{ background: '#f8f9fa' }}>
+                          <Box px="sm" py={6} style={{ borderBottom: '1px solid #e9ecef' }}>
+                            <Text size="9px" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                              Result Tables &amp; Figures
+                            </Text>
+                          </Box>
+                          <Box p="sm">
+                            {parseTablesSnapshot(sub.tablesSnapshot).map((tbl, i) => (
+                              <StudentTableView key={`tbl-${i}`} table={tbl} />
+                            ))}
+                            {parseImagesSnapshot(sub.imagesSnapshot).map((img, i) => (
+                              <StudentImageView key={`img-${i}`} image={img} index={i} />
+                            ))}
+                          </Box>
+                        </Paper>
                       )}
 
                       {/* Reviewer Notes side-panel style — resolved / active split */}

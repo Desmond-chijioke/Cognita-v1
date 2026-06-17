@@ -11,6 +11,7 @@ export interface DBSubmission {
   section_title:      string;
   content:            string;
   tables_snapshot:    string | null;
+  images_snapshot:    string | null;
   status:             'pending' | 'approved' | 'needs-revision';
   supervisor_comment: string | null;
   submitted_at:       string;
@@ -37,7 +38,8 @@ export async function submitChapter(params: {
   sectionId:       string;
   sectionTitle:    string;
   content:         string;
-  tablesSnapshot?: string;
+  tablesSnapshot?:  string;
+  imagesSnapshot?:  string;
 }): Promise<DBSubmission> {
   const { data, error } = await supabase
     .from('submissions')
@@ -48,7 +50,8 @@ export async function submitChapter(params: {
       section_id:      params.sectionId,
       section_title:   params.sectionTitle,
       content:         params.content,
-      tables_snapshot: params.tablesSnapshot ?? null,
+      tables_snapshot:  params.tablesSnapshot  ?? null,
+      images_snapshot:  params.imagesSnapshot  ?? null,
       status:          'pending',
       submitted_at:    new Date().toISOString(),
     }, { onConflict: 'student_id,section_id' })
