@@ -88,7 +88,7 @@ export default function StudentReferences() {
   // ── BibTeX modal ──────────────────────────────────────────────────────────
   const [bibtexOpen, { open: openBibtex, close: closeBibtex }] = useDisclosure(false);
   const [bibtexInput,   setBibtexInput]   = useState('');
-  const [bibtexParsed,  setBibtexParsed]  = useState<{ title: string; authors: string[]; year: number | null; journal: string | null }[]>([]);
+  const [bibtexParsed,  setBibtexParsed]  = useState<{ title: string; authors: string[]; year: number | null; journal: string | null; doi?: string | null }[]>([]);
   const [bibtexSaving,  setBibtexSaving]  = useState(false);
 
   // ── Manual add modal ──────────────────────────────────────────────────────
