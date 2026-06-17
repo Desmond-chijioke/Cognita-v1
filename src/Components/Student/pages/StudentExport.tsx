@@ -9,7 +9,7 @@ import {
   LuClock, LuSettings, LuLock, LuCircleCheckBig, LuClock3, LuCircleAlert,
 } from 'react-icons/lu';
 import jsPDF from 'jspdf';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, Table, TableRow, TableCell, WidthType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
@@ -33,9 +33,10 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 
 const FONT = 'Times New Roman';
 
-// ── Snapshot tables ────────────────────────────────────────────────────────────
+// ── Snapshot helpers ───────────────────────────────────────────────────────────
 
 interface SnapshotTable { name: string; headers: string[]; rows: string[][] }
+interface SnapshotImage { url: string; alt: string; w?: number }
 
 function parseTablesSnapshot(json: string | null | undefined): SnapshotTable[] {
   if (!json) return [];
@@ -43,11 +44,49 @@ function parseTablesSnapshot(json: string | null | undefined): SnapshotTable[] {
   catch { return []; }
 }
 
+function parseImagesSnapshot(json: string | null | undefined): SnapshotImage[] {
+  if (!json) return [];
+  try { return JSON.parse(json) as SnapshotImage[]; }
+  catch { return []; }
+}
+
+async function fetchImageDataUrl(url: string): Promise<string> {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload  = () => res(reader.result as string);
+    reader.onerror = rej;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function getImageNaturalSize(src: string): Promise<{ w: number; h: number }> {
+  return new Promise(res => {
+    const el = new Image();
+    el.onload  = () => res({ w: el.naturalWidth, h: el.naturalHeight });
+    el.onerror = () => res({ w: 200, h: 150 });
+    el.src = src;
+  });
+}
+
+function imgTypePdf(url: string): string {
+  return url.toLowerCase().includes('.png') ? 'PNG' : 'JPEG';
+}
+
+function imgTypeDocx(url: string): 'png' | 'jpg' | 'gif' | 'bmp' {
+  const u = url.toLowerCase();
+  if (u.includes('.png')) return 'png';
+  if (u.includes('.gif')) return 'gif';
+  if (u.includes('.bmp')) return 'bmp';
+  return 'jpg';
+}
+
 // ── Document builders ──────────────────────────────────────────────────────────
 
-function buildPDF(
+async function buildPDF(
   chapters: DBSubmission[],
-  meta: { name: string; includeCover: boolean; includeToc: boolean },
+  meta: { name: string; includeCover: boolean; includeToc: boolean; includeFigures: boolean },
   fileName: string,
 ) {
   const doc    = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
@@ -101,7 +140,7 @@ function buildPDF(
   }
 
   // Chapters
-  chapters.forEach((ch, idx) => {
+  for (const [idx, ch] of chapters.entries()) {
     if (idx > 0) { doc.addPage(); y = mT; }
 
     writePara(ch.section_title, 16, true);
@@ -168,14 +207,38 @@ function buildPDF(
       });
       y += 6;
     });
-  });
+
+    // Draw images
+    if (meta.includeFigures) {
+      const snapImages = parseImagesSnapshot(ch.images_snapshot);
+      for (let ii = 0; ii < snapImages.length; ii++) {
+        const img = snapImages[ii];
+        try {
+          const dataUrl = await fetchImageDataUrl(img.url);
+          const nat     = await getImageNaturalSize(dataUrl);
+          const pxToMm  = 0.264583;
+          const maxW    = cW;
+          const imgW    = img.w ? Math.min(img.w * pxToMm, maxW) : maxW;
+          const imgH    = imgW * (nat.h / nat.w);
+          checkPage(imgH + 10);
+          y += 4;
+          doc.setFont('times', 'bolditalic');
+          doc.setFontSize(9);
+          doc.text(`Figure ${ii + 1}${img.alt ? `: ${img.alt}` : ''}`, mL, y);
+          y += 4;
+          doc.addImage(dataUrl, imgTypePdf(img.url), mL, y, imgW, imgH);
+          y += imgH + 6;
+        } catch { /* skip if image fails to load */ }
+      }
+    }
+  }
 
   doc.save(fileName);
 }
 
 async function buildDocx(
   chapters: DBSubmission[],
-  meta: { name: string; includeCover: boolean; includeToc: boolean },
+  meta: { name: string; includeCover: boolean; includeToc: boolean; includeFigures: boolean },
 ): Promise<Blob> {
   const sz  = 24;   // 12pt in half-points
   const hSz = 32;   // 16pt
@@ -223,7 +286,7 @@ async function buildDocx(
     children.push(new Paragraph({ children: [new PageBreak()] }));
   }
 
-  chapters.forEach((ch, idx) => {
+  for (const [idx, ch] of chapters.entries()) {
     if (idx > 0) children.push(new Paragraph({ children: [new PageBreak()] }));
 
     children.push(new Paragraph({
@@ -242,7 +305,6 @@ async function buildDocx(
 
     // Append result tables
     parseTablesSnapshot(ch.tables_snapshot).forEach(tbl => {
-      // Table caption
       children.push(new Paragraph({
         spacing: { before: 240, after: 120 },
         children: [new TextRun({ text: tbl.name, bold: true, italics: true, size: 20, font: FONT })],
@@ -274,7 +336,30 @@ async function buildDocx(
 
       children.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
     });
-  });
+
+    // Append images
+    if (meta.includeFigures) {
+      const snapImages = parseImagesSnapshot(ch.images_snapshot);
+      for (let ii = 0; ii < snapImages.length; ii++) {
+        const img = snapImages[ii];
+        try {
+          const resp   = await fetch(img.url);
+          const buffer = await resp.arrayBuffer();
+          const nat    = await getImageNaturalSize(img.url);
+          const dispW  = img.w ?? nat.w;
+          const dispH  = Math.round(dispW * (nat.h / nat.w));
+          children.push(new Paragraph({
+            spacing: { before: 240, after: 80 },
+            children: [new TextRun({ text: `Figure ${ii + 1}${img.alt ? `: ${img.alt}` : ''}`, bold: true, italics: true, size: 18, font: FONT })],
+          }));
+          children.push(new Paragraph({
+            spacing: { after: 200 },
+            children: [new ImageRun({ data: buffer, transformation: { width: dispW, height: dispH }, type: imgTypeDocx(img.url) })],
+          }));
+        } catch { /* skip if image fails to load */ }
+      }
+    }
+  }
 
   const wordDoc = new Document({
     styles: {
@@ -290,7 +375,7 @@ async function buildDocx(
 
 function buildLatex(
   chapters: DBSubmission[],
-  meta: { name: string; includeCover: boolean; includeToc: boolean; citation: CitationStyle },
+  meta: { name: string; includeCover: boolean; includeToc: boolean; includeFigures: boolean; citation: CitationStyle },
 ): string {
   const date   = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
   const esc    = (s: string) => s.replace(/[&%$#_{}~^\\]/g, m => `\\${m}`);
@@ -310,6 +395,7 @@ function buildLatex(
     '\\doublespacing',
     '\\usepackage{booktabs}',
     '\\usepackage{array}',
+    '\\usepackage{graphicx}',
     citeLib,
     '',
     `\\title{${esc(meta.name)} --- Thesis}`,
@@ -355,6 +441,22 @@ function buildLatex(
       });
       lines.push(`\\hline`, `\\end{tabular}`, `\\end{table}`, '');
     });
+
+    // Emit figures
+    if (meta.includeFigures) {
+      parseImagesSnapshot(ch.images_snapshot).forEach((img, ii) => {
+        const widthCm = img.w ? `${(img.w * 0.0264583).toFixed(2)}cm` : '\\textwidth';
+        lines.push(
+          `\\begin{figure}[h!]`,
+          `\\centering`,
+          `\\includegraphics[width=${widthCm}]{${img.url}}`,
+          `\\caption{${esc(img.alt || `Figure ${ii + 1}`)}}`,
+          `\\label{fig:${ch.section_id ?? 'ch'}_${ii}}`,
+          `\\end{figure}`,
+          '',
+        );
+      });
+    }
   });
 
   lines.push('\\end{document}');
@@ -470,10 +572,10 @@ export default function StudentExport() {
 
   async function handleDownload() {
     try {
-      const meta = { name: userName, includeCover, includeToc, citation: citationStyle };
+      const meta = { name: userName, includeCover, includeToc, includeFigures, citation: citationStyle };
 
       if (format === 'pdf') {
-        buildPDF(selectedChapters, meta, fileName);
+        await buildPDF(selectedChapters, meta, fileName);
       } else if (format === 'docx') {
         const blob = await buildDocx(selectedChapters, meta);
         triggerBlobDownload(blob, fileName);
