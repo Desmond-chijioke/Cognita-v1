@@ -23,7 +23,7 @@ export interface PlagiarismReport {
   summary:           string;
   sections:          SectionFinding[];
   sources?:          SourceMatch[];
-  engine?:           'gemini' | 'internal';
+  engine?:           string;   // 'internal' | any AIEngine value
   scannedAt?:        string;
 }
 

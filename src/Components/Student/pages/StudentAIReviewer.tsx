@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Badge, Box, Button, Divider, Group, Loader, Paper, Progress,
-  SimpleGrid, Stack, Text, ThemeIcon, Title,
+  Select, SimpleGrid, Stack, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -13,7 +13,10 @@ import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
 import { fetchAIReport, saveAIReport } from '../../../supabase/aiReports';
-import { generateJSON, isGeminiConfigured, GeminiError } from '../../../helper/gemini';
+import {
+  generateEngineJSON, isEngineConfigured, AI_ENGINE_OPTIONS, AIEngineError,
+} from '../../../helper/aiEngines';
+import type { AIEngine } from '../../../helper/aiEngines';
 import ChapterPicker from '../ChapterPicker';
 
 // ── Report shape produced by Gemini ───────────────────────────────────────────
@@ -77,15 +80,16 @@ ${sections.map(s => `\n--- ${s.title} (id: ${s.id}) ---\n${s.content.slice(0, 60
 export default function StudentAIReviewer() {
   const user = useAppSelector(s => s.auth.user);
 
-  const [loading,  setLoading]  = useState(true);
-  const [running,  setRunning]  = useState(false);
-  const [report,   setReport]   = useState<AIReviewReport | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [running,    setRunning]    = useState(false);
+  const [report,     setReport]     = useState<AIReviewReport | null>(null);
   const [reviewedAt, setReviewedAt] = useState<string | null>(null);
-  const [filter,   setFilter]   = useState<SeverityFilter>('all');
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [filter,     setFilter]     = useState<SeverityFilter>('all');
+  const [expanded,   setExpanded]   = useState<number | null>(null);
+  const [aiEngine,   setAiEngine]   = useState<AIEngine>('claude');
 
   const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected,    setSelected]    = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
@@ -105,8 +109,9 @@ export default function StudentAIReviewer() {
 
   const handleRun = async () => {
     if (!user?.id) return;
-    if (!isGeminiConfigured()) {
-      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing â€” ask an admin to add it to the environment.', color: 'red' });
+    if (!isEngineConfigured(aiEngine)) {
+      const label = AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine;
+      notifications.show({ title: 'AI not configured', message: `Add the API key for ${label} to your .env file.`, color: 'red' });
       return;
     }
 
@@ -119,8 +124,8 @@ export default function StudentAIReviewer() {
     setRunning(true);
     try {
       const prompt = buildPrompt(chosen.map(s => ({ id: s.section_id, title: s.section_title, content: s.content })));
-      const result = await generateJSON<AIReviewReport>(prompt);
-      if (!isAIReviewReport(result)) throw new GeminiError('Unexpected response shape from Gemini.');
+      const result = await generateEngineJSON<AIReviewReport>(prompt, aiEngine);
+      if (!isAIReviewReport(result)) throw new AIEngineError('Unexpected response shape from AI.');
 
       setReport(result);
       const now = new Date().toISOString();
@@ -160,7 +165,14 @@ export default function StudentAIReviewer() {
           <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>AI Reviewer</Title>
           <Text size="sm" c="dimmed" mt={4}>AI-driven quality review of your submitted chapters.</Text>
         </Box>
-        <Text size="xs" c="dimmed">{reviewedAt ? `Reviewed ${new Date(reviewedAt).toLocaleString()}` : 'Not reviewed yet'}</Text>
+        <Group gap="xs">
+          {report && (
+            <Badge size="xs" variant="light" color="violet">
+              {AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine}
+            </Badge>
+          )}
+          <Text size="xs" c="dimmed">{reviewedAt ? `Reviewed ${new Date(reviewedAt).toLocaleString()}` : 'Not reviewed yet'}</Text>
+        </Group>
       </Group>
 
       {loading ? (
@@ -174,6 +186,36 @@ export default function StudentAIReviewer() {
             title="Choose chapters to review"
             description="The AI gives feedback only on the chapters you select below."
           />
+          {/* AI Engine selector */}
+          <Box mt="lg">
+            <Select
+              label="AI Engine"
+              description="Choose which model performs the review"
+              value={aiEngine}
+              onChange={v => setAiEngine((v ?? 'claude') as AIEngine)}
+              data={AI_ENGINE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+              size="sm"
+              renderOption={({ option }) => {
+                const opt = AI_ENGINE_OPTIONS.find(o => o.value === option.value)!;
+                const ok  = isEngineConfigured(opt.value);
+                return (
+                  <Group gap="xs" wrap="nowrap" style={{ width: '100%' }}>
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      <Text size="sm" fw={500} truncate>{opt.label}</Text>
+                      <Text size="10px" c="dimmed">{opt.description}</Text>
+                    </Box>
+                    {opt.free && <Badge size="xs" color="teal"  variant="light">Free</Badge>}
+                    {!ok      && <Badge size="xs" color="gray"  variant="outline">No key</Badge>}
+                  </Group>
+                );
+              }}
+            />
+            {!isEngineConfigured(aiEngine) && (
+              <Text size="xs" c="orange" mt={4}>
+                Add the API key for {AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine} to your .env file.
+              </Text>
+            )}
+          </Box>
           <Group justify="flex-end" mt="md">
             <Button color="brand" leftSection={<LuRefreshCw size={14} />} loading={running}
               disabled={submissions.length === 0 || selected.size === 0} onClick={handleRun}>

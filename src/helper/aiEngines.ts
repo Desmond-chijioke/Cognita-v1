@@ -2,7 +2,7 @@
 // Supports Gemini, OpenAI, Groq (free), and Mistral.
 // Keys are read from VITE_ env vars at build time.
 
-export type AIEngine = 'gemini' | 'openai' | 'groq' | 'mistral';
+export type AIEngine = 'gemini' | 'openai' | 'groq' | 'mistral' | 'claude';
 
 export interface AIEngineOption {
   value:       AIEngine;
@@ -28,6 +28,13 @@ export const AI_ENGINE_OPTIONS: AIEngineOption[] = [
     free:        false,
   },
   {
+    value:       'claude',
+    label:       'Claude Sonnet 4',
+    description: 'Anthropic · Claude API key',
+    model:       'claude-sonnet-4-5',
+    free:        false,
+  },
+  {
     value:       'groq',
     label:       'LLaMA 3.3 70B (Groq)',
     description: 'Meta / Groq · Ultra-fast · Free tier',
@@ -46,6 +53,7 @@ export const AI_ENGINE_OPTIONS: AIEngineOption[] = [
 const KEYS: Record<AIEngine, string | undefined> = {
   gemini:  import.meta.env.VITE_GEMINI_API_KEY  as string | undefined,
   openai:  import.meta.env.VITE_OPENAI_API_KEY  as string | undefined,
+  claude:  import.meta.env.VITE_CLAUDE_API_KEY as string | undefined,
   groq:    import.meta.env.VITE_GROQ_API_KEY    as string | undefined,
   mistral: import.meta.env.VITE_MISTRAL_API_KEY as string | undefined,
 };
@@ -117,6 +125,33 @@ async function callOpenAICompat<T>(
   catch { throw new AIEngineError('AI response could not be parsed as JSON.'); }
 }
 
+async function callClaude<T>(apiKey: string, prompt: string): Promise<T> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 4096,
+      temperature: 0.3,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new AIEngineError(`Claude request failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const text: string | undefined = data?.content?.[0]?.text;
+  if (!text) throw new AIEngineError('Claude returned an empty response.');
+  try { return JSON.parse(stripFence(text)) as T; }
+  catch { throw new AIEngineError('Claude response could not be parsed as JSON.'); }
+}
+
 // ── Public router ─────────────────────────────────────────────────────────────
 
 export async function generateEngineJSON<T>(prompt: string, engine: AIEngine): Promise<T> {
@@ -125,6 +160,7 @@ export async function generateEngineJSON<T>(prompt: string, engine: AIEngine): P
     const names: Record<AIEngine, string> = {
       gemini:  'VITE_GEMINI_API_KEY',
       openai:  'VITE_OPENAI_API_KEY',
+      claude:  'VITE_CLAUDE_API_KEY',
       groq:    'VITE_GROQ_API_KEY',
       mistral: 'VITE_MISTRAL_API_KEY',
     };
@@ -134,6 +170,8 @@ export async function generateEngineJSON<T>(prompt: string, engine: AIEngine): P
   switch (engine) {
     case 'gemini':
       return callGemini<T>(key, prompt);
+    case 'claude':
+      return callClaude<T>(key, prompt);
     case 'openai':
       return callOpenAICompat<T>('https://api.openai.com/v1/chat/completions', key, 'gpt-4o-mini', prompt);
     case 'groq':

@@ -14,7 +14,7 @@ import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
 import { fetchAIReport, saveAIReport } from '../../../supabase/aiReports';
-import { generateJSON, isGeminiConfigured, GeminiError } from '../../../helper/gemini';
+import { generateEngineJSON, isEngineConfigured, AIEngineError } from '../../../helper/aiEngines';
 import {
   fetchRefs, addRef, deleteRef,
   lookupDOI, parseBibtex,
@@ -212,8 +212,8 @@ export default function StudentReferences() {
   // ── Integrity check ───────────────────────────────────────────────────────
   const runIntegrityCheck = async () => {
     if (!user?.id) return;
-    if (!isGeminiConfigured()) {
-      notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY is missing.', color: 'red' });
+    if (!isEngineConfigured('claude')) {
+      notifications.show({ title: 'AI not configured', message: 'VITE_CLAUDE_API_KEY is missing.', color: 'red' });
       return;
     }
     if (!refs.length) {
@@ -228,8 +228,8 @@ export default function StudentReferences() {
     setCheckingIntegrity(true);
     try {
       const prompt = buildIntegrityPrompt(refs, chosen.map(s => ({ id: s.section_id, title: s.section_title, content: s.content })));
-      const result = await generateJSON<ReferencesReport>(prompt);
-      if (!isReferencesReport(result)) throw new GeminiError('Unexpected response shape.');
+      const result = await generateEngineJSON<ReferencesReport>(prompt, 'claude');
+      if (!isReferencesReport(result)) throw new AIEngineError('Unexpected response shape.');
       setIntegrityReport(result);
       const now = new Date().toISOString();
       setIntegrityCheckedAt(now);

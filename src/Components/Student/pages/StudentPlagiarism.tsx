@@ -7,42 +7,53 @@ import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   LuShield, LuCircleCheck, LuTriangleAlert,
-  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuLink, LuExternalLink,
+  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuLink, LuExternalLink, LuSparkles,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
-import { fetchAIReport } from '../../../supabase/aiReports';
+import { fetchAIReport, saveAIReport } from '../../../supabase/aiReports';
 import { runInternalScan } from '../../../supabase/plagiarismEngine';
 import type { PlagiarismReport, SourceMatch } from '../../../supabase/plagiarismEngine';
+import {
+  generateEngineJSON, isEngineConfigured, AI_ENGINE_OPTIONS, AIEngineError,
+} from '../../../helper/aiEngines';
+import type { AIEngine } from '../../../helper/aiEngines';
 import ChapterPicker from '../ChapterPicker';
 
-// ── Commented out — restore when Gemini API key is ready ─────────────────────
-// import { generateJSON, isGeminiConfigured, GeminiError } from '../../../helper/gemini';
-//
-// function buildGeminiPrompt(sections: { id: string; title: string; content: string }[]): string {
-//   return `You are an academic-integrity assistant helping a student review their own research project.
-// Analyse the sections below for: similar phrasing, weak paraphrasing, AI-like writing style.
-// You do NOT have web search — base scores purely on linguistic characteristics.
-// Respond with ONLY JSON:
-// { "overallSimilarity": number, "overallAi": number, "summary": string,
-//   "sections": [{ "sectionId": string, "sectionTitle": string, "similarity": number,
-//                  "aiScore": number, "flags": string[], "notes": string }] }
-// SECTIONS: ${sections.map(s => `\n--- ${s.title} ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
-// }
-//
-// Gemini scan (restore when API key is set):
-// const runGeminiScan = async (sections, userId, saveReport) => {
-//   if (!isGeminiConfigured()) {
-//     notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY missing.', color: 'red' });
-//     return null;
-//   }
-//   const prompt  = buildGeminiPrompt(sections);
-//   const result  = await generateJSON<PlagiarismReport>(prompt);
-//   if (!isPlagiarismReport(result)) throw new GeminiError('Unexpected response shape from Gemini.');
-//   await saveReport(userId, 'plagiarism', { ...result, engine: 'gemini' });
-//   return result;
-// };
+// ── Claude AI prompt ──────────────────────────────────────────────────────────
+
+function buildClaudePrompt(sections: { id: string; title: string; content: string }[]): string {
+  return `You are an academic-integrity assistant helping a student review their own research project.
+Analyse the sections below for: similar or repetitive phrasing, weak paraphrasing, over-reliance on sources, and AI-like writing style.
+You do NOT have web search — base your scores purely on the linguistic characteristics of the text provided.
+
+Respond with ONLY JSON in exactly this shape (no markdown fences, no extra commentary):
+{
+  "overallSimilarity": number,
+  "overallAi": number,
+  "summary": string,
+  "sections": [
+    {
+      "sectionId": string,
+      "sectionTitle": string,
+      "similarity": number,
+      "aiScore": number,
+      "flags": string[],
+      "notes": string
+    }
+  ]
+}
+
+- overallSimilarity: 0-100 estimate of how much the writing resembles other academic texts (not original)
+- overallAi: 0-100 estimate of AI-generated/paraphrased writing likelihood
+- similarity / aiScore: per-section equivalents
+- flags: short phrases identifying specific issues (e.g. "Formulaic sentence structure", "Passive voice overuse")
+- notes: 1-2 sentence actionable note for that section
+
+SECTIONS:
+${sections.map(s => `\n--- ${s.title} (id: ${s.id}) ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -121,17 +132,11 @@ function SourcesList({ sources }: { sources: SourceMatch[] }) {
 
 // ── Engine options ────────────────────────────────────────────────────────────
 
-const ENGINES = [
-  { value: 'cognita',  label: 'Cognita Engine — Free',  reliability: 20,  paid: false, url: null },
-  { value: 'queltext', label: 'Queltext — Free',         reliability: 45,  paid: false, url: 'https://queltext.com' },
-  { value: 'unicheck', label: 'Unicheck — Paid',         reliability: 85,  paid: true,  url: 'https://unicheck.com' },
-  { value: 'turnitin', label: 'Turnitin — Paid',         reliability: 100, paid: true,  url: 'https://www.turnitin.com' },
+const EXTERNAL_ENGINES = [
+  { value: 'queltext', label: 'Queltext — Free',  reliability: 45,  paid: false, url: 'https://queltext.com' },
+  { value: 'unicheck', label: 'Unicheck — Paid',  reliability: 85,  paid: true,  url: 'https://unicheck.com' },
+  { value: 'turnitin', label: 'Turnitin — Paid',  reliability: 100, paid: true,  url: 'https://www.turnitin.com' },
 ] as const;
-
-const ENGINE_SELECT_DATA = ENGINES.map(e => ({
-  value: e.value,
-  label: `${e.label}  (${e.reliability}% reliability)`,
-}));
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -147,8 +152,11 @@ export default function StudentPlagiarism() {
 
   const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
   const [selected,    setSelected]    = useState<Set<string>>(new Set());
-  const [engine,      setEngine]      = useState<string>('cognita');
-  const [extOpen,     { open: openExt, close: closeExt }] = useDisclosure(false);
+
+  // 'cognita' | AIEngine | external engine value
+  const [engine,    setEngine]    = useState<string>('cognita');
+  const [aiEngine,  setAiEngine]  = useState<AIEngine>('claude');
+  const [extOpen,   { open: openExt, close: closeExt }] = useDisclosure(false);
 
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
@@ -175,9 +183,33 @@ export default function StudentPlagiarism() {
       return;
     }
 
-    // External engines — redirect the user to the service
-    if (engine !== 'cognita') { openExt(); return; }
+    // External engines — redirect user
+    if (EXTERNAL_ENGINES.some(e => e.value === engine)) { openExt(); return; }
 
+    // Claude AI scan
+    if (engine === 'ai') {
+      if (!isEngineConfigured(aiEngine)) {
+        const keyName = AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine;
+        notifications.show({ title: 'Engine not configured', message: `Add the API key for ${keyName} to your .env file.`, color: 'red' });
+        return;
+      }
+      setScanning(true);
+      try {
+        const prompt = buildClaudePrompt(chosen.map(s => ({ id: s.section_id, title: s.section_title, content: s.content })));
+        const raw    = await generateEngineJSON<PlagiarismReport>(prompt, aiEngine);
+        if (!isPlagiarismReport(raw)) throw new AIEngineError('Unexpected response shape from AI.');
+        const result: PlagiarismReport = { ...raw, engine: aiEngine, scannedAt: new Date().toISOString() };
+        setReport(result);
+        setScannedAt(result.scannedAt ?? new Date().toISOString());
+        await saveAIReport(user.id, 'plagiarism', result);
+        notifications.show({ title: 'AI Scan complete', message: 'Integrity report updated.', color: 'green' });
+      } catch (err) {
+        notifications.show({ title: 'AI Scan failed', message: err instanceof Error ? err.message : 'Could not complete the scan.', color: 'red' });
+      } finally { setScanning(false); }
+      return;
+    }
+
+    // Cognita internal scan
     setScanning(true);
     try {
       const result = await runInternalScan({
@@ -185,7 +217,6 @@ export default function StudentPlagiarism() {
         institutionId: user.institutionId,
         sections: chosen.map(s => ({ id: s.section_id, title: s.section_title, content: s.content })),
       });
-
       setReport(result);
       setScannedAt(result.scannedAt ?? new Date().toISOString());
       notifications.show({ title: 'Scan complete', message: 'Integrity report updated.', color: 'green' });
@@ -198,7 +229,7 @@ export default function StudentPlagiarism() {
     } finally { setScanning(false); }
   };
 
-  const selectedEngine = ENGINES.find(e => e.value === engine) ?? ENGINES[0];
+  const selectedExtEngine = EXTERNAL_ENGINES.find(e => e.value === engine);
 
   const overallSim = report?.overallSimilarity ?? 0;
   const overallAi  = report?.overallAi ?? 0;
@@ -219,7 +250,7 @@ export default function StudentPlagiarism() {
         <Group gap="xs" align="center">
           {report?.engine && (
             <Badge size="xs" variant="light" color={report.engine === 'internal' ? 'teal' : 'violet'}>
-              {report.engine === 'internal' ? 'Internal Engine' : 'Gemini AI'}
+              {report.engine === 'internal' ? 'Internal Engine' : report.engine}
             </Badge>
           )}
           <Text size="xs" c="dimmed">
@@ -250,29 +281,73 @@ export default function StudentPlagiarism() {
             <Text size="sm" fw={600} mb={6}>Plagiarism Check Engine</Text>
             <Group gap="md" align="flex-end" wrap="wrap">
               <Select
-                data={ENGINE_SELECT_DATA}
+                data={[
+                  { value: 'cognita', label: 'Cognita Engine — Free  (20% reliability)' },
+                  { value: 'ai',      label: 'AI Analysis (Claude / GPT / Groq…)' },
+                  ...EXTERNAL_ENGINES.map(e => ({ value: e.value, label: `${e.label}  (${e.reliability}% reliability)` })),
+                ]}
                 value={engine}
                 onChange={v => setEngine(v ?? 'cognita')}
                 style={{ flex: 1, minWidth: 280 }}
                 size="sm"
               />
               <Group gap={6}>
-                <Badge
-                  size="sm"
-                  variant="light"
-                  color={selectedEngine.reliability >= 85 ? 'green' : selectedEngine.reliability >= 45 ? 'yellow' : 'blue'}
-                >
-                  {selectedEngine.reliability}% reliability
-                </Badge>
-                {selectedEngine.paid && (
-                  <Badge size="sm" variant="light" color="grape">Paid</Badge>
-                )}
-                {!selectedEngine.paid && (
-                  <Badge size="sm" variant="light" color="teal">Free</Badge>
+                {engine === 'cognita' && <Badge size="sm" variant="light" color="blue">20% reliability</Badge>}
+                {engine === 'ai'      && <Badge size="sm" variant="light" color="violet">AI-powered</Badge>}
+                {selectedExtEngine && (
+                  <>
+                    <Badge size="sm" variant="light" color={selectedExtEngine.reliability >= 85 ? 'green' : 'yellow'}>
+                      {selectedExtEngine.reliability}% reliability
+                    </Badge>
+                    <Badge size="sm" variant="light" color="grape">Paid</Badge>
+                  </>
                 )}
               </Group>
             </Group>
-            {engine !== 'cognita' && (
+
+            {/* AI engine sub-selector */}
+            {engine === 'ai' && (
+              <Box mt="sm">
+                <Select
+                  label="AI Engine"
+                  description="Choose which AI model performs the linguistic analysis"
+                  value={aiEngine}
+                  onChange={v => setAiEngine((v ?? 'claude') as AIEngine)}
+                  data={AI_ENGINE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                  size="sm"
+                  renderOption={({ option }) => {
+                    const opt = AI_ENGINE_OPTIONS.find(o => o.value === option.value)!;
+                    const ok  = isEngineConfigured(opt.value);
+                    return (
+                      <Group gap="xs" wrap="nowrap" style={{ width: '100%' }}>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
+                          <Text size="sm" fw={500} truncate>{opt.label}</Text>
+                          <Text size="10px" c="dimmed">{opt.description}</Text>
+                        </Box>
+                        {opt.free && <Badge size="xs" color="teal" variant="light">Free</Badge>}
+                        {!ok      && <Badge size="xs" color="gray" variant="outline">No key</Badge>}
+                      </Group>
+                    );
+                  }}
+                />
+                {!isEngineConfigured(aiEngine) && (
+                  <Text size="xs" c="orange" mt={4}>
+                    Add {AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine} API key to your .env to use this engine.
+                  </Text>
+                )}
+                <Paper withBorder p="sm" radius="md" mt="sm" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <LuSparkles size={13} color="#748ffc" style={{ flexShrink: 0, marginTop: 2 }} />
+                    <Text size="xs" c="dimmed">
+                      AI analysis scores writing style, paraphrasing quality, and formulaic phrasing using the selected language model.
+                      Scores are estimates — not evidence of plagiarism.
+                    </Text>
+                  </Group>
+                </Paper>
+              </Box>
+            )}
+
+            {EXTERNAL_ENGINES.some(e => e.value === engine) && (
               <Text size="xs" c="dimmed" mt={6}>
                 This engine is an external service. Clicking "Run Scan" will guide you to submit your document there.
               </Text>
@@ -529,9 +604,9 @@ export default function StudentPlagiarism() {
         title={
           <Group gap="xs">
             <LuShield size={16} />
-            <Text fw={600} size="sm">{selectedEngine.label}</Text>
-            <Badge size="xs" variant="light" color={selectedEngine.paid ? 'grape' : 'teal'}>
-              {selectedEngine.paid ? 'Paid' : 'Free'}
+            <Text fw={600} size="sm">{selectedExtEngine?.label ?? ''}</Text>
+            <Badge size="xs" variant="light" color={selectedExtEngine?.paid ? 'grape' : 'teal'}>
+              {selectedExtEngine?.paid ? 'Paid' : 'Free'}
             </Badge>
           </Group>
         }
@@ -543,7 +618,7 @@ export default function StudentPlagiarism() {
             <Group gap="xs" wrap="nowrap" align="flex-start">
               <LuInfo size={15} color="#748ffc" style={{ flexShrink: 0, marginTop: 2 }} />
               <Text size="sm" c="dimmed">
-                <strong>{selectedEngine.label}</strong> is an external service not integrated directly into Cognita.
+                <strong>{selectedExtEngine?.label}</strong> is an external service not integrated directly into Cognita.
                 To use it, submit your document on their platform and record the results manually.
               </Text>
             </Group>
@@ -551,17 +626,17 @@ export default function StudentPlagiarism() {
 
           <Stack gap="xs">
             <Group gap="sm">
-              <Badge variant="filled" color={selectedEngine.reliability >= 85 ? 'green' : 'yellow'} size="sm">
-                {selectedEngine.reliability}% reliability
+              <Badge variant="filled" color={selectedExtEngine && selectedExtEngine.reliability >= 85 ? 'green' : 'yellow'} size="sm">
+                {selectedExtEngine?.reliability}% reliability
               </Badge>
               <Text size="xs" c="dimmed">Industry reliability score as rated by academic institutions</Text>
             </Group>
           </Stack>
 
-          <Text size="sm" fw={500}>Steps to use {selectedEngine.label.split('—')[0].trim()}:</Text>
+          <Text size="sm" fw={500}>Steps to use {selectedExtEngine?.label.split('—')[0].trim()}:</Text>
           <Stack gap={6}>
             {['Download or copy your chapter content from the Results Builder or Editor.',
-              `Visit the ${selectedEngine.label.split('—')[0].trim()} website and create / log in to your account.`,
+              `Visit the ${selectedExtEngine?.label.split('—')[0].trim()} website and create / log in to your account.`,
               'Submit your document for scanning and wait for the report.',
               'Note your similarity and AI scores from their report.',
             ].map((step, i) => (
@@ -572,17 +647,17 @@ export default function StudentPlagiarism() {
             ))}
           </Stack>
 
-          {selectedEngine.url && (
+          {selectedExtEngine?.url && (
             <Button
               component="a"
-              href={selectedEngine.url}
+              href={selectedExtEngine.url}
               target="_blank"
               rel="noopener noreferrer"
               leftSection={<LuExternalLink size={14} />}
               color="brand"
               variant="light"
             >
-              Open {selectedEngine.label.split('—')[0].trim()} Website
+              Open {selectedExtEngine.label.split('—')[0].trim()} Website
             </Button>
           )}
 

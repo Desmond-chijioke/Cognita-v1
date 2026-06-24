@@ -363,7 +363,7 @@ export default function StudentAnalysis() {
   const [activeTab,        setActiveTab]        = useState<string | null>('dataset');
   const [selectedDataset,  setSelectedDataset]  = useState<string | null>(null);
   const [analysisType,     setAnalysisType]     = useState<'Quantitative' | 'Qualitative'>('Quantitative');
-  const [aiEngine,         setAiEngine]         = useState<AIEngine>('gemini');
+  const [aiEngine,         setAiEngine]         = useState<AIEngine>('claude');
   const [researchQuestion, setResearchQuestion] = useState('');
   const [hypothesis,       setHypothesis]       = useState('');
   const [running,          setRunning]          = useState(false);
@@ -668,6 +668,14 @@ export default function StudentAnalysis() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const selectedDs = datasets.find(d => d.id === selectedDataset);
+
+  const resultOverview = result ? {
+    findings: result.findings.length,
+    recommendations: result.recommendations.length,
+    total: result.findings.length + result.recommendations.length || 1,
+  } : null;
+  const findingsShare = resultOverview ? Math.round((resultOverview.findings / resultOverview.total) * 100) : 0;
+  const recommendationsShare = resultOverview ? 100 - findingsShare : 0;
 
   if (loading) {
     return (
@@ -1218,6 +1226,7 @@ export default function StudentAnalysis() {
                   <Text size="xs" c="orange">
                     Add {
                       aiEngine === 'openai'  ? 'VITE_OPENAI_API_KEY'  :
+                      aiEngine === 'claude'  ? 'VITE_CLAUDE_API_KEY'  :
                       aiEngine === 'groq'    ? 'VITE_GROQ_API_KEY'    :
                       aiEngine === 'mistral' ? 'VITE_MISTRAL_API_KEY' :
                                               'VITE_GEMINI_API_KEY'
@@ -1319,6 +1328,50 @@ export default function StudentAnalysis() {
                     <Text size="xs" fw={700} c="brand" mb={4} style={{ letterSpacing: 1 }}>EXECUTIVE SUMMARY</Text>
                     <Text size="sm">{result.summary}</Text>
                   </Box>
+
+                  {/* Charts */}
+                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md" mb="lg">
+                    <Paper withBorder radius="md" p="md" bg="#f8fafc">
+                      <Text size="sm" fw={700} mb="xs">Results at a glance</Text>
+                      <Text size="xs" c="dimmed" mb="md">Findings vs recommendations</Text>
+                      <Box style={{ display: 'grid', gap: 10 }}>
+                        <Box>
+                          <Text size="xs" fw={700} mb="4">Findings</Text>
+                          <Box style={{ height: 10, borderRadius: 999, background: '#e9ecef', overflow: 'hidden' }}>
+                            <Box style={{ width: `${resultOverview?.findings ? findingsShare : 0}%`, height: '100%', background: '#3b5bdb' }} />
+                          </Box>
+                          <Text size="xs" c="dimmed" mt="4">{resultOverview?.findings ?? 0} findings</Text>
+                        </Box>
+                        <Box>
+                          <Text size="xs" fw={700} mb="4">Recommendations</Text>
+                          <Box style={{ height: 10, borderRadius: 999, background: '#e9ecef', overflow: 'hidden' }}>
+                            <Box style={{ width: `${resultOverview?.recommendations ? recommendationsShare : 0}%`, height: '100%', background: '#37b24d' }} />
+                          </Box>
+                          <Text size="xs" c="dimmed" mt="4">{resultOverview?.recommendations ?? 0} recommendations</Text>
+                        </Box>
+                      </Box>
+                    </Paper>
+
+                    <Paper withBorder radius="md" p="md" bg="#f8fafc" style={{ textAlign: 'center' }}>
+                      <Text size="sm" fw={700} mb="xs">Result distribution</Text>
+                      <Box style={{ position: 'relative', width: 150, height: 150, margin: '0 auto 16px', borderRadius: '50%', background: `conic-gradient(#3b5bdb 0% ${findingsShare}%, #37b24d ${findingsShare}% 100%)` }}>
+                        <Box style={{ position: 'absolute', inset: 25, borderRadius: '50%', background: 'white' }} />
+                        <Box style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text size="xl" fw={700}>{resultOverview?.total ?? 0}</Text>
+                        </Box>
+                      </Box>
+                      <Group justify="center" gap="xs">
+                        <Box style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Box style={{ width: 10, height: 10, borderRadius: 999, background: '#3b5bdb' }} />
+                          <Text size="xs">Findings {findingsShare}%</Text>
+                        </Box>
+                        <Box style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Box style={{ width: 10, height: 10, borderRadius: 999, background: '#37b24d' }} />
+                          <Text size="xs">Recommendations {recommendationsShare}%</Text>
+                        </Box>
+                      </Group>
+                    </Paper>
+                  </SimpleGrid>
 
                   {/* Findings */}
                   <Text fw={700} size="md" mb="sm">Key Findings</Text>

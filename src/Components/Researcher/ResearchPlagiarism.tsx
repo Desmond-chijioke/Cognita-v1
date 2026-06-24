@@ -1,46 +1,55 @@
 import { useEffect, useState } from 'react';
 import {
   Anchor, Badge, Box, Button, Checkbox, Divider, Group, Loader, Paper, Progress,
-  SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
+  Select, SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
   LuShield, LuCircleCheck, LuTriangleAlert,
-  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuFileText, LuLink,
+  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuFileText, LuLink, LuSparkles,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../Redux/hooks';
 import { fetchSectionDrafts } from '../../supabase/drafts';
 import type { DBDraft } from '../../supabase/drafts';
-import { fetchAIReport } from '../../supabase/aiReports';
+import { fetchAIReport, saveAIReport } from '../../supabase/aiReports';
 import { runInternalScan } from '../../supabase/plagiarismEngine';
 import type { PlagiarismReport, SourceMatch } from '../../supabase/plagiarismEngine';
+import {
+  generateEngineJSON, isEngineConfigured, AI_ENGINE_OPTIONS, AIEngineError,
+} from '../../helper/aiEngines';
+import type { AIEngine } from '../../helper/aiEngines';
 
-// ── Commented out — restore when Gemini API key is ready ─────────────────────
-// import { generateJSON, isGeminiConfigured, GeminiError } from '../../helper/gemini';
-//
-// function buildGeminiPrompt(sections: { id: string; title: string; content: string }[]): string {
-//   return `You are an academic-integrity assistant helping a researcher review their own work.
-// Analyse the sections below for similar phrasing, weak paraphrasing, and AI-like writing style.
-// You do NOT have web search — base scores purely on linguistic characteristics.
-// Respond with ONLY JSON:
-// { "overallSimilarity": number, "overallAi": number, "summary": string,
-//   "sections": [{ "sectionId": string, "sectionTitle": string, "similarity": number,
-//                  "aiScore": number, "flags": string[], "notes": string }] }
-// SECTIONS: ${sections.map(s => `\n--- ${s.title} ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
-// }
-//
-// Gemini scan (restore when API key is set):
-// const runGeminiScan = async (sections, userId, saveReport) => {
-//   if (!isGeminiConfigured()) {
-//     notifications.show({ title: 'AI not configured', message: 'VITE_GEMINI_API_KEY missing.', color: 'red' });
-//     return null;
-//   }
-//   const prompt = buildGeminiPrompt(sections);
-//   const result = await generateJSON<PlagiarismReport>(prompt);
-//   if (!isPlagiarismReport(result)) throw new GeminiError('Unexpected response shape.');
-//   await saveReport(userId, 'plagiarism', { ...result, engine: 'gemini' });
-//   return result;
-// };
+// ── Claude AI prompt ──────────────────────────────────────────────────────────
+
+function buildClaudePrompt(sections: { id: string; title: string; content: string }[]): string {
+  return `You are an academic-integrity assistant helping a researcher review their own work.
+Analyse the sections below for: similar or repetitive phrasing, weak paraphrasing, over-reliance on sources, and AI-like writing style.
+You do NOT have web search — base your scores purely on linguistic characteristics.
+
+Respond with ONLY JSON in exactly this shape (no markdown fences, no extra commentary):
+{
+  "overallSimilarity": number,
+  "overallAi": number,
+  "summary": string,
+  "sections": [
+    {
+      "sectionId": string,
+      "sectionTitle": string,
+      "similarity": number,
+      "aiScore": number,
+      "flags": string[],
+      "notes": string
+    }
+  ]
+}
+
+- overallSimilarity / overallAi: 0-100 estimates
+- flags: short phrases identifying specific issues
+- notes: 1-2 sentence actionable note per section
+
+SECTIONS:
+${sections.map(s => `\n--- ${s.title} (id: ${s.id}) ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -207,6 +216,10 @@ export default function ResearchPlagiarism() {
   const [drafts,   setDrafts]   = useState<DBDraft[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // 'cognita' | 'ai'
+  const [engine,   setEngine]   = useState<string>('cognita');
+  const [aiEngine, setAiEngine] = useState<AIEngine>('claude');
+
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
     Promise.all([
@@ -232,6 +245,30 @@ export default function ResearchPlagiarism() {
       return;
     }
 
+    // AI scan
+    if (engine === 'ai') {
+      if (!isEngineConfigured(aiEngine)) {
+        const label = AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine;
+        notifications.show({ title: 'Engine not configured', message: `Add the API key for ${label} to your .env file.`, color: 'red' });
+        return;
+      }
+      setScanning(true);
+      try {
+        const prompt = buildClaudePrompt(chosen.map(d => ({ id: d.section_id, title: d.section_title, content: d.content })));
+        const raw    = await generateEngineJSON<PlagiarismReport>(prompt, aiEngine);
+        if (!isPlagiarismReport(raw)) throw new AIEngineError('Unexpected response shape from AI.');
+        const result: PlagiarismReport = { ...raw, engine: aiEngine, scannedAt: new Date().toISOString() };
+        setReport(result);
+        setScannedAt(result.scannedAt ?? new Date().toISOString());
+        await saveAIReport(user.id, 'plagiarism', result);
+        notifications.show({ title: 'AI Scan complete', message: 'Integrity report updated.', color: 'green' });
+      } catch (err) {
+        notifications.show({ title: 'AI Scan failed', message: err instanceof Error ? err.message : 'Could not complete the scan.', color: 'red' });
+      } finally { setScanning(false); }
+      return;
+    }
+
+    // Cognita internal scan
     setScanning(true);
     try {
       const result = await runInternalScan({
@@ -239,7 +276,6 @@ export default function ResearchPlagiarism() {
         institutionId: user.institutionId,
         sections: chosen.map(d => ({ id: d.section_id, title: d.section_title, content: d.content })),
       });
-
       setReport(result);
       setScannedAt(result.scannedAt ?? new Date().toISOString());
       notifications.show({ title: 'Scan complete', message: 'Integrity report updated.', color: 'green' });
@@ -271,7 +307,7 @@ export default function ResearchPlagiarism() {
         <Group gap="xs" align="center">
           {report?.engine && (
             <Badge size="xs" variant="light" color={report.engine === 'internal' ? 'teal' : 'violet'}>
-              {report.engine === 'internal' ? 'Internal Engine' : 'Gemini AI'}
+              {report.engine === 'internal' ? 'Internal Engine' : report.engine}
             </Badge>
           )}
           <Text size="xs" c="dimmed">
@@ -297,6 +333,60 @@ export default function ResearchPlagiarism() {
         <Group justify="center" py="xl"><Loader size="sm" color="brand" /></Group>
       ) : (
         <Paper withBorder p="lg" radius="md" bg="white" mb="xl">
+          {/* Engine selector */}
+          <Box mb="lg">
+            <Text size="sm" fw={600} mb={6}>Plagiarism Check Engine</Text>
+            <Select
+              data={[
+                { value: 'cognita', label: 'Cognita Engine — Free  (20% reliability)' },
+                { value: 'ai',      label: 'AI Analysis (Claude / GPT / Groq…)' },
+              ]}
+              value={engine}
+              onChange={v => setEngine(v ?? 'cognita')}
+              size="sm"
+              style={{ maxWidth: 380 }}
+            />
+            {engine === 'ai' && (
+              <Box mt="sm">
+                <Select
+                  label="AI Engine"
+                  description="Choose which AI model performs the linguistic analysis"
+                  value={aiEngine}
+                  onChange={v => setAiEngine((v ?? 'claude') as AIEngine)}
+                  data={AI_ENGINE_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                  size="sm"
+                  renderOption={({ option }) => {
+                    const opt = AI_ENGINE_OPTIONS.find(o => o.value === option.value)!;
+                    const ok  = isEngineConfigured(opt.value);
+                    return (
+                      <Group gap="xs" wrap="nowrap" style={{ width: '100%' }}>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
+                          <Text size="sm" fw={500} truncate>{opt.label}</Text>
+                          <Text size="10px" c="dimmed">{opt.description}</Text>
+                        </Box>
+                        {opt.free && <Badge size="xs" color="teal"  variant="light">Free</Badge>}
+                        {!ok      && <Badge size="xs" color="gray"  variant="outline">No key</Badge>}
+                      </Group>
+                    );
+                  }}
+                />
+                {!isEngineConfigured(aiEngine) && (
+                  <Text size="xs" c="orange" mt={4}>
+                    Add the API key for {AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine} to your .env file.
+                  </Text>
+                )}
+                <Paper withBorder p="sm" radius="md" mt="sm" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <LuSparkles size={13} color="#748ffc" style={{ flexShrink: 0, marginTop: 2 }} />
+                    <Text size="xs" c="dimmed">
+                      AI analysis scores writing style, paraphrasing quality, and formulaic phrasing.
+                      Scores are estimates — not evidence of plagiarism.
+                    </Text>
+                  </Group>
+                </Paper>
+              </Box>
+            )}
+          </Box>
           <DraftPicker drafts={drafts} selected={selected} onChange={setSelected} />
           <Group justify="flex-end" mt="md">
             <Button color="brand" leftSection={<LuShield size={14} />} loading={scanning}
