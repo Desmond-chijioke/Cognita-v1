@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Badge, Box, Button, Checkbox, Divider, Group, Loader, Paper, Progress,
-  Radio, SimpleGrid, Stack, Text, ThemeIcon, Title,
+  Radio, SimpleGrid, Stack,Table,  Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -9,7 +9,7 @@ import {
   LuClock, LuSettings, LuLock, LuCircleCheckBig, LuClock3, LuCircleAlert,
 } from 'react-icons/lu';
 import jsPDF from 'jspdf';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, Table as DocxTable, TableRow, TableCell, WidthType, ImageRun } from 'docx';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
@@ -329,7 +329,7 @@ async function buildDocx(
         })),
       }));
 
-      children.push(new Table({
+      children.push(new DocxTable({
         width: { size: 100, type: WidthType.PERCENTAGE },
         rows: [headerRow, ...dataRows],
       }));
@@ -644,15 +644,6 @@ export default function StudentExport() {
                 : `${selectedIds.size} of ${approved.length} approved chapter${approved.length !== 1 ? 's' : ''} selected`}
             </Text>
           </Box>
-          {approved.length > 0 && (
-            <Checkbox
-              label={allChecked ? 'Deselect all' : 'Select all'}
-              checked={allChecked}
-              indeterminate={someChecked}
-              onChange={toggleAll}
-              color="brand"
-            />
-          )}
         </Group>
         <Divider mb="md" />
 
@@ -664,61 +655,91 @@ export default function StudentExport() {
             <Text size="xs" c="dimmed" mt={4}>Submit chapters for supervisor review from the Writing section.</Text>
           </Box>
         ) : (
-          <Stack gap="xs">
-            {/* Approved chapters */}
-            {approved.map(ch => (
-              <Paper
-                key={ch.id}
-                withBorder p="md" radius="md"
-                style={{
-                  background:  selectedIds.has(ch.id) ? '#f0fdf4' : 'white',
-                  borderColor: selectedIds.has(ch.id) ? '#2f9e44' : '#dee2e6',
-                  transition: 'all 0.12s',
-                }}
-              >
-                <Group justify="space-between" wrap="nowrap">
-                  <Group gap="sm" wrap="nowrap">
-                    <Checkbox checked={selectedIds.has(ch.id)} onChange={() => toggleChapter(ch.id)} color="green" />
-                    <Box>
-                      <Text size="sm" fw={600}>{ch.section_title}</Text>
-                      <Group gap="xs" mt={2}>
-                        <Badge size="xs" color="green" variant="light">Approved</Badge>
-                        <Text size="xs" c="dimmed">
-                          {countWords(ch.content) > 0 ? `${countWords(ch.content).toLocaleString()} words` : 'No content'}
-                        </Text>
-                        {ch.reviewed_at && (
-                          <Text size="xs" c="dimmed">
-                            · {new Date(ch.reviewed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                          </Text>
-                        )}
-                      </Group>
-                    </Box>
-                  </Group>
-                  <LuCircleCheckBig size={18} color="#2f9e44" style={{ flexShrink: 0 }} />
-                </Group>
-              </Paper>
-            ))}
-
-            {/* Locked chapters */}
-            {locked.map(ch => {
-              const meta = STATUS_META[ch.status] ?? STATUS_META['pending'];
-              return (
-                <Paper key={ch.id} withBorder p="md" radius="md"
-                  style={{ background: '#f8f9fa', borderColor: '#dee2e6', opacity: 0.65 }}>
-                  <Group gap="sm" wrap="nowrap">
-                    <LuLock size={16} color="#adb5bd" style={{ flexShrink: 0, marginLeft: 2 }} />
-                    <Box>
-                      <Text size="sm" fw={600} c="dimmed">{ch.section_title}</Text>
-                      <Group gap="xs" mt={2}>
-                        <Badge size="xs" color={meta.color} variant="light">{meta.label}</Badge>
-                        <Text size="xs" c="dimmed">Cannot be exported until approved</Text>
-                      </Group>
-                    </Box>
-                  </Group>
-                </Paper>
-              );
-            })}
-          </Stack>
+          <Table striped highlightOnHover withTableBorder withColumnBorders>
+            <Table.Thead style={{ background: '#f0f4ff' }}>
+              <Table.Tr>
+                <Table.Th style={{ width: 40 }}>
+                  <Checkbox
+                    checked={allChecked}
+                    indeterminate={someChecked}
+                    onChange={toggleAll}
+                    color="green"
+                    size="sm"
+                  />
+                </Table.Th>
+                <Table.Th>Section</Table.Th>
+                <Table.Th style={{ width: 140 }}>Status</Table.Th>
+                <Table.Th style={{ width: 110 }}>Words</Table.Th>
+                <Table.Th style={{ width: 130 }}>Reviewed</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {approved.map(ch => (
+                <Table.Tr
+                  key={ch.id}
+                  style={{
+                    background: selectedIds.has(ch.id) ? '#f0fdf4' : undefined,
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => toggleChapter(ch.id)}
+                >
+                  <Table.Td onClick={e => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedIds.has(ch.id)}
+                      onChange={() => toggleChapter(ch.id)}
+                      color="green"
+                      size="sm"
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      <LuCircleCheckBig size={14} color="#2f9e44" style={{ flexShrink: 0 }} />
+                      <Text size="sm" fw={500}>{ch.section_title}</Text>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge size="sm" color="green" variant="light">Approved</Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" c="dimmed">
+                      {countWords(ch.content) > 0 ? countWords(ch.content).toLocaleString() : '—'}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {ch.reviewed_at
+                        ? new Date(ch.reviewed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                        : '—'}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+              {locked.map(ch => {
+                const meta = STATUS_META[ch.status] ?? STATUS_META['pending'];
+                return (
+                  <Table.Tr key={ch.id} style={{ opacity: 0.55 }}>
+                    <Table.Td>
+                      <LuLock size={13} color="#adb5bd" />
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">{ch.section_title}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="sm" color={meta.color} variant="light">{meta.label}</Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">
+                        {countWords(ch.content) > 0 ? countWords(ch.content).toLocaleString() : '—'}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">Cannot export until approved</Text>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
         )}
       </Paper>
 

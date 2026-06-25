@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  Anchor, Badge, Box, Button, Divider, Group, Loader, Modal, Paper, Progress,
-  Select, SimpleGrid, Stack, Tabs, Text, ThemeIcon, Title,
+  Anchor, Badge, Box, Button, Divider, Group, Loader, Modal, Paper,
+  Select, SimpleGrid, Stack, Table, Tabs, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   LuShield, LuCircleCheck, LuTriangleAlert,
-  LuX, LuBot, LuChevronDown, LuChevronUp, LuInfo, LuLink, LuExternalLink, LuSparkles,
+  LuX, LuBot, LuInfo, LuLink, LuExternalLink, LuSparkles,
 } from 'react-icons/lu';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
@@ -147,8 +147,6 @@ export default function StudentPlagiarism() {
   const [scanning,   setScanning]   = useState(false);
   const [report,     setReport]     = useState<PlagiarismReport | null>(null);
   const [scannedAt,  setScannedAt]  = useState<string | null>(null);
-  const [expandedSim, setExpandedSim] = useState<string | null>(null);
-  const [expandedAi,  setExpandedAi]  = useState<string | null>(null);
 
   const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
   const [selected,    setSelected]    = useState<Set<string>>(new Set());
@@ -384,6 +382,27 @@ export default function StudentPlagiarism() {
       {/* Results */}
       {!loading && report && (
         <>
+          {/* Report header */}
+          <Paper withBorder p="md" radius="md" mb="lg" style={{ background: '#f8f9fa' }}>
+            <Group justify="space-between" wrap="wrap" gap="xs">
+              <Text size="sm" fw={600}>Integrity Report</Text>
+              <Group gap="xl" wrap="wrap">
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Date &amp; Time Generated</Text>
+                  <Text size="xs">{scannedAt ? new Date(scannedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Sections Analysed</Text>
+                  <Text size="xs">{sections.length}</Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Engine</Text>
+                  <Text size="xs">{report.engine === 'internal' ? 'Cognita Internal' : (report.engine ?? 'Cognita')}</Text>
+                </Box>
+              </Group>
+            </Group>
+          </Paper>
+
           {/* Score cards */}
           <SimpleGrid cols={{ base: 1, sm: 2 }} mb="xl">
             <Paper withBorder p="xl" radius="md" bg="white">
@@ -465,110 +484,119 @@ export default function StudentPlagiarism() {
 
             {/* Originality tab */}
             <Tabs.Panel value="similarity">
-              <Paper withBorder p="sm" radius="md" mb="md" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
-                <Text size="xs" c="dimmed">
-                  Scores above <strong>20%</strong> indicate phrasing overlap with other submissions in your institution.
-                  Above <strong>35%</strong>, consider rewriting in your own analytical voice and verifying citations.
+              <Box mb="sm">
+                <Text size="xs" c="dimmed" mb={6}>
+                  <span style={{ color: '#2f9e44' }}>● 0–20% Acceptable</span>
+                  {'  '}
+                  <span style={{ color: '#f08c00' }}>● 21–35% Borderline</span>
+                  {'  '}
+                  <span style={{ color: '#e03131' }}>● 36%+ Unacceptable</span>
                 </Text>
-              </Paper>
-              <Stack gap="sm">
-                {sections.map(sec => {
-                  const { color } = simRisk(sec.similarity);
-                  const isOpen = expandedSim === sec.sectionId;
-                  return (
-                    <Paper key={sec.sectionId} withBorder p="md" radius="md" bg="white"
-                      style={{ cursor: 'pointer' }} onClick={() => setExpandedSim(isOpen ? null : sec.sectionId)}>
-                      <Group justify="space-between" wrap="nowrap">
-                        <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-                          <ThemeIcon size={26} radius="xl" variant="light"
-                            color={sec.similarity <= 20 ? 'green' : sec.similarity <= 35 ? 'orange' : 'red'}
-                            style={{ flexShrink: 0 }}>
-                            {sec.similarity <= 20 ? <LuCircleCheck size={13} /> : sec.similarity <= 35 ? <LuTriangleAlert size={13} /> : <LuX size={13} />}
-                          </ThemeIcon>
-                          <Box style={{ flex: 1, minWidth: 0 }}>
-                            <Text size="sm" fw={500}>{sec.sectionTitle}</Text>
-                            <Group gap="sm" mt={4}>
-                              <Progress value={sec.similarity} color={sec.similarity <= 20 ? 'green' : sec.similarity <= 35 ? 'orange' : 'red'} size="xs" radius="xl" style={{ width: 120 }} />
-                              <Text size="xs" fw={700} style={{ color }}>{sec.similarity}%</Text>
-                            </Group>
-                          </Box>
-                        </Group>
-                        {isOpen ? <LuChevronUp size={16} color="#adb5bd" /> : <LuChevronDown size={16} color="#adb5bd" />}
-                      </Group>
-                      {isOpen && (
-                        <Box mt="md" pt="md" style={{ borderTop: '1px solid #f1f3f5' }}>
+              </Box>
+              <Table striped highlightOnHover withTableBorder withColumnBorders>
+                <Table.Thead style={{ background: '#f0f4ff' }}>
+                  <Table.Tr>
+                    <Table.Th>Section</Table.Th>
+                    <Table.Th style={{ width: 90 }}>Similarity</Table.Th>
+                    <Table.Th style={{ width: 120 }}>Status</Table.Th>
+                    <Table.Th>Matching Sources</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {sections.map(sec => {
+                    const risk = simRisk(sec.similarity);
+                    const secSources = sec.sources ?? [];
+                    return (
+                      <Table.Tr key={sec.sectionId}>
+                        <Table.Td>
+                          <Text size="sm" fw={500}>{sec.sectionTitle}</Text>
                           {sec.flags.length > 0 && (
-                            <Group gap={6} mb="xs">
-                              {sec.flags.map((f, i) => <Badge key={i} size="xs" variant="light" color="orange">{f}</Badge>)}
+                            <Group gap={4} mt={4}>
+                              {sec.flags.map((f, i) => (
+                                <Badge key={i} size="xs" variant="light" color="orange">{f}</Badge>
+                              ))}
                             </Group>
                           )}
-                          <Text size="xs" c="dimmed" mb="xs">{sec.notes}</Text>
-                          {sec.sources && sec.sources.length > 0 && (
-                            <Box mt="xs">
-                              <Text size="xs" fw={600} c="dimmed" mb={4}>Related papers:</Text>
-                              <Stack gap={4}>
-                                {sec.sources.map((src, i) => (
-                                  <Anchor key={i} size="xs" href={src.url} target="_blank" rel="noopener noreferrer" lineClamp={1}>
-                                    {src.title}
-                                  </Anchor>
-                                ))}
-                              </Stack>
-                            </Box>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" fw={700} style={{ color: risk.color }}>{sec.similarity}%</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge size="sm" variant="light" style={{ background: risk.color + '20', color: risk.color }}>
+                            {risk.label}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          {secSources.length > 0 ? (
+                            <Stack gap={2}>
+                              {secSources.map((src, i) => (
+                                <Anchor key={i} size="xs" href={src.url} target="_blank" rel="noopener noreferrer" lineClamp={1}>
+                                  {src.title}
+                                </Anchor>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Text size="xs" c="dimmed">—</Text>
                           )}
-                        </Box>
-                      )}
-                    </Paper>
-                  );
-                })}
-              </Stack>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
             </Tabs.Panel>
 
             {/* AI Writing Style tab */}
             <Tabs.Panel value="ai">
-              <Paper withBorder p="sm" radius="md" mb="md" style={{ background: '#f8f9ff', border: '1px dashed #748ffc' }}>
-                <Text size="xs" c="dimmed">
-                  Scores above <strong>20%</strong> indicate the writing carries AI-like characteristics.
-                  Above <strong>45%</strong>, consider substantially rewriting in your own voice.
+              <Box mb="sm">
+                <Text size="xs" c="dimmed" mb={6}>
+                  <span style={{ color: '#2f9e44' }}>● 0–20% Acceptable</span>
+                  {'  '}
+                  <span style={{ color: '#f08c00' }}>● 21–45% Borderline</span>
+                  {'  '}
+                  <span style={{ color: '#e03131' }}>● 46%+ Unacceptable</span>
                 </Text>
-              </Paper>
-              <Stack gap="sm">
-                {sections.map(sec => {
-                  const { color } = aiRisk(sec.aiScore);
-                  const isOpen = expandedAi === sec.sectionId;
-                  return (
-                    <Paper key={sec.sectionId} withBorder p="md" radius="md" bg="white"
-                      style={{ cursor: 'pointer' }} onClick={() => setExpandedAi(isOpen ? null : sec.sectionId)}>
-                      <Group justify="space-between" wrap="nowrap">
-                        <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-                          <ThemeIcon size={26} radius="xl" variant="light"
-                            color={sec.aiScore <= 20 ? 'green' : sec.aiScore <= 45 ? 'orange' : 'red'}
-                            style={{ flexShrink: 0 }}>
-                            {sec.aiScore <= 20 ? <LuCircleCheck size={13} /> : <LuBot size={13} />}
-                          </ThemeIcon>
-                          <Box style={{ flex: 1, minWidth: 0 }}>
-                            <Text size="sm" fw={500}>{sec.sectionTitle}</Text>
-                            <Group gap="sm" mt={4}>
-                              <Progress value={sec.aiScore} color={sec.aiScore <= 20 ? 'green' : sec.aiScore <= 45 ? 'orange' : 'red'} size="xs" radius="xl" style={{ width: 120 }} />
-                              <Text size="xs" fw={700} style={{ color }}>{sec.aiScore}%</Text>
-                            </Group>
-                          </Box>
-                        </Group>
-                        {isOpen ? <LuChevronUp size={16} color="#adb5bd" /> : <LuChevronDown size={16} color="#adb5bd" />}
-                      </Group>
-                      {isOpen && (
-                        <Box mt="md" pt="md" style={{ borderTop: '1px solid #f1f3f5' }}>
+              </Box>
+              <Table striped highlightOnHover withTableBorder withColumnBorders>
+                <Table.Thead style={{ background: '#f0f4ff' }}>
+                  <Table.Tr>
+                    <Table.Th>Section</Table.Th>
+                    <Table.Th style={{ width: 90 }}>AI %</Table.Th>
+                    <Table.Th style={{ width: 120 }}>Status</Table.Th>
+                    <Table.Th>Details</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {sections.map(sec => {
+                    const risk = aiRisk(sec.aiScore);
+                    return (
+                      <Table.Tr key={sec.sectionId}>
+                        <Table.Td>
+                          <Text size="sm" fw={500}>{sec.sectionTitle}</Text>
                           {sec.flags.length > 0 && (
-                            <Group gap={6} mb="xs">
-                              {sec.flags.map((f, i) => <Badge key={i} size="xs" variant="light" color="orange">{f}</Badge>)}
+                            <Group gap={4} mt={4}>
+                              {sec.flags.map((f, i) => (
+                                <Badge key={i} size="xs" variant="light" color="orange">{f}</Badge>
+                              ))}
                             </Group>
                           )}
-                          <Text size="xs" c="dimmed">{sec.notes}</Text>
-                        </Box>
-                      )}
-                    </Paper>
-                  );
-                })}
-              </Stack>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" fw={700} style={{ color: risk.color }}>{sec.aiScore}%</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge size="sm" variant="light" style={{ background: risk.color + '20', color: risk.color }}>
+                            {risk.label}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" c="dimmed">{sec.notes || '—'}</Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
             </Tabs.Panel>
 
             {/* Sources tab */}

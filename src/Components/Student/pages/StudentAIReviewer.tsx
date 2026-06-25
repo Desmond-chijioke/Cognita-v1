@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Badge, Box, Button, Divider, Group, Loader, Paper, Progress,
-  Select, SimpleGrid, Stack, Text, ThemeIcon, Title,
+  Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -85,7 +85,6 @@ export default function StudentAIReviewer() {
   const [report,     setReport]     = useState<AIReviewReport | null>(null);
   const [reviewedAt, setReviewedAt] = useState<string | null>(null);
   const [filter,     setFilter]     = useState<SeverityFilter>('all');
-  const [expanded,   setExpanded]   = useState<number | null>(null);
   const [aiEngine,   setAiEngine]   = useState<AIEngine>('claude');
 
   const [submissions, setSubmissions] = useState<DBSubmission[]>([]);
@@ -130,7 +129,6 @@ export default function StudentAIReviewer() {
       setReport(result);
       const now = new Date().toISOString();
       setReviewedAt(now);
-      setExpanded(null);
       await saveAIReport(user.id, 'ai_review', result);
 
       notifications.show({ title: 'Review complete', message: 'AI review updated for your selected chapters.', color: 'brand' });
@@ -292,7 +290,32 @@ export default function StudentAIReviewer() {
             <Text size="sm" c="dimmed">{report.summary}</Text>
           </Paper>
 
-          {/* â”€â”€ Issues list â”€â”€ */}
+          {/* ── Report header (date/time) ── */}
+          <Paper withBorder p="md" radius="md" mb="lg" style={{ background: '#f8f9fa' }}>
+            <Group justify="space-between" wrap="wrap" gap="xs">
+              <Text size="sm" fw={600}>AI Review Report</Text>
+              <Group gap="xl" wrap="wrap">
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Date &amp; Time Generated</Text>
+                  <Text size="xs">
+                    {reviewedAt
+                      ? new Date(reviewedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : '—'}
+                  </Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Total Issues</Text>
+                  <Text size="xs">{issues.length}</Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Overall Score</Text>
+                  <Text size="xs">{totalScore}/{maxTotal} ({pct}%)</Text>
+                </Box>
+              </Group>
+            </Group>
+          </Paper>
+
+          {/* ── Issues table ── */}
           <Paper withBorder radius="md" bg="white" style={{ overflow: 'hidden' }}>
             <Box px="lg" py="md" style={{ borderBottom: '1px solid #f1f3f5' }}>
               <Group justify="space-between" wrap="wrap" gap="sm">
@@ -321,55 +344,52 @@ export default function StudentAIReviewer() {
                 <Text size="sm" c="dimmed" mt="md">No issues in this category.</Text>
               </Box>
             ) : (
-              <Stack gap={0} px="lg" py="sm">
-                {filtered.map((issue, idx) => {
-                  const Icon = severityIcon(issue.severity);
-                  const isOpen = expanded === idx;
-                  return (
-                    <Box key={`${issue.sectionId}-${idx}`}>
-                      {idx > 0 && <Divider />}
-                      <Box py="md">
-                        <Group gap="sm" mb={6} wrap="nowrap">
-                          <Badge variant="light" color={severityColor(issue.severity)} size="sm" style={{ flexShrink: 0, textTransform: 'capitalize' }}>
-                            {issue.severity}
-                          </Badge>
-                          <Group gap={4}>
-                            <Text size="xs" c="brand" fw={500}>In: {issue.sectionTitle}</Text>
-                            <LuArrowRight size={11} color="#3b5bdb" />
-                          </Group>
-                        </Group>
-                        <Group gap="sm" align="flex-start" wrap="nowrap">
-                          <ThemeIcon size={22} radius="xl" color={severityColor(issue.severity)} variant="light" style={{ flexShrink: 0, marginTop: 2 }}>
-                            <Icon size={11} />
-                          </ThemeIcon>
-                          <Box style={{ flex: 1 }}>
-                            <Text size="sm">{issue.message}</Text>
-                            {issue.suggestion && (
-                              <Button size="compact-xs" variant="subtle" color="brand" mt={6}
-                                onClick={() => setExpanded(isOpen ? null : idx)}>
-                                {isOpen ? 'Hide suggestion' : 'View suggestion'}
-                              </Button>
-                            )}
-                            {isOpen && issue.suggestion && (
-                              <Box mt="sm" p="sm" style={{ background: '#f8f9ff', borderRadius: 8, border: '1px dashed #748ffc' }}>
-                                <Group gap="xs" mb={6}>
-                                  <LuSparkles size={12} color="#3b5bdb" />
-                                  <Text size="xs" fw={600} c="brand">AI Suggestion</Text>
-                                </Group>
-                                <Text size="xs" c="dimmed" fs="italic">{issue.suggestion}</Text>
-                              </Box>
-                            )}
-                          </Box>
-                        </Group>
-                      </Box>
-                    </Box>
-                  );
-                })}
-              </Stack>
+              <Table striped highlightOnHover withTableBorder withColumnBorders>
+                <Table.Thead style={{ background: '#f0f4ff' }}>
+                  <Table.Tr>
+                    <Table.Th style={{ width: 160 }}>Section</Table.Th>
+                    <Table.Th style={{ width: 120 }}>Issue Gravity</Table.Th>
+                    <Table.Th>Issue Description</Table.Th>
+                    <Table.Th>Suggestion</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {filtered.map((issue, idx) => (
+                    <Table.Tr key={`${issue.sectionId}-${idx}`}>
+                      <Table.Td>
+                        <Text size="sm" fw={500}>{issue.sectionTitle}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          variant="light"
+                          color={severityColor(issue.severity)}
+                          size="sm"
+                          style={{ textTransform: 'capitalize' }}
+                        >
+                          {issue.severity}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{issue.message}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        {issue.suggestion ? (
+                          <Text size="xs" c="dimmed" fs="italic">{issue.suggestion}</Text>
+                        ) : (
+                          <Text size="xs" c="dimmed">—</Text>
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
             )}
           </Paper>
         </>
       )}
     </Box>
-  );
+
+
+  )
+
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActionIcon, Badge, Box, Button, Divider, Group, Loader, Modal, Paper,
-  SimpleGrid, Stack, Tabs, Text, TextInput, ThemeIcon, Title, Tooltip,
+  SimpleGrid, Stack, Table, Tabs, Text, TextInput, ThemeIcon, Title, Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -520,9 +520,6 @@ export default function StudentResults() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const findingsShare        = analysis ? Math.round((analysis.findings.length / Math.max(analysis.findings.length + analysis.recommendations.length, 1)) * 100) : 0;
-  const recommendationsShare = 100 - findingsShare;
-  const totalItems           = analysis ? analysis.findings.length + analysis.recommendations.length : 0;
 
   if (loading) return <Box p="xl" ta="center"><Loader color="brand" /></Box>;
 
@@ -769,198 +766,222 @@ export default function StudentResults() {
             </Paper>
           ) : analysis && (
             <Stack gap="lg">
-              {/* Report header card */}
-              <Paper withBorder p="xl" radius="md" bg="white"
-                style={{ position: 'relative', overflow: 'hidden' }}>
-                {/* Watermark */}
-                <Box style={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  pointerEvents: 'none', zIndex: 0,
-                }}>
-                  <img src={cognitaLogo} alt="" style={{ width: 260, opacity: 0.04, userSelect: 'none' }} />
-                </Box>
 
-                <Box style={{ position: 'relative', zIndex: 1 }}>
-                  <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm" mb="md">
-                    <Group gap="sm">
-                      <img src={cognitaLogo} alt="Cognita" style={{ height: 30 }} />
-                      <Divider orientation="vertical" />
+              {/* ── 1. Report header ── */}
+              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                {/* Blue top bar */}
+                <Box px="xl" py="md" style={{ background: '#3b5bdb' }}>
+                  <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+                    <Group gap="sm" align="center">
+                      <img src={cognitaLogo} alt="Cognita" style={{ height: 26, filter: 'brightness(0) invert(1)' }} />
+                      <Divider orientation="vertical" color="rgba(255,255,255,0.3)" />
                       <Box>
-                        <Text fw={700} size="lg">{analysis.tableName}</Text>
-                        <Group gap="xs" mt={2}>
-                          <Badge size="xs" color="brand" variant="light">Results Analysis</Badge>
-                          <Badge size="xs" color="violet" variant="light">Claude 3.5 Sonnet</Badge>
-                          <Text size="xs" c="dimmed">{new Date(analysis.generatedAt).toLocaleString()}</Text>
-                        </Group>
+                        <Text fw={700} size="md" style={{ color: 'white' }}>{analysis.tableName}</Text>
+                        <Text size="xs" style={{ color: 'rgba(255,255,255,0.75)' }}>Results Analysis Report</Text>
                       </Box>
                     </Group>
                     <Group gap="xs">
-                      <Button size="sm" variant="light" color="brand"
-                        leftSection={downloading === 'pdf' ? <Loader size={12} color="currentColor" /> : <LuFile size={14} />}
+                      <Badge size="sm" variant="light" style={{ background: 'rgba(255,255,255,0.15)', color: 'white', border: '1px solid rgba(255,255,255,0.25)' }}>
+                        Claude 3.5 Sonnet
+                      </Badge>
+                      <Text size="xs" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                        Generated {new Date(analysis.generatedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </Group>
+                  </Group>
+                </Box>
+
+                {/* Action bar */}
+                <Box px="xl" py="sm" style={{ background: '#f8f9ff', borderBottom: '1px solid #e9ecef' }}>
+                  <Group justify="space-between" wrap="wrap" gap="xs">
+                    <Group gap={6}>
+                      <LuCircleCheck size={14} color="#2f9e44" />
+                      <Text size="xs" c="dimmed">
+                        {analysis.findings.length} finding{analysis.findings.length !== 1 ? 's' : ''} · {analysis.recommendations.length} recommendation{analysis.recommendations.length !== 1 ? 's' : ''}
+                      </Text>
+                    </Group>
+                    <Group gap="xs">
+                      <Button size="xs" variant="light" color="red"
+                        leftSection={downloading === 'pdf' ? <Loader size={11} color="currentColor" /> : <LuFile size={12} />}
                         loading={downloading === 'pdf'}
                         onClick={() => handleDownload('pdf')}>
-                        Download PDF
+                        PDF
                       </Button>
-                      <Button size="sm" variant="light" color="blue"
-                        leftSection={downloading === 'docx' ? <Loader size={12} color="currentColor" /> : <LuFileText size={14} />}
+                      <Button size="xs" variant="light" color="blue"
+                        leftSection={downloading === 'docx' ? <Loader size={11} color="currentColor" /> : <LuFileText size={12} />}
                         loading={downloading === 'docx'}
                         onClick={() => handleDownload('docx')}>
-                        Download DOCX
+                        DOCX
                       </Button>
-                      <Button size="sm" variant="subtle" color="gray"
-                        leftSection={<LuRefreshCw size={13} />}
+                      <Button size="xs" variant="subtle" color="gray"
+                        leftSection={<LuRefreshCw size={11} />}
                         onClick={handleRunAnalysis}
                         loading={analysisRunning}>
                         Re-run
                       </Button>
                     </Group>
                   </Group>
-
-                  <Divider mb="lg" />
-
-                  {/* Executive summary */}
-                  <Box mb="lg" p="md"
-                    style={{ background: '#f8f9ff', borderRadius: 10, borderLeft: '4px solid #3b5bdb' }}>
-                    <Text size="xs" fw={700} c="brand" mb={4} style={{ letterSpacing: 1 }}>EXECUTIVE SUMMARY</Text>
-                    <Text size="sm">{analysis.summary}</Text>
-                  </Box>
-
-                  {/* Charts row */}
-                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md" mb="lg">
-                    <Paper withBorder radius="md" p="md" bg="#f8fafc">
-                      <Text size="sm" fw={700} mb="xs">Results at a glance</Text>
-                      <Text size="xs" c="dimmed" mb="md">Findings vs recommendations</Text>
-                      <Stack gap={10}>
-                        <Box>
-                          <Text size="xs" fw={700} mb={4}>Findings ({analysis.findings.length})</Text>
-                          <Box style={{ height: 10, borderRadius: 999, background: '#e9ecef', overflow: 'hidden' }}>
-                            <Box style={{ width: `${findingsShare}%`, height: '100%', background: '#3b5bdb', transition: 'width 0.4s' }} />
-                          </Box>
-                        </Box>
-                        <Box>
-                          <Text size="xs" fw={700} mb={4}>Recommendations ({analysis.recommendations.length})</Text>
-                          <Box style={{ height: 10, borderRadius: 999, background: '#e9ecef', overflow: 'hidden' }}>
-                            <Box style={{ width: `${recommendationsShare}%`, height: '100%', background: '#37b24d', transition: 'width 0.4s' }} />
-                          </Box>
-                        </Box>
-                      </Stack>
-                    </Paper>
-
-                    <Paper withBorder radius="md" p="md" bg="#f8fafc" style={{ textAlign: 'center' }}>
-                      <Text size="sm" fw={700} mb="xs">Result distribution</Text>
-                      <Box style={{
-                        position: 'relative', width: 140, height: 140,
-                        margin: '0 auto 12px', borderRadius: '50%',
-                        background: `conic-gradient(#3b5bdb 0% ${findingsShare}%, #37b24d ${findingsShare}% 100%)`,
-                      }}>
-                        <Box style={{ position: 'absolute', inset: 24, borderRadius: '50%', background: 'white' }} />
-                        <Box style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Text size="xl" fw={700}>{totalItems}</Text>
-                        </Box>
-                      </Box>
-                      <Group justify="center" gap="md">
-                        <Group gap={6}>
-                          <Box style={{ width: 10, height: 10, borderRadius: 999, background: '#3b5bdb' }} />
-                          <Text size="xs">Findings {findingsShare}%</Text>
-                        </Group>
-                        <Group gap={6}>
-                          <Box style={{ width: 10, height: 10, borderRadius: 999, background: '#37b24d' }} />
-                          <Text size="xs">Recommendations {recommendationsShare}%</Text>
-                        </Group>
-                      </Group>
-                    </Paper>
-                  </SimpleGrid>
-
-                  {/* Data table snapshot */}
-                  {analysis.tableSnapshot?.headers?.length > 0 && (
-                    <Box mb="lg">
-                      <Text fw={700} size="md" mb="sm">Data Table — {analysis.tableName}</Text>
-                      <Paper withBorder radius="md" style={{ overflow: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <thead>
-                            <tr style={{ background: '#3b5bdb' }}>
-                              {analysis.tableSnapshot.headers.map((h, i) => (
-                                <th key={i} style={{ padding: '8px 12px', color: 'white', fontSize: 12, fontWeight: 700, textAlign: 'left', borderRight: i < analysis.tableSnapshot.headers.length - 1 ? '1px solid rgba(255,255,255,0.2)' : undefined }}>
-                                  {h}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {analysis.tableSnapshot.rows.slice(0, 10).map((row, ri) => (
-                              <tr key={ri} style={{ background: ri % 2 === 0 ? '#f8f9fa' : 'white', borderBottom: '1px solid #f1f3f5' }}>
-                                {row.map((cell, ci) => (
-                                  <td key={ci} style={{ padding: '7px 12px', fontSize: 13, color: '#343a40', borderRight: ci < row.length - 1 ? '1px solid #f1f3f5' : undefined }}>
-                                    {cell || <Text span c="dimmed" size="xs">—</Text>}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {analysis.tableSnapshot.rows.length > 10 && (
-                          <Text size="10px" c="dimmed" p="xs">
-                            Showing 10 of {analysis.tableSnapshot.rows.length} rows
-                          </Text>
-                        )}
-                      </Paper>
-                    </Box>
-                  )}
-
-                  {/* Key Findings */}
-                  <Text fw={700} size="md" mb="sm">Key Findings</Text>
-                  <Stack gap="sm" mb="lg">
-                    {analysis.findings.map((f, i) => (
-                      <Group key={i} gap="sm" align="flex-start" wrap="nowrap" p="md"
-                        style={{ border: '1px solid #f1f3f5', borderRadius: 10, background: 'white' }}>
-                        <ThemeIcon size={28} radius="xl" color="brand" variant="light" style={{ flexShrink: 0 }}>
-                          <Text size="xs" fw={700}>{i + 1}</Text>
-                        </ThemeIcon>
-                        <Box style={{ flex: 1 }}>
-                          <Text size="sm" fw={600} mb={2}>{f.title}</Text>
-                          <Text size="sm" c="dimmed">{f.content}</Text>
-                        </Box>
-                      </Group>
-                    ))}
-                  </Stack>
-
-                  {/* Recommendations */}
-                  <Text fw={700} size="md" mb="sm">Recommendations</Text>
-                  <Stack gap="xs" mb="lg">
-                    {analysis.recommendations.map((rec, i) => (
-                      <Group key={i} gap="sm" align="flex-start" wrap="nowrap">
-                        <LuCircleCheck size={15} color="#2f9e44" style={{ flexShrink: 0, marginTop: 2 }} />
-                        <Text size="sm">{rec}</Text>
-                      </Group>
-                    ))}
-                  </Stack>
-
-                  <Group justify="center" mt="md">
-                    <Text size="xs" c="dimmed">Powered by Cognita AI · Research Analysis Platform</Text>
-                  </Group>
                 </Box>
               </Paper>
 
-              {/* Sticky download bar */}
-              <Paper withBorder p="md" radius="md" bg="white">
-                <Group justify="center" gap="md">
-                  <LuDownload size={16} />
-                  <Text size="sm" fw={600}>Download your analysis report</Text>
-                  <Button size="sm" color="red" variant="light"
-                    leftSection={downloading === 'pdf' ? <Loader size={12} color="currentColor" /> : <LuFile size={14} />}
-                    loading={downloading === 'pdf'}
-                    onClick={() => handleDownload('pdf')}>
-                    PDF
-                  </Button>
-                  <Button size="sm" color="blue" variant="light"
-                    leftSection={downloading === 'docx' ? <Loader size={12} color="currentColor" /> : <LuFileText size={14} />}
-                    loading={downloading === 'docx'}
-                    onClick={() => handleDownload('docx')}>
-                    DOCX
-                  </Button>
+              {/* ── 2. Metric tiles ── */}
+              <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+                {[
+                  { label: 'Key Findings',      value: analysis.findings.length,        color: '#3b5bdb', bg: '#f0f4ff' },
+                  { label: 'Recommendations',   value: analysis.recommendations.length, color: '#2f9e44', bg: '#f0fdf4' },
+                  { label: 'Data Rows',         value: analysis.tableSnapshot?.rows?.length ?? 0, color: '#f08c00', bg: '#fff8f0' },
+                  { label: 'Columns Analysed',  value: analysis.tableSnapshot?.headers?.length ?? 0, color: '#7c3aed', bg: '#f5f0ff' },
+                ].map(({ label, value, color, bg }) => (
+                  <Paper key={label} withBorder p="md" radius="md" style={{ background: bg, borderColor: color + '30' }}>
+                    <Text style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, color }}>{value}</Text>
+                    <Text size="xs" c="dimmed" mt={4} fw={500}>{label}</Text>
+                  </Paper>
+                ))}
+              </SimpleGrid>
+
+              {/* ── 3. Executive Summary ── */}
+              <Paper withBorder p="xl" radius="md" bg="white">
+                <Group gap="sm" mb="md">
+                  <ThemeIcon size={32} radius="md" color="brand" variant="light">
+                    <LuChartBar size={16} />
+                  </ThemeIcon>
+                  <Box>
+                    <Text fw={700} size="sm">Executive Summary</Text>
+                    <Text size="xs" c="dimmed">AI-generated overview of key patterns and insights</Text>
+                  </Box>
+                </Group>
+                <Divider mb="md" />
+                <Box p="md" style={{ background: '#f8f9ff', borderRadius: 8, borderLeft: '4px solid #3b5bdb' }}>
+                  <Text size="sm" style={{ lineHeight: 1.7 }}>{analysis.summary}</Text>
+                </Box>
+              </Paper>
+
+              {/* ── 4. Data Table Snapshot ── */}
+              {analysis.tableSnapshot?.headers?.length > 0 && (
+                <Paper withBorder p="xl" radius="md" bg="white">
+                  <Group gap="sm" mb="md">
+                    <ThemeIcon size={32} radius="md" color="teal" variant="light">
+                      <LuTable size={16} />
+                    </ThemeIcon>
+                    <Box>
+                      <Text fw={700} size="sm">Data Table — {analysis.tableName}</Text>
+                      <Text size="xs" c="dimmed">
+                        {analysis.tableSnapshot.rows.length > 10
+                          ? `Showing 10 of ${analysis.tableSnapshot.rows.length} rows`
+                          : `${analysis.tableSnapshot.rows.length} row${analysis.tableSnapshot.rows.length !== 1 ? 's' : ''}`}
+                      </Text>
+                    </Box>
+                  </Group>
+                  <Divider mb="md" />
+                  <Box style={{ overflowX: 'auto' }}>
+                    <Table striped highlightOnHover withTableBorder withColumnBorders>
+                      <Table.Thead style={{ background: '#3b5bdb' }}>
+                        <Table.Tr>
+                          {analysis.tableSnapshot.headers.map((h, i) => (
+                            <Table.Th key={i} style={{ color: 'white', fontWeight: 700, fontSize: 12 }}>{h}</Table.Th>
+                          ))}
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {analysis.tableSnapshot.rows.slice(0, 10).map((row, ri) => (
+                          <Table.Tr key={ri}>
+                            {row.map((cell, ci) => (
+                              <Table.Td key={ci}>
+                                <Text size="sm">{cell || <Text span c="dimmed" size="xs">—</Text>}</Text>
+                              </Table.Td>
+                            ))}
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Box>
+                </Paper>
+              )}
+
+              {/* ── 5. Key Findings ── */}
+              <Paper withBorder p="xl" radius="md" bg="white">
+                <Group gap="sm" mb="md">
+                  <ThemeIcon size={32} radius="md" color="brand" variant="light">
+                    <LuSparkles size={16} />
+                  </ThemeIcon>
+                  <Box>
+                    <Text fw={700} size="sm">Key Findings</Text>
+                    <Text size="xs" c="dimmed">{analysis.findings.length} finding{analysis.findings.length !== 1 ? 's' : ''} identified from the data</Text>
+                  </Box>
+                </Group>
+                <Divider mb="md" />
+                <Stack gap="sm">
+                  {analysis.findings.map((f, i) => (
+                    <Box key={i} p="md" style={{ border: '1px solid #e9ecef', borderRadius: 8, background: '#f8f9ff' }}>
+                      <Group gap="sm" align="flex-start" wrap="nowrap">
+                        <Box style={{
+                          flexShrink: 0, width: 28, height: 28, borderRadius: '50%',
+                          background: '#3b5bdb', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Text size="xs" fw={800} style={{ color: 'white' }}>{i + 1}</Text>
+                        </Box>
+                        <Box style={{ flex: 1 }}>
+                          <Text size="sm" fw={600} mb={4} style={{ color: '#1c2840' }}>{f.title}</Text>
+                          <Text size="sm" c="dimmed" style={{ lineHeight: 1.6 }}>{f.content}</Text>
+                        </Box>
+                      </Group>
+                    </Box>
+                  ))}
+                </Stack>
+              </Paper>
+
+              {/* ── 6. Recommendations ── */}
+              <Paper withBorder p="xl" radius="md" bg="white">
+                <Group gap="sm" mb="md">
+                  <ThemeIcon size={32} radius="md" color="green" variant="light">
+                    <LuCircleCheck size={16} />
+                  </ThemeIcon>
+                  <Box>
+                    <Text fw={700} size="sm">Recommendations</Text>
+                    <Text size="xs" c="dimmed">{analysis.recommendations.length} actionable recommendation{analysis.recommendations.length !== 1 ? 's' : ''}</Text>
+                  </Box>
+                </Group>
+                <Divider mb="md" />
+                <Stack gap="xs">
+                  {analysis.recommendations.map((rec, i) => (
+                    <Group key={i} gap="sm" align="flex-start" wrap="nowrap" p="sm"
+                      style={{ border: '1px solid #e9ecef', borderRadius: 8, background: '#f0fdf4' }}>
+                      <Box style={{
+                        flexShrink: 0, width: 22, height: 22, borderRadius: '50%',
+                        background: '#2f9e44', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1,
+                      }}>
+                        <Text size="10px" fw={800} style={{ color: 'white' }}>{i + 1}</Text>
+                      </Box>
+                      <Text size="sm" style={{ lineHeight: 1.6 }}>{rec}</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              </Paper>
+
+              {/* ── 7. Footer ── */}
+              <Paper withBorder p="md" radius="md" style={{ background: '#f8f9fa' }}>
+                <Group justify="space-between" wrap="wrap" gap="xs">
+                  <Group gap="xs">
+                    <img src={cognitaLogo} alt="Cognita" style={{ height: 18, opacity: 0.5 }} />
+                    <Text size="xs" c="dimmed">Powered by Cognita AI · Research Analysis Platform</Text>
+                  </Group>
+                  <Group gap="xs">
+                    <Button size="xs" color="red" variant="light"
+                      leftSection={downloading === 'pdf' ? <Loader size={11} color="currentColor" /> : <LuFile size={12} />}
+                      loading={downloading === 'pdf'}
+                      onClick={() => handleDownload('pdf')}>
+                      Download PDF
+                    </Button>
+                    <Button size="xs" color="blue" variant="light"
+                      leftSection={downloading === 'docx' ? <Loader size={11} color="currentColor" /> : <LuFileText size={12} />}
+                      loading={downloading === 'docx'}
+                      onClick={() => handleDownload('docx')}>
+                      Download DOCX
+                    </Button>
+                  </Group>
                 </Group>
               </Paper>
+
             </Stack>
           )}
         </Tabs.Panel>
