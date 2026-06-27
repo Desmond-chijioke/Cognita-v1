@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
   Badge, Box, Button, Divider, Group, Loader, Paper, Progress,
-  Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title,
+  Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { useNavigate } from 'react-router-dom';
 import {
   LuSparkles, LuCircleCheck, LuTriangleAlert, LuClock,
-  LuArrowRight, LuRefreshCw, LuX, LuShield,
+  LuArrowRight, LuRefreshCw, LuX, LuShield, LuFileDown,
 } from 'react-icons/lu';
+import jsPDF from 'jspdf';
 import type { IssueSeverity } from '../studentData';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
@@ -18,8 +20,10 @@ import {
 } from '../../../helper/aiEngines';
 import type { AIEngine } from '../../../helper/aiEngines';
 import ChapterPicker from '../ChapterPicker';
+import { APPROUTE_LIST } from '../../../Route/types';
+import cognitaLogo from '../../../assets/cognita-logo.png';
 
-// ── Report shape produced by Gemini ───────────────────────────────────────────
+// ── Report shape produced by AI ───────────────────────────────────────────────
 
 interface ReviewScoreAI { category: string; score: number; maxScore: number }
 interface ReviewIssueAI {
@@ -46,6 +50,9 @@ type SeverityFilter = 'all' | IssueSeverity;
 function severityColor(s: IssueSeverity) {
   return s === 'critical' ? 'red' : s === 'major' ? 'orange' : s === 'minor' ? 'yellow' : 'blue';
 }
+function severityHex(s: IssueSeverity) {
+  return s === 'critical' ? '#e03131' : s === 'major' ? '#f08c00' : s === 'minor' ? '#f59f00' : '#3b5bdb';
+}
 function severityIcon(s: IssueSeverity) {
   return s === 'critical' ? LuX : s === 'major' ? LuTriangleAlert : s === 'minor' ? LuClock : LuSparkles;
 }
@@ -55,7 +62,7 @@ function buildPrompt(sections: { id: string; title: string; content: string }[])
 
 Read the chapters below and produce a quality review.
 
-1. Score the document 0-10 (maxScore always 10) on whichever of these categories are relevant to the content provided â€” omit a category entirely if there is nothing relevant to judge it on:
+1. Score the document 0-10 (maxScore always 10) on whichever of these categories are relevant to the content provided — omit a category entirely if there is nothing relevant to judge it on:
    "Clarity & Writing", "Literature Review", "Methodology", "Structure & Organisation", "Argumentation & Analysis"
 
 2. List specific issues found, each with:
@@ -77,11 +84,304 @@ CHAPTERS TO REVIEW:
 ${sections.map(s => `\n--- ${s.title} (id: ${s.id}) ---\n${s.content.slice(0, 6000)}`).join('\n')}`;
 }
 
+// ── PDF export ─────────────────────────────────────────────────────────────────
+
+async function exportReviewPDF(opts: {
+  report:     AIReviewReport;
+  reviewedAt: string | null;
+  authorName: string;
+  totalScore: number;
+  maxTotal:   number;
+  pct:        number;
+}) {
+  const { report, reviewedAt, authorName, totalScore, maxTotal, pct } = opts;
+
+  const doc    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW  = doc.internal.pageSize.getWidth();
+  const pageH  = doc.internal.pageSize.getHeight();
+  const margin = 18;
+  const cW     = pageW - margin * 2;
+
+  // Load logo
+  const logoImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload  = () => resolve(img);
+    img.onerror = reject;
+    img.src = cognitaLogo;
+  });
+
+  const addPageHeader = () => {
+    // Faint watermark
+    try {
+      doc.saveGraphicsState();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (doc as any).setGState(new (doc as any).GState({ opacity: 0.05 }));
+      doc.addImage(logoImg, 'PNG', (pageW - 110) / 2, (pageH - 55) / 2, 110, 55);
+      doc.restoreGraphicsState();
+    } catch { /* decorative */ }
+
+    // Header bar
+    doc.setFillColor(59, 91, 219);
+    doc.rect(0, 0, pageW, 26, 'F');
+    doc.addImage(logoImg, 'PNG', margin, 3, 28, 18);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Cognita's Peer Reviewer Report", pageW - margin, 11, { align: 'right' });
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Cognita Research Intelligence Engine', pageW - margin, 18, { align: 'right' });
+    doc.text(
+      reviewedAt
+        ? new Date(reviewedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleString(),
+      pageW - margin, 23, { align: 'right' },
+    );
+  };
+
+  const addPageFooter = (pageNum: number, total?: number) => {
+    const footerY = pageH - 8;
+    doc.setDrawColor(59, 91, 219);
+    doc.setLineWidth(0.3);
+    doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.setFont('helvetica', 'italic');
+    doc.text('Powered by Cognita Research Intelligence Engine', margin, footerY);
+    doc.addImage(logoImg, 'PNG', pageW - margin - 18, footerY - 7, 18, 9);
+    if (total) {
+      doc.text(`${pageNum} / ${total}`, pageW / 2, footerY, { align: 'center' });
+    }
+  };
+
+  // ── Page 1 ──
+  addPageHeader();
+  let y = 34;
+
+  // Report title block
+  doc.setTextColor(20, 20, 20);
+  doc.setFontSize(19);
+  doc.setFont('helvetica', 'bold');
+  doc.text("Cognita's Peer Reviewer Report", margin, y);
+  y += 7;
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  if (authorName) {
+    doc.text(`Author: ${authorName}`, margin, y);
+    y += 5;
+  }
+  doc.text(
+    `Date & Time Generated: ${reviewedAt
+      ? new Date(reviewedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '—'}`,
+    margin, y,
+  );
+  y += 5;
+  doc.text(`Platform: Cognita AI Research Platform`, margin, y);
+  y += 2;
+
+  doc.setDrawColor(59, 91, 219);
+  doc.setLineWidth(0.4);
+  doc.line(margin, y + 2, pageW - margin, y + 2);
+  y += 9;
+
+  // Score summary box
+  doc.setFillColor(245, 247, 255);
+  doc.roundedRect(margin, y, cW, 26, 3, 3, 'F');
+  doc.setFontSize(24);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(pct >= 70 ? 47 : pct >= 50 ? 240 : 224, pct >= 70 ? 158 : pct >= 50 ? 140 : 49, pct >= 70 ? 68 : pct >= 50 ? 0 : 49);
+  doc.text(`${totalScore}/${maxTotal}`, margin + 10, y + 16);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text(`Overall Score  (${pct}%)`, margin + 10, y + 22);
+
+  // Category scores
+  let cx = margin + 55;
+  for (const sc of report.scores) {
+    const sp = Math.round((sc.score / sc.maxScore) * 100);
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(59, 91, 219);
+    doc.text(`${sc.score}/${sc.maxScore}`, cx, y + 10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 80, 80);
+    const catLines = doc.splitTextToSize(sc.category, 28);
+    doc.text(catLines, cx, y + 15);
+    const barColor = sp >= 70 ? [47, 158, 68] : sp >= 50 ? [240, 140, 0] : [224, 49, 49];
+    doc.setFillColor(barColor[0], barColor[1], barColor[2]);
+    doc.rect(cx, y + 21, (28 * sp) / 100, 2, 'F');
+    doc.setFillColor(220, 220, 220);
+    doc.rect(cx + (28 * sp) / 100, y + 21, 28 - (28 * sp) / 100, 2, 'F');
+    cx += 33;
+    if (cx > pageW - margin - 10) break;
+  }
+  y += 32;
+
+  // Summary
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(20, 20, 20);
+  doc.text('Overall Summary', margin, y);
+  y += 6;
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(55, 55, 55);
+  const sumLines = doc.splitTextToSize(report.summary, cW);
+  doc.text(sumLines, margin, y);
+  y += sumLines.length * 5 + 8;
+
+  // Issue counts
+  const counts = {
+    critical:   report.issues.filter(i => i.severity === 'critical').length,
+    major:      report.issues.filter(i => i.severity === 'major').length,
+    minor:      report.issues.filter(i => i.severity === 'minor').length,
+    suggestion: report.issues.filter(i => i.severity === 'suggestion').length,
+  };
+
+  const countCols = [
+    { label: 'Critical',   count: counts.critical,   color: [224, 49, 49] as [number,number,number] },
+    { label: 'Major',      count: counts.major,      color: [240, 140, 0] as [number,number,number] },
+    { label: 'Minor',      count: counts.minor,      color: [245, 159, 0] as [number,number,number] },
+    { label: 'Suggestion', count: counts.suggestion, color: [59, 91, 219] as [number,number,number] },
+  ];
+
+  const colW = cW / 4;
+  for (let i = 0; i < countCols.length; i++) {
+    const col = countCols[i];
+    const bx = margin + i * colW;
+    doc.setFillColor(col.color[0], col.color[1], col.color[2]);
+    doc.setDrawColor(col.color[0], col.color[1], col.color[2]);
+    doc.roundedRect(bx, y, colW - 4, 20, 2, 2, 'FD');
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    doc.text(String(col.count), bx + (colW - 4) / 2, y + 11, { align: 'center' });
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(col.label, bx + (colW - 4) / 2, y + 17, { align: 'center' });
+  }
+  y += 28;
+
+  addPageFooter(1);
+
+  // ── Page 2+ : Issues table ──
+  doc.addPage();
+  addPageHeader();
+  y = 34;
+
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(20, 20, 20);
+  doc.text('Detailed Issues', margin, y);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 100, 100);
+  doc.text(`${report.issues.length} issue${report.issues.length !== 1 ? 's' : ''} found`, margin + 35, y);
+  y += 7;
+
+  // Table header
+  const col1 = 38, col2 = 22, col3 = 65, col4 = cW - col1 - col2 - col3;
+  doc.setFillColor(59, 91, 219);
+  doc.rect(margin, y, cW, 7, 'F');
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(255, 255, 255);
+  doc.text('Section',          margin + 2,                  y + 5);
+  doc.text('Severity',         margin + col1 + 2,           y + 5);
+  doc.text('Issue',            margin + col1 + col2 + 2,    y + 5);
+  doc.text('Suggestion',       margin + col1 + col2 + col3 + 2, y + 5);
+  y += 8;
+
+  let pageNum = 2;
+  for (const issue of report.issues) {
+    const msgLines = doc.splitTextToSize(issue.message,    col3 - 4);
+    const sugLines = doc.splitTextToSize(issue.suggestion ?? '—', col4 - 4);
+    const rowH     = Math.max(msgLines.length, sugLines.length, 2) * 4.5 + 5;
+
+    if (y + rowH > pageH - 18) {
+      addPageFooter(pageNum);
+      pageNum++;
+      doc.addPage();
+      addPageHeader();
+      y = 34;
+      // Re-draw table header on new page
+      doc.setFillColor(59, 91, 219);
+      doc.rect(margin, y, cW, 7, 'F');
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(255, 255, 255);
+      doc.text('Section',      margin + 2,                  y + 5);
+      doc.text('Severity',     margin + col1 + 2,           y + 5);
+      doc.text('Issue',        margin + col1 + col2 + 2,    y + 5);
+      doc.text('Suggestion',   margin + col1 + col2 + col3 + 2, y + 5);
+      y += 8;
+    }
+
+    // Row background (alternating)
+    const rowIdx = report.issues.indexOf(issue);
+    if (rowIdx % 2 === 0) {
+      doc.setFillColor(248, 249, 255);
+      doc.rect(margin, y - 1, cW, rowH, 'F');
+    }
+
+    const hex  = severityHex(issue.severity);
+    const rgb  = [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(20, 20, 20);
+    const secLines = doc.splitTextToSize(issue.sectionTitle, col1 - 4);
+    doc.text(secLines, margin + 2, y + 4);
+
+    // Severity badge background
+    doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+    doc.roundedRect(margin + col1 + 1, y + 1, col2 - 3, 5, 1, 1, 'F');
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    doc.text(
+      issue.severity.charAt(0).toUpperCase() + issue.severity.slice(1),
+      margin + col1 + 1 + (col2 - 3) / 2, y + 4.8, { align: 'center' },
+    );
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40, 40, 40);
+    doc.text(msgLines, margin + col1 + col2 + 2, y + 4);
+
+    doc.setTextColor(100, 100, 100);
+    doc.setFont('helvetica', 'italic');
+    doc.text(sugLines, margin + col1 + col2 + col3 + 2, y + 4);
+
+    // Row separator
+    doc.setDrawColor(230, 230, 230);
+    doc.setLineWidth(0.2);
+    doc.line(margin, y + rowH - 1, pageW - margin, y + rowH - 1);
+
+    y += rowH;
+  }
+
+  addPageFooter(pageNum, pageNum);
+
+  const dateStr = reviewedAt
+    ? new Date(reviewedAt).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  doc.save(`Cognita-Peer-Reviewer-Report-${dateStr}.pdf`);
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function StudentAIReviewer() {
-  const user = useAppSelector(s => s.auth.user);
+  const user     = useAppSelector(s => s.auth.user);
+  const navigate = useNavigate();
 
   const [loading,    setLoading]    = useState(true);
   const [running,    setRunning]    = useState(false);
+  const [exporting,  setExporting]  = useState(false);
   const [report,     setReport]     = useState<AIReviewReport | null>(null);
   const [reviewedAt, setReviewedAt] = useState<string | null>(null);
   const [filter,     setFilter]     = useState<SeverityFilter>('all');
@@ -140,6 +440,30 @@ export default function StudentAIReviewer() {
     }
   };
 
+  const handleExportPDF = async () => {
+    if (!report) return;
+    setExporting(true);
+    try {
+      await exportReviewPDF({
+        report,
+        reviewedAt,
+        authorName: user?.name ?? user?.email ?? '',
+        totalScore,
+        maxTotal,
+        pct,
+      });
+    } catch {
+      notifications.show({ title: 'Export failed', message: 'Could not generate PDF.', color: 'red' });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Navigate to editor at the matching section
+  const handleIssueClick = (issue: ReviewIssueAI) => {
+    navigate(`${APPROUTE_LIST.STUDENT_EDITOR}?section=${encodeURIComponent(issue.sectionId)}`);
+  };
+
   const scores = report?.scores ?? [];
   const issues = report?.issues ?? [];
 
@@ -165,9 +489,21 @@ export default function StudentAIReviewer() {
         </Box>
         <Group gap="xs">
           {report && (
-            <Badge size="xs" variant="light" color="violet">
-              {AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine}
-            </Badge>
+            <>
+              <Badge size="xs" variant="light" color="violet">
+                {AI_ENGINE_OPTIONS.find(o => o.value === aiEngine)?.label ?? aiEngine}
+              </Badge>
+              <Button
+                size="xs"
+                variant="light"
+                color="brand"
+                leftSection={<LuFileDown size={13} />}
+                loading={exporting}
+                onClick={handleExportPDF}
+              >
+                Export PDF
+              </Button>
+            </>
           )}
           <Text size="xs" c="dimmed">{reviewedAt ? `Reviewed ${new Date(reviewedAt).toLocaleString()}` : 'Not reviewed yet'}</Text>
         </Group>
@@ -231,7 +567,7 @@ export default function StudentAIReviewer() {
         </Paper>
       ) : (
         <>
-          {/* â”€â”€ Score summary â”€â”€ */}
+          {/* ── Score summary ── */}
           <SimpleGrid cols={{ base: 1, md: 2 }} mb="xl">
             <Paper withBorder p="xl" radius="md" bg="white">
               <Group gap="xl" align="flex-start" wrap="nowrap">
@@ -293,7 +629,7 @@ export default function StudentAIReviewer() {
           {/* ── Report header (date/time) ── */}
           <Paper withBorder p="md" radius="md" mb="lg" style={{ background: '#f8f9fa' }}>
             <Group justify="space-between" wrap="wrap" gap="xs">
-              <Text size="sm" fw={600}>AI Review Report</Text>
+              <Text size="sm" fw={600}>Cognita's Peer Reviewer Report</Text>
               <Group gap="xl" wrap="wrap">
                 <Box>
                   <Text size="xs" c="dimmed" fw={500}>Date &amp; Time Generated</Text>
@@ -310,6 +646,10 @@ export default function StudentAIReviewer() {
                 <Box>
                   <Text size="xs" c="dimmed" fw={500}>Overall Score</Text>
                   <Text size="xs">{totalScore}/{maxTotal} ({pct}%)</Text>
+                </Box>
+                <Box>
+                  <Text size="xs" c="dimmed" fw={500}>Author</Text>
+                  <Text size="xs">{user?.name ?? user?.email ?? '—'}</Text>
                 </Box>
               </Group>
             </Group>
@@ -351,45 +691,75 @@ export default function StudentAIReviewer() {
                     <Table.Th style={{ width: 120 }}>Issue Gravity</Table.Th>
                     <Table.Th>Issue Description</Table.Th>
                     <Table.Th>Suggestion</Table.Th>
+                    <Table.Th style={{ width: 80 }}>Action</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {filtered.map((issue, idx) => (
-                    <Table.Tr key={`${issue.sectionId}-${idx}`}>
-                      <Table.Td>
-                        <Text size="sm" fw={500}>{issue.sectionTitle}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge
-                          variant="light"
-                          color={severityColor(issue.severity)}
-                          size="sm"
-                          style={{ textTransform: 'capitalize' }}
-                        >
-                          {issue.severity}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm">{issue.message}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        {issue.suggestion ? (
-                          <Text size="xs" c="dimmed" fs="italic">{issue.suggestion}</Text>
-                        ) : (
-                          <Text size="xs" c="dimmed">—</Text>
-                        )}
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
+                  {filtered.map((issue, idx) => {
+                    const SeverityIcon = severityIcon(issue.severity);
+                    return (
+                      <Table.Tr key={`${issue.sectionId}-${idx}`}>
+                        <Table.Td>
+                          <Text size="sm" fw={500}>{issue.sectionTitle}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge
+                            variant="light"
+                            color={severityColor(issue.severity)}
+                            size="sm"
+                            leftSection={<SeverityIcon size={10} />}
+                            style={{ textTransform: 'capitalize' }}
+                          >
+                            {issue.severity}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm">{issue.message}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          {issue.suggestion ? (
+                            <Text size="xs" c="dimmed" fs="italic">{issue.suggestion}</Text>
+                          ) : (
+                            <Text size="xs" c="dimmed">—</Text>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <Tooltip label={`Go to ${issue.sectionTitle} in Editor`} withArrow position="left">
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              color="brand"
+                              rightSection={<LuArrowRight size={11} />}
+                              onClick={() => handleIssueClick(issue)}
+                            >
+                              Review
+                            </Button>
+                          </Tooltip>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
                 </Table.Tbody>
               </Table>
             )}
           </Paper>
+
+          <Divider my="xl" />
+
+          {/* ── Bottom export bar ── */}
+          <Group justify="flex-end">
+            <Button
+              variant="light"
+              color="brand"
+              leftSection={<LuFileDown size={14} />}
+              loading={exporting}
+              onClick={handleExportPDF}
+            >
+              Export Peer Reviewer Report as PDF
+            </Button>
+          </Group>
         </>
       )}
     </Box>
-
-
-  )
-
+  );
 }

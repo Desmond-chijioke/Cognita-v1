@@ -7,8 +7,10 @@ import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   LuShield, LuCircleCheck, LuTriangleAlert,
-  LuX, LuBot, LuInfo, LuLink, LuExternalLink, LuSparkles,
+  LuX, LuBot, LuInfo, LuLink, LuExternalLink, LuSparkles, LuFileDown,
 } from 'react-icons/lu';
+import jsPDF from 'jspdf';
+import cognitaLogo from '../../../assets/cognita-logo.png';
 import { useAppSelector } from '../../../Redux/hooks';
 import { fetchStudentSubmissions } from '../../../supabase/submissions';
 import type { DBSubmission } from '../../../supabase/submissions';
@@ -138,6 +140,300 @@ const EXTERNAL_ENGINES = [
   { value: 'turnitin', label: 'Turnitin — Paid',  reliability: 100, paid: true,  url: 'https://www.turnitin.com' },
 ] as const;
 
+// ── PDF export ─────────────────────────────────────────────────────────────────
+
+async function exportIntegrityPDF(opts: {
+  report:    PlagiarismReport;
+  scannedAt: string | null;
+  authorName: string;
+}) {
+  const { report, scannedAt, authorName } = opts;
+
+  const doc    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW  = doc.internal.pageSize.getWidth();
+  const pageH  = doc.internal.pageSize.getHeight();
+  const margin = 18;
+  const cW     = pageW - margin * 2;
+
+  const logoImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload  = () => resolve(img);
+    img.onerror = reject;
+    img.src = cognitaLogo;
+  });
+
+  const dateStr = scannedAt
+    ? new Date(scannedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : new Date().toLocaleString();
+
+  const addPageHeader = () => {
+    // Faint watermark
+    try {
+      doc.saveGraphicsState();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (doc as any).setGState(new (doc as any).GState({ opacity: 0.05 }));
+      doc.addImage(logoImg, 'PNG', (pageW - 110) / 2, (pageH - 55) / 2, 110, 55);
+      doc.restoreGraphicsState();
+    } catch { /* decorative */ }
+
+    doc.setFillColor(59, 91, 219);
+    doc.rect(0, 0, pageW, 26, 'F');
+    doc.addImage(logoImg, 'PNG', margin, 3, 28, 18);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Cognita's Integrity Report", pageW - margin, 11, { align: 'right' });
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Cognita Research Intelligence Engine', pageW - margin, 18, { align: 'right' });
+    doc.text(dateStr, pageW - margin, 23, { align: 'right' });
+  };
+
+  const addPageFooter = (pageNum: number, total?: number) => {
+    const footerY = pageH - 8;
+    doc.setDrawColor(59, 91, 219);
+    doc.setLineWidth(0.3);
+    doc.line(margin, footerY - 4, pageW - margin, footerY - 4);
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.setFont('helvetica', 'italic');
+    doc.text('Powered by Cognita Research Intelligence Engine', margin, footerY);
+    doc.addImage(logoImg, 'PNG', pageW - margin - 18, footerY - 7, 18, 9);
+    if (total) {
+      doc.text(`${pageNum} / ${total}`, pageW / 2, footerY, { align: 'center' });
+    }
+  };
+
+  const overallSim = report.overallSimilarity ?? 0;
+  const overallAi  = report.overallAi ?? 0;
+  const sections   = report.sections ?? [];
+
+  // ── Page 1 ──
+  addPageHeader();
+  let y = 34;
+
+  // Title block
+  doc.setTextColor(20, 20, 20);
+  doc.setFontSize(19);
+  doc.setFont('helvetica', 'bold');
+  doc.text("Cognita's Integrity Report", margin, y);
+  y += 7;
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  if (authorName) { doc.text(`Author: ${authorName}`, margin, y); y += 5; }
+  doc.text(`Date & Time Generated: ${dateStr}`, margin, y); y += 5;
+  doc.text(`Platform: Cognita AI Research Platform`, margin, y); y += 2;
+
+  doc.setDrawColor(59, 91, 219);
+  doc.setLineWidth(0.4);
+  doc.line(margin, y + 2, pageW - margin, y + 2);
+  y += 10;
+
+  // Score cards
+  const simRiskLabel = overallSim <= 20 ? 'Acceptable' : overallSim <= 35 ? 'Borderline' : 'Unacceptable';
+  const simRiskColor: [number,number,number] = overallSim <= 20 ? [47,158,68] : overallSim <= 35 ? [240,140,0] : [224,49,49];
+  const aiRiskLabel  = overallAi  <= 20 ? 'Acceptable' : overallAi  <= 45 ? 'Borderline' : 'Unacceptable';
+  const aiRiskColor: [number,number,number]  = overallAi  <= 20 ? [47,158,68] : overallAi  <= 45 ? [240,140,0] : [224,49,49];
+
+  const halfW = (cW - 6) / 2;
+
+  // Similarity Index card
+  doc.setFillColor(245, 247, 255);
+  doc.roundedRect(margin, y, halfW, 32, 3, 3, 'F');
+  doc.setFontSize(26);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(simRiskColor[0], simRiskColor[1], simRiskColor[2]);
+  doc.text(`${overallSim}%`, margin + halfW / 2, y + 16, { align: 'center' });
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text('SIMILARITY INDEX', margin + halfW / 2, y + 22, { align: 'center' });
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(simRiskColor[0], simRiskColor[1], simRiskColor[2]);
+  doc.text(simRiskLabel, margin + halfW / 2, y + 28, { align: 'center' });
+
+  // AI Detection card
+  const card2x = margin + halfW + 6;
+  doc.setFillColor(245, 247, 255);
+  doc.roundedRect(card2x, y, halfW, 32, 3, 3, 'F');
+  doc.setFontSize(26);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(aiRiskColor[0], aiRiskColor[1], aiRiskColor[2]);
+  doc.text(`${overallAi}%`, card2x + halfW / 2, y + 16, { align: 'center' });
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text('AI DETECTION', card2x + halfW / 2, y + 22, { align: 'center' });
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(aiRiskColor[0], aiRiskColor[1], aiRiskColor[2]);
+  doc.text(aiRiskLabel, card2x + halfW / 2, y + 28, { align: 'center' });
+
+  y += 40;
+
+  // Summary
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(20, 20, 20);
+  doc.text('Overall Verdict', margin, y);
+  y += 6;
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(55, 55, 55);
+  const sumLines = doc.splitTextToSize(report.summary ?? '', cW);
+  doc.text(sumLines, margin, y);
+  y += sumLines.length * 5 + 10;
+
+  // 1. Similarity Index — Section Breakdown
+  if (y > pageH - 40) { addPageFooter(1); doc.addPage(); addPageHeader(); y = 34; }
+
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(20, 20, 20);
+  doc.text('1. Similarity Index — Section Breakdown', margin, y);
+  y += 4;
+
+  // Legend
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(47,158,68); doc.text('● 0–20% Acceptable', margin, y + 4);
+  doc.setTextColor(240,140,0); doc.text('● 21–35% Borderline', margin + 34, y + 4);
+  doc.setTextColor(224,49,49); doc.text('● 36%+ Unacceptable', margin + 68, y + 4);
+  y += 9;
+
+  // Table header
+  const sc1=48, sc2=24, sc3=28, sc4=cW-sc1-sc2-sc3;
+  doc.setFillColor(59, 91, 219);
+  doc.rect(margin, y, cW, 7, 'F');
+  doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+  doc.text('Section',          margin+2,        y+5);
+  doc.text('Similarity',       margin+sc1+2,    y+5);
+  doc.text('Status',           margin+sc1+sc2+2,y+5);
+  doc.text('Matching Sources', margin+sc1+sc2+sc3+2, y+5);
+  y += 8;
+
+  let pageNum = 1;
+  for (const sec of sections) {
+    const risk = sec.similarity <= 20 ? { label:'Acceptable', rgb:[47,158,68] as [number,number,number] }
+               : sec.similarity <= 35 ? { label:'Borderline', rgb:[240,140,0] as [number,number,number] }
+               :                        { label:'Critical',   rgb:[224,49,49] as [number,number,number] };
+    const srcNames = (sec.sources ?? []).map(s => s.title).join('; ') || '—';
+    const srcLines = doc.splitTextToSize(srcNames, sc4 - 4);
+    const rowH = Math.max(srcLines.length, 1) * 4.5 + 5;
+
+    if (y + rowH > pageH - 18) {
+      addPageFooter(pageNum);
+      pageNum++;
+      doc.addPage(); addPageHeader(); y = 34;
+      doc.setFillColor(59, 91, 219);
+      doc.rect(margin, y, cW, 7, 'F');
+      doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+      doc.text('Section', margin+2, y+5);
+      doc.text('Similarity', margin+sc1+2, y+5);
+      doc.text('Status', margin+sc1+sc2+2, y+5);
+      doc.text('Matching Sources', margin+sc1+sc2+sc3+2, y+5);
+      y += 8;
+    }
+
+    const rowIdx = sections.indexOf(sec);
+    if (rowIdx % 2 === 0) { doc.setFillColor(248,249,255); doc.rect(margin, y-1, cW, rowH, 'F'); }
+
+    doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(20,20,20);
+    const secTitleLines = doc.splitTextToSize(sec.sectionTitle, sc1-4);
+    doc.text(secTitleLines, margin+2, y+4);
+
+    doc.setFont('helvetica','bold'); doc.setTextColor(risk.rgb[0],risk.rgb[1],risk.rgb[2]);
+    doc.text(`${sec.similarity}%`, margin+sc1+2, y+4);
+
+    doc.setFillColor(risk.rgb[0],risk.rgb[1],risk.rgb[2]);
+    doc.roundedRect(margin+sc1+sc2+1, y+1, sc3-3, 5, 1,1,'F');
+    doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+    doc.text(risk.label, margin+sc1+sc2+1+(sc3-3)/2, y+4.8, { align:'center' });
+
+    doc.setFontSize(7.5); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80);
+    doc.text(srcLines, margin+sc1+sc2+sc3+2, y+4);
+
+    doc.setDrawColor(230,230,230); doc.setLineWidth(0.2);
+    doc.line(margin, y+rowH-1, pageW-margin, y+rowH-1);
+    y += rowH;
+  }
+
+  // 2. AI Detection — Section Breakdown
+  if (y > pageH - 40) { addPageFooter(pageNum); pageNum++; doc.addPage(); addPageHeader(); y = 34; }
+  else { y += 8; }
+
+  doc.setFontSize(12); doc.setFont('helvetica','bold'); doc.setTextColor(20,20,20);
+  doc.text('2. AI Detection — Section Breakdown', margin, y);
+  y += 4;
+
+  doc.setFontSize(7.5); doc.setFont('helvetica','normal');
+  doc.setTextColor(47,158,68);  doc.text('● 0–20% Acceptable', margin, y+4);
+  doc.setTextColor(240,140,0);  doc.text('● 21–45% Borderline', margin+34, y+4);
+  doc.setTextColor(224,49,49);  doc.text('● 46%+ Unacceptable', margin+68, y+4);
+  y += 9;
+
+  const ac1=48, ac2=24, ac3=28, ac4=cW-ac1-ac2-ac3;
+  doc.setFillColor(59,91,219); doc.rect(margin, y, cW, 7, 'F');
+  doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+  doc.text('Section',  margin+2,          y+5);
+  doc.text('AI %',     margin+ac1+2,      y+5);
+  doc.text('Status',   margin+ac1+ac2+2,  y+5);
+  doc.text('Details',  margin+ac1+ac2+ac3+2, y+5);
+  y += 8;
+
+  for (const sec of sections) {
+    const risk = sec.aiScore <= 20 ? { label:'Acceptable', rgb:[47,158,68] as [number,number,number] }
+               : sec.aiScore <= 45 ? { label:'Borderline', rgb:[240,140,0] as [number,number,number] }
+               :                     { label:'High',       rgb:[224,49,49] as [number,number,number] };
+    const notesLines = doc.splitTextToSize(sec.notes || '—', ac4-4);
+    const rowH = Math.max(notesLines.length, 1) * 4.5 + 5;
+
+    if (y + rowH > pageH - 18) {
+      addPageFooter(pageNum); pageNum++;
+      doc.addPage(); addPageHeader(); y = 34;
+      doc.setFillColor(59,91,219); doc.rect(margin, y, cW, 7, 'F');
+      doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+      doc.text('Section',  margin+2,          y+5);
+      doc.text('AI %',     margin+ac1+2,      y+5);
+      doc.text('Status',   margin+ac1+ac2+2,  y+5);
+      doc.text('Details',  margin+ac1+ac2+ac3+2, y+5);
+      y += 8;
+    }
+
+    const rowIdx = sections.indexOf(sec);
+    if (rowIdx % 2 === 0) { doc.setFillColor(248,249,255); doc.rect(margin, y-1, cW, rowH, 'F'); }
+
+    doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(20,20,20);
+    const secTLines = doc.splitTextToSize(sec.sectionTitle, ac1-4);
+    doc.text(secTLines, margin+2, y+4);
+
+    doc.setFont('helvetica','bold'); doc.setTextColor(risk.rgb[0],risk.rgb[1],risk.rgb[2]);
+    doc.text(`${sec.aiScore}%`, margin+ac1+2, y+4);
+
+    doc.setFillColor(risk.rgb[0],risk.rgb[1],risk.rgb[2]);
+    doc.roundedRect(margin+ac1+ac2+1, y+1, ac3-3, 5, 1,1,'F');
+    doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+    doc.text(risk.label, margin+ac1+ac2+1+(ac3-3)/2, y+4.8, { align:'center' });
+
+    doc.setFontSize(7.5); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80);
+    doc.text(notesLines, margin+ac1+ac2+ac3+2, y+4);
+
+    doc.setDrawColor(230,230,230); doc.setLineWidth(0.2);
+    doc.line(margin, y+rowH-1, pageW-margin, y+rowH-1);
+    y += rowH;
+  }
+
+  addPageFooter(pageNum, pageNum);
+
+  const fileDateStr = scannedAt
+    ? new Date(scannedAt).toISOString().slice(0,10)
+    : new Date().toISOString().slice(0,10);
+  doc.save(`Cognita-Integrity-Report-${fileDateStr}.pdf`);
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function StudentPlagiarism() {
@@ -145,6 +441,7 @@ export default function StudentPlagiarism() {
 
   const [loading,    setLoading]    = useState(true);
   const [scanning,   setScanning]   = useState(false);
+  const [exporting,  setExporting]  = useState(false);
   const [report,     setReport]     = useState<PlagiarismReport | null>(null);
   const [scannedAt,  setScannedAt]  = useState<string | null>(null);
 
@@ -227,6 +524,22 @@ export default function StudentPlagiarism() {
     } finally { setScanning(false); }
   };
 
+  const handleExportPDF = async () => {
+    if (!report) return;
+    setExporting(true);
+    try {
+      await exportIntegrityPDF({
+        report,
+        scannedAt,
+        authorName: user?.name ?? user?.email ?? '',
+      });
+    } catch {
+      notifications.show({ title: 'Export failed', message: 'Could not generate PDF.', color: 'red' });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const selectedExtEngine = EXTERNAL_ENGINES.find(e => e.value === engine);
 
   const overallSim = report?.overallSimilarity ?? 0;
@@ -250,6 +563,18 @@ export default function StudentPlagiarism() {
             <Badge size="xs" variant="light" color={report.engine === 'internal' ? 'teal' : 'violet'}>
               {report.engine === 'internal' ? 'Internal Engine' : report.engine}
             </Badge>
+          )}
+          {report && (
+            <Button
+              size="xs"
+              variant="light"
+              color="brand"
+              leftSection={<LuFileDown size={13} />}
+              loading={exporting}
+              onClick={handleExportPDF}
+            >
+              Export PDF
+            </Button>
           )}
           <Text size="xs" c="dimmed">
             {scannedAt ? `Last scanned ${new Date(scannedAt).toLocaleString()}` : 'Not scanned yet'}
@@ -276,7 +601,7 @@ export default function StudentPlagiarism() {
         <Paper withBorder p="lg" radius="md" bg="white" mb="xl">
           {/* Engine selector */}
           <Box mb="lg">
-            <Text size="sm" fw={600} mb={6}>Plagiarism Check Engine</Text>
+            <Text size="sm" fw={600} mb={6}>Integrity Check Engine</Text>
             <Group gap="md" align="flex-end" wrap="wrap">
               <Select
                 data={[
@@ -622,6 +947,19 @@ export default function StudentPlagiarism() {
           </Paper>
 
           <Divider my="xl" />
+
+          {/* ── Bottom export bar ── */}
+          <Group justify="flex-end" mb="xl">
+            <Button
+              variant="light"
+              color="brand"
+              leftSection={<LuFileDown size={14} />}
+              loading={exporting}
+              onClick={handleExportPDF}
+            >
+              Export Integrity Report as PDF
+            </Button>
+          </Group>
         </>
       )}
 

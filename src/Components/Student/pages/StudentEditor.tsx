@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMediaQuery } from '@mantine/hooks';
 import {
   Box, Text, Group, Stack, Select, ActionIcon, Divider,
@@ -503,6 +504,17 @@ export default function StudentEditor({ researcherMode = false }: { researcherMo
   const [projectType, setProjectType]     = useState<string>('Thesis');
   const [sections,    setSections]        = useState<EditorSection[]>(buildInitialSections);
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? '');
+
+  // ── Jump to section from ?section= query param (e.g. from AI Reviewer) ──────
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const sectionParam = searchParams.get('section');
+    if (sectionParam && sections.some(s => s.id === sectionParam)) {
+      setActiveSectionId(sectionParam);
+      setSearchParams(prev => { prev.delete('section'); return prev; }, { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Per-project-type cache (in-memory) â€” lets switching back to a previously
   // visited type restore its content exactly, with nothing dropped, even for

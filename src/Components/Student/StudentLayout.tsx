@@ -32,7 +32,7 @@ const NAV_ITEMS = [
   { label: 'Data & Analysis',    icon: LuActivity,        path: APPROUTE_LIST.STUDENT_ANALYSIS },
   // { label: 'Results',            icon: LuClipboard,       path: APPROUTE_LIST.STUDENT_RESULTS },
   { label: 'AI Reviewer',        icon: LuBot,             path: APPROUTE_LIST.STUDENT_AI_REVIEWER },
-  { label: 'Plagiarism Checker', icon: LuShield,          path: APPROUTE_LIST.STUDENT_PLAGIARISM },
+  { label: 'Integrity Checker',  icon: LuShield,          path: APPROUTE_LIST.STUDENT_PLAGIARISM },
   { label: 'Export',             icon: LuDownload,        path: APPROUTE_LIST.STUDENT_EXPORT },
   { label: 'Messages',           icon: LuMessageSquare,   path: APPROUTE_LIST.STUDENT_MESSAGES },
   // { label: 'Collaboration',      icon: LuUsers,           path: APPROUTE_LIST.STUDENT_COLLABORATION },

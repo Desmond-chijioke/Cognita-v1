@@ -439,7 +439,7 @@ export default function StudentDashboard() {
                 { label: 'References', Icon: LuBook,      path: '/app/references'        },
                 { label: 'Analysis',   Icon: LuActivity,  path: '/app/analysis'          },
                 { label: 'AI Review',  Icon: LuBot,       path: '/app/ai-reviewer'       },
-                { label: 'Plagiarism', Icon: LuShield,    path: '/app/plagiarism-checker'},
+                { label: 'Integrity',  Icon: LuShield,    path: '/app/plagiarism-checker'},
                 { label: 'Export',     Icon: LuDownload,  path: '/app/export'            },
               ].map(({ label, Icon, path }) => (
                 <Button
