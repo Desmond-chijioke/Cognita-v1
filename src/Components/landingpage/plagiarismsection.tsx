@@ -7,7 +7,7 @@ const features = [
   { icon: FiSearch, title: 'Similarity Checking', desc: 'Scan your work against millions of academic sources and publications.' },
   { icon: MdOutlineVerifiedUser, title: 'Citation-Aware Detection', desc: 'Distinguishes properly cited passages from uncited similarities.' },
   { icon: FiList, title: 'Section-by-Section Reports', desc: 'Granular reports per chapter and section — not just a single score.' },
-  { icon: FiEye, title: 'Supervisor Visibility', desc: 'Supervisors can review integrity reports alongside the manuscript.' },
+  { icon: FiEye, title: 'Supervisor Visibility', desc: 'Supervisors can review AI usage Detections alongside the manuscript.' },
   { icon: VscGitCompare, title: 'Revision Tracking', desc: 'Track how originality improves across drafts over time.' },
 ];
 

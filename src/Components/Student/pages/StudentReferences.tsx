@@ -22,7 +22,7 @@ import {
 import type { DBReference } from '../../../supabase/references';
 import ChapterPicker from '../ChapterPicker';
 
-// ── Integrity report shape ─────────────────────────────────────────────────────
+// ── AI usage Detection shape ─────────────────────────────────────────────────────
 
 interface ReferenceFinding { severity: 'warning' | 'info'; message: string }
 interface ReferencesReport { summary: string; findings: ReferenceFinding[] }

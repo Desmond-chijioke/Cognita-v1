@@ -25,7 +25,7 @@ const DEMO_NOTIFICATIONS: AppNotification[] = [
   { id: 'sn-6',  title: 'Review Overdue',               message: "Emeka Okafor's Research Proposal has been waiting for your review for 4 days.",                             type: 'warning', read: true,  timestamp: '2026-05-31T10:00:00Z' },
   { id: 'sn-7',  title: 'Submission Approval Requested', message: 'Fatima Al-Rashid has requested final thesis submission approval.',                                          type: 'info',    read: true,  timestamp: '2026-05-30T11:30:00Z' },
   { id: 'sn-8',  title: 'Chapter Revision Resubmitted', message: 'Taiwo Bakare resubmitted Chapter 3 following your revision request.',                                       type: 'success', read: true,  timestamp: '2026-05-28T16:00:00Z' },
-  { id: 'sn-9',  title: 'Weekly Integrity Report',      message: 'Your department integrity report for 26 May – 1 Jun 2026 is now available.',                                type: 'info',    read: true,  timestamp: '2026-05-27T09:00:00Z' },
+  { id: 'sn-9',  title: 'Weekly AI usage Detection',      message: 'Your department AI usage Detection for 26 May – 1 Jun 2026 is now available.',                                type: 'info',    read: true,  timestamp: '2026-05-27T09:00:00Z' },
   { id: 'sn-10', title: 'Platform Maintenance',         message: 'CognitaAI undergoes scheduled maintenance on 1 Jun from 02:00–04:00 WAT.',                                  type: 'info',    read: true,  timestamp: '2026-05-26T08:00:00Z' },
 ];
 

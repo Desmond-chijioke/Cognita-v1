@@ -428,7 +428,7 @@ export default function HODSettings() {
             />
             <ToggleRow
               label="Compliance Report Emails"
-              description="Receive monthly compliance and integrity reports for your department"
+              description="Receive monthly compliance and AI usage Detections for your department"
               checked={notifPrefs.complianceReports}
               onChange={v => setNotifPrefs(p => ({ ...p, complianceReports: v }))}
               last

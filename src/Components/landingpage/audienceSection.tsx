@@ -19,7 +19,7 @@ const audiences = [
   {
     icon: FiUsers,
     title: 'Supervisors & Research Groups',
-    desc: 'Monitor progress, review integrity reports, and provide contextual feedback.',
+    desc: 'Monitor progress, review AI usage Detections, and provide contextual feedback.',
     hoverBg: 'rgba(16,185,129,0.06)',
   },
   {

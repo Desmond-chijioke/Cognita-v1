@@ -182,7 +182,7 @@ async function exportIntegrityPDF(opts: {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text("Cognita's Integrity Report", pageW - margin, 11, { align: 'right' });
+    doc.text("Cognita's AI usage Detection", pageW - margin, 11, { align: 'right' });
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
     doc.text('Cognita Research Intelligence Engine', pageW - margin, 18, { align: 'right' });
@@ -216,7 +216,7 @@ async function exportIntegrityPDF(opts: {
   doc.setTextColor(20, 20, 20);
   doc.setFontSize(19);
   doc.setFont('helvetica', 'bold');
-  doc.text("Cognita's Integrity Report", margin, y);
+  doc.text("Cognita's AI usage Detection", margin, y);
   y += 7;
 
   doc.setFontSize(9);
@@ -497,7 +497,7 @@ export default function StudentPlagiarism() {
         setReport(result);
         setScannedAt(result.scannedAt ?? new Date().toISOString());
         await saveAIReport(user.id, 'plagiarism', result);
-        notifications.show({ title: 'AI Scan complete', message: 'Integrity report updated.', color: 'green' });
+        notifications.show({ title: 'AI Scan complete', message: 'AI usage Detection updated.', color: 'green' });
       } catch (err) {
         notifications.show({ title: 'AI Scan failed', message: err instanceof Error ? err.message : 'Could not complete the scan.', color: 'red' });
       } finally { setScanning(false); }
@@ -514,7 +514,7 @@ export default function StudentPlagiarism() {
       });
       setReport(result);
       setScannedAt(result.scannedAt ?? new Date().toISOString());
-      notifications.show({ title: 'Scan complete', message: 'Integrity report updated.', color: 'green' });
+      notifications.show({ title: 'Scan complete', message: 'AI usage Detection updated.', color: 'green' });
     } catch (err) {
       notifications.show({
         title: 'Scan failed',
@@ -553,7 +553,7 @@ export default function StudentPlagiarism() {
     <Box p="xl">
       <Group justify="space-between" align="flex-start" mb="xl" wrap="wrap" gap="sm">
         <Box>
-          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Integrity Report</Title>
+          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>AI usage Detection</Title>
           <Text size="sm" c="dimmed" mt={4}>
             Internal similarity check · AI detection · Academic source matching
           </Text>
@@ -699,7 +699,7 @@ export default function StudentPlagiarism() {
           <ThemeIcon size={48} radius="xl" variant="light" color="brand" mx="auto" mb="md">
             <LuShield size={22} />
           </ThemeIcon>
-          <Text fw={600} mb={4}>No integrity report yet</Text>
+          <Text fw={600} mb={4}>No AI usage Detection yet</Text>
           <Text size="sm" c="dimmed">Select chapters above and run a scan to get originality, AI detection, and source analysis.</Text>
         </Paper>
       )}
@@ -710,7 +710,7 @@ export default function StudentPlagiarism() {
           {/* Report header */}
           <Paper withBorder p="md" radius="md" mb="lg" style={{ background: '#f8f9fa' }}>
             <Group justify="space-between" wrap="wrap" gap="xs">
-              <Text size="sm" fw={600}>Integrity Report</Text>
+              <Text size="sm" fw={600}>AI usage Detection</Text>
               <Group gap="xl" wrap="wrap">
                 <Box>
                   <Text size="xs" c="dimmed" fw={500}>Date &amp; Time Generated</Text>
@@ -957,7 +957,7 @@ export default function StudentPlagiarism() {
               loading={exporting}
               onClick={handleExportPDF}
             >
-              Export Integrity Report as PDF
+              Export AI usage Detection as PDF
             </Button>
           </Group>
         </>

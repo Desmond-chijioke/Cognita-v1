@@ -261,7 +261,7 @@ export default function ResearchPlagiarism() {
         setReport(result);
         setScannedAt(result.scannedAt ?? new Date().toISOString());
         await saveAIReport(user.id, 'plagiarism', result);
-        notifications.show({ title: 'AI Scan complete', message: 'Integrity report updated.', color: 'green' });
+        notifications.show({ title: 'AI Scan complete', message: 'AI usage Detection updated.', color: 'green' });
       } catch (err) {
         notifications.show({ title: 'AI Scan failed', message: err instanceof Error ? err.message : 'Could not complete the scan.', color: 'red' });
       } finally { setScanning(false); }
@@ -278,7 +278,7 @@ export default function ResearchPlagiarism() {
       });
       setReport(result);
       setScannedAt(result.scannedAt ?? new Date().toISOString());
-      notifications.show({ title: 'Scan complete', message: 'Integrity report updated.', color: 'green' });
+      notifications.show({ title: 'Scan complete', message: 'AI usage Detection updated.', color: 'green' });
     } catch (err) {
       notifications.show({
         title: 'Scan failed',
@@ -299,7 +299,7 @@ export default function ResearchPlagiarism() {
     <Box p="xl">
       <Group justify="space-between" align="flex-start" mb="xl" wrap="wrap" gap="sm">
         <Box>
-          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>Integrity Report</Title>
+          <Title order={2} style={{ fontFamily: 'Playfair Display, serif' }}>AI usage Detection</Title>
           <Text size="sm" c="dimmed" mt={4}>
             Internal similarity check · AI detection · Academic source matching
           </Text>
@@ -403,7 +403,7 @@ export default function ResearchPlagiarism() {
           <ThemeIcon size={48} radius="xl" variant="light" color="brand" mx="auto" mb="md">
             <LuShield size={22} />
           </ThemeIcon>
-          <Text fw={600} mb={4}>No integrity report yet</Text>
+          <Text fw={600} mb={4}>No AI usage Detection yet</Text>
           <Text size="sm" c="dimmed">Select sections above and run a scan to get originality, AI detection, and source analysis.</Text>
         </Paper>
       )}
