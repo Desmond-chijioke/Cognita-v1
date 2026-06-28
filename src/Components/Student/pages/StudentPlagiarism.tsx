@@ -739,7 +739,7 @@ export default function StudentPlagiarism() {
                   </Box>
                 </Box>
                 <Box style={{ flex: 1 }}>
-                  <Text fw={700} size="lg" mb={4}>Originality Risk</Text>
+                  <Text fw={700} size="lg" mb={4}>AI usage Detection</Text>
                   <Badge variant="light" size="sm" mb="sm" style={{ background: simColor + '20', color: simColor }}>
                     {simRisk(overallSim).label}
                   </Badge>
