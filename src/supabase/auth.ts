@@ -131,11 +131,32 @@ export async function signUpInstitution(
 }
 
 // ── Sign in and fetch full profile ─────────────────────────────────────────
+// Accepts either an email address OR a user_id (e.g. HOD-3847).
+// If a user_id is supplied we look up the corresponding email first.
 
 export async function signInSupabase(
-  email: string,
+  identifier: string,   // email OR user_id
   password: string,
 ): Promise<{ profile: UserProfile; accessToken: string; refreshToken: string } | null> {
+  // Determine the actual email to pass to Supabase Auth.
+  // A user_id always matches the pattern PREFIX-DIGITS (no @).
+  let email = identifier.trim().toLowerCase();
+
+  const isUserId = !email.includes('@');
+  if (isUserId) {
+    // Look up email by user_id in the users table
+    const { data: row } = await supabase
+      .from('users')
+      .select('email')
+      .eq('user_id', identifier.trim())
+      .maybeSingle();
+
+    if (!row?.email) {
+      throw new Error('No account found with that User ID.');
+    }
+    email = row.email;
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.user) return null;
 

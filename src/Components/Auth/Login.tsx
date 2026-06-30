@@ -24,10 +24,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const form = useForm({
-    initialValues: { email: '', password: '' },
+    initialValues: { identifier: '', password: '' },
     validate: {
-      email:    v => (!v ? 'Email is required' : null),
-      password: v => (!v ? 'Password is required' : v.length < 8 ? 'Minimum 8 characters' : null),
+      identifier: v => (!v ? 'Email or User ID is required' : null),
+      password:   v => (!v ? 'Password is required' : v.length < 6 ? 'Minimum 6 characters' : null),
     },
   });
 
@@ -35,22 +35,22 @@ export default function Login() {
     e.preventDefault();
     form.clearErrors();
 
-    const email    = form.values.email.trim().toLowerCase();
-    const password = form.values.password;
+    const identifier = form.values.identifier.trim();
+    const password   = form.values.password;
 
-    if (!email)              { form.setFieldError('email',    'Email is required');    return; }
-    if (!password)           { form.setFieldError('password', 'Password is required'); return; }
-    if (password.length < 8) { form.setFieldError('password', 'Minimum 8 characters'); return; }
+    if (!identifier)           { form.setFieldError('identifier', 'Email or User ID is required'); return; }
+    if (!password)             { form.setFieldError('password',   'Password is required');          return; }
+    if (password.length < 6)   { form.setFieldError('password',   'Minimum 6 characters');          return; }
 
     setLoading(true);
 
    
 
     try {
-      const result = await signInSupabase(email, password);
+      const result = await signInSupabase(identifier, password);
 
       if (!result) {
-        form.setFieldError('password', 'Incorrect email or password');
+        form.setFieldError('password', 'Incorrect credentials');
         return;
       }
 
@@ -97,9 +97,11 @@ export default function Login() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       if (msg === 'PROFILE_NOT_FOUND') {
-        form.setFieldError('email',
+        form.setFieldError('identifier',
           'Account found but profile is missing — please re-register your institution to restore access.',
         );
+      } else if (msg === 'No account found with that User ID.') {
+        form.setFieldError('identifier', msg);
       } else {
         form.setFieldError('password', 'Something went wrong. Please try again.');
       }
@@ -170,15 +172,14 @@ export default function Login() {
           <form onSubmit={handleSubmit}>
             <Stack gap="md">
               <TextInput
-                label="Institutional email"
-                placeholder="you@institution.edu"
-                type="email"
+                label="Email or User ID"
+                placeholder="you@institution.edu or HOD-3847"
                 size="md"
-                {...form.getInputProps('email')}
+                {...form.getInputProps('identifier')}
               />
               <PasswordInput
                 label="Password"
-                placeholder="Your password"
+                placeholder="Your password (or phone number for first login)"
                 size="md"
                 {...form.getInputProps('password')}
               />
