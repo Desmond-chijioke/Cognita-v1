@@ -170,6 +170,33 @@ export async function emailExists(email: string): Promise<boolean> {
   return !!data;
 }
 
+// ── Generate a human-readable user ID ────────────────────────────────────────
+// Format: <PREFIX>-<4 random digits>  e.g. HOD-3847, SUP-5291, STU-7364
+
+export function generateUserId(role: string): string {
+  const n = Math.floor(1000 + Math.random() * 9000); // 4-digit number
+  const prefixMap: Record<string, string> = {
+    'Head of Department':    'HOD',
+    'Provost':               'PRV',
+    'PG Coordinator':        'PGC',
+    'Dean':                  'DEN',
+    'Supervisor':            'SUP',
+    'Senior Supervisor':     'SSP',
+    'Co-Supervisor':         'CSP',
+    'Assistant Supervisor':  'ASP',
+    'PhD Student':           'PHD',
+    "Master's Student":      'MST',
+    'Undergraduate Student': 'UGS',
+    'Postgraduate Student':  'PGS',
+    'Student':               'STU',
+    'Researcher':            'RES',
+    'Director of Research':  'DIR',
+    'Vice Chancellor':       'VCH',
+  };
+  const prefix = prefixMap[role] ?? 'USR';
+  return `${prefix}-${n}`;
+}
+
 // ── Create staff user ─────────────────────────────────────────────────────────
 // Stores user info in the shared users table.
 // institution_id is shared across all staff in one institution (NOT unique).
@@ -182,6 +209,7 @@ export async function createStaffUser(params: {
   role:            string;
   institutionId:   string;
   institutionName: string;
+  userId?:         string;   // human-readable user ID (e.g. HOD-3847)
   // Role-specific optional fields
   specialty?:      string;   // supervisors
   department?:     string;   // supervisors
@@ -189,12 +217,18 @@ export async function createStaffUser(params: {
   degreeLevel?:    string;   // students
   projectTitle?:   string;   // students (research program)
   supervisorId?:   string;   // students (assigned supervisor)
-}): Promise<{ userId: string }> {
+}): Promise<{ userId: string; userIdCode: string }> {
   const { name, email, phone, password, role, institutionId, institutionName,
           specialty, department, matricNo, degreeLevel, projectTitle, supervisorId } = params;
+  const userIdCode = params.userId ?? generateUserId(role);
 
   if (await emailExists(email)) {
     throw new Error(`An account with the email "${email.trim().toLowerCase()}" already exists. Use a different email address.`);
+  }
+
+  // Validate phone is provided (it will be used as the temporary password)
+  if (!phone || !phone.trim()) {
+    throw new Error('Phone number is required — it will be used as the temporary password.');
   }
 
   // Use the deployed Edge Function (rapid-responder) to create the auth user.
@@ -204,7 +238,7 @@ export async function createStaffUser(params: {
   let userId: string | null = null;
 
   const { data: edgeData, error: edgeError } = await supabase.functions.invoke('rapid-responder', {
-    body: { name, email, password, role, institutionId, institutionName },
+    body: { name, email, password, role, institutionId, institutionName, userIdCode },
   });
 
   if (!edgeError && edgeData?.userId) {
@@ -235,18 +269,13 @@ export async function createStaffUser(params: {
 
   if (!userId) throw new Error('Could not get user ID — please try again.');
 
-  // If the Edge Function succeeded it already inserted the basic profile row.
-  // We still do a browser-side upsert to add the extra fields (specialty, phone,
-  // matric_no etc.) that the Edge Function doesn't receive.
-  // ignoreDuplicates: false means update if id exists — this is allowed because
-  // after dropping the institution_id unique constraint the only conflict is on
-  // the primary key (id), and the INSERT policy covers new rows while any UPDATE
-  // done here is to the SAME user id that was just created so auth.uid() = id
-  // matches when the admin's session is still active.
-  // Plain INSERT — only the INSERT policy is checked (not UPDATE).
-  // Upsert checks both INSERT + UPDATE policies which causes 42501 when the
-  // HOD inserts a row for a different user (UPDATE policy needs auth.uid() = id).
-  const { error: profileError } = await supabase.from('users').insert({
+  // If the Edge Function succeeded it already inserted a basic profile row
+  // (without user_id and the extra fields it doesn't receive).
+  // We upsert here so that when the row already exists we UPDATE it with all
+  // the extra fields — critically user_id — instead of silently skipping them.
+  // onConflict:'id' targets the primary key only, which is safe because the
+  // admin's session is still active (auth.uid() = id of the row being written).
+  const { error: profileError } = await supabase.from('users').upsert({
     id:               userId,
     name,
     email,
@@ -254,28 +283,28 @@ export async function createStaffUser(params: {
     role,
     institution_id:   institutionId,
     institution_name: institutionName,
+    user_id:          userIdCode,
     specialty:        specialty     ?? null,
     department:       department    ?? null,
     matric_no:        matricNo      ?? null,
     degree_level:     degreeLevel   ?? null,
     project_title:    projectTitle  ?? null,
     supervisor_id:    supervisorId  ?? null,
-  });
+  }, { onConflict: 'id' });
 
   if (profileError) {
-    // 23505 = duplicate key — Edge Function already created the row, that's fine
-    if (profileError.code === '23505') return { userId };
-    console.error('[createStaffUser] profile insert failed:', profileError.code, profileError.message);
+    console.error('[createStaffUser] profile upsert failed:', profileError.code, profileError.message);
     throw new Error(`Profile could not be saved: ${profileError.message}`);
   }
 
-  return { userId };
+  return { userId, userIdCode };
 }
 
 // ── Fetch supervisors for an institution ──────────────────────────────────────
 
 export interface DBSupervisorUser {
   id:         string;
+  user_id?:   string;
   name:       string;
   email:      string;
   phone?:     string;
@@ -287,7 +316,7 @@ export interface DBSupervisorUser {
 export async function fetchSupervisors(institutionId: string): Promise<DBSupervisorUser[]> {
   const { data } = await supabase
     .from('users')
-    .select('id, name, email, phone, specialty, role, created_at')
+    .select('id, user_id, name, email, phone, specialty, role, created_at')
     .eq('institution_id', institutionId)
     .in('role', ['Supervisor', 'Senior Supervisor', 'Co-Supervisor'])
     .order('created_at');
@@ -298,6 +327,7 @@ export async function fetchSupervisors(institutionId: string): Promise<DBSupervi
 
 export interface DBStudentUser {
   id:            string;
+  user_id?:      string;
   name:          string;
   email:         string;
   phone?:        string;
@@ -311,7 +341,7 @@ export interface DBStudentUser {
 export async function fetchStudents(institutionId: string): Promise<DBStudentUser[]> {
   const { data } = await supabase
     .from('users')
-    .select('id, name, email, phone, matric_no, project_title, role, supervisor_id, created_at')
+    .select('id, user_id, name, email, phone, matric_no, project_title, role, supervisor_id, created_at')
     .eq('institution_id', institutionId)
     .in('role', ['PhD Student', "Master's Student", 'Undergraduate Student', 'Student', 'Researcher'])
     .order('created_at');

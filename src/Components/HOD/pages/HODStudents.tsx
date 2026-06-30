@@ -10,16 +10,11 @@ import {
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
 import { loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
-import { createStaffUser, updateSupervisorAssignment } from '../../../supabase/hierarchy';
+import { createStaffUser, updateSupervisorAssignment, generateUserId } from '../../../supabase/hierarchy';
 import { supabase } from '../../../supabase/client';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function generatePassword(len = 10): string {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
 
 const STUDENT_ROLE_COLORS: Record<string, string> = {
   'Postgraduate Student':  'indigo',
@@ -32,7 +27,7 @@ function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
-interface GeneratedCreds { name: string; email: string; password: string; role: string; }
+interface GeneratedCreds { name: string; email: string; password: string; role: string; userId: string; }
 
 function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onClose: () => void }) {
   return (
@@ -48,9 +43,10 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
           </Alert>
           <Paper withBorder p="md" radius="md" bg="gray.0">
             {[
-              { label: 'Level',         value: creds.role },
-              { label: 'Login Email',   value: creds.email },
-              { label: 'Temp Password', value: creds.password },
+              { label: 'Level',                   value: creds.role },
+              { label: 'User ID',                 value: creds.userId },
+              { label: 'Login Email',             value: creds.email },
+              { label: 'Temp Password (Phone)',   value: creds.password },
             ].map(({ label, value }) => (
               <Group key={label} justify="space-between" mb="xs">
                 <Box>
@@ -69,7 +65,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
               </Group>
             ))}
           </Paper>
-          <Text size="xs" c="dimmed">They can log in at <strong>/login</strong> using the email and password above.</Text>
+          <Text size="xs" c="dimmed">They can log in at <strong>/login</strong> using their <strong>User ID</strong> or email, with their phone number as the temporary password.</Text>
           <Button fullWidth color="brand" onClick={onClose}>Done</Button>
         </Stack>
       )}
@@ -79,7 +75,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-interface SBStudent { id: string; name: string; email: string; role: string; phone?: string; matric_no?: string; project_title?: string; supervisor_id?: string; created_at: string; }
+interface SBStudent { id: string; user_id?: string; name: string; email: string; role: string; phone?: string; matric_no?: string; project_title?: string; supervisor_id?: string; created_at: string; }
 interface SBSup    { id: string; name: string; role: string; }
 
 export default function HODStudents() {
@@ -138,7 +134,7 @@ export default function HODStudents() {
       const [studs, sups] = await Promise.all([
         // All students in the institution regardless of department
         queryByDept(
-          'id, name, email, phone, role, created_at, matric_no, project_title, supervisor_id',
+          'id, user_id, name, email, phone, role, created_at, matric_no, project_title, supervisor_id',
           STUDENT_ROLES,
         ),
         queryByDept('id, name, role', SUP_ROLES),
@@ -207,8 +203,13 @@ export default function HODStudents() {
 
   const handleAdd = async () => {
     if (!name.trim() || !email.trim()) return;
+    if (!phone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSaving(true);
-    const password = generatePassword();
+    const userIdCode = generateUserId(role);
+    const password   = phone.trim();   // phone is the temporary password
     try {
       await createStaffUser({
         name:            name.trim(),
@@ -222,10 +223,11 @@ export default function HODStudents() {
         matricNo:        matric.trim(),
         projectTitle:    program.trim(),
         supervisorId:    supId ?? undefined,
+        userId:          userIdCode,
       });
 
       // Show credentials and close form immediately
-      setCreds({ name: name.trim(), email: email.trim().toLowerCase(), password, role });
+      setCreds({ name: name.trim(), email: email.trim().toLowerCase(), password, role, userId: userIdCode });
       closeAddModal();
       showsucessnotification({ message: `${name.trim()} added with login credentials.` });
 
@@ -303,7 +305,7 @@ export default function HODStudents() {
         <Table highlightOnHover verticalSpacing="md">
           <Table.Thead>
             <Table.Tr style={{ background: '#f8f9fa' }}>
-              {['Student', 'Matric No', 'Research Program', 'Level', 'Supervisor', 'Added', ''].map(h => (
+              {['Student', 'User ID', 'Matric No', 'Phone No', 'Research Program', 'Level', 'Supervisor', 'Added', 'Actions'].map(h => (
                 <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
               ))}
             </Table.Tr>
@@ -320,7 +322,11 @@ export default function HODStudents() {
                     </Box>
                   </Group>
                 </Table.Td>
+                <Table.Td>
+                  <Text size="sm" ff="monospace" c="brand.7" fw={600}>{st.user_id || '—'}</Text>
+                </Table.Td>
                 <Table.Td><Text size="sm" ff="monospace">{st.matric_no || '—'}</Text></Table.Td>
+                <Table.Td><Text size="sm" pl={-30}>{st.phone || '—'}</Text></Table.Td>
                 <Table.Td><Text size="sm" lineClamp={1} style={{ maxWidth: 180 }}>{st.project_title || '—'}</Text></Table.Td>
                 <Table.Td><Badge color={STUDENT_ROLE_COLORS[st.role] ?? 'gray'} variant="light" size="sm">{st.role}</Badge></Table.Td>
                 <Table.Td>
@@ -349,13 +355,13 @@ export default function HODStudents() {
               </Table.Tr>
             ))}
             {paginated.length === 0 && (
-              <Table.Tr>
-                <Table.Td colSpan={7}>
-                  <Text ta="center" c="dimmed" py="xl" size="sm">
-                    No students in {departmentName || 'this department'} yet. Add one above.
-                  </Text>
-                </Table.Td>
-              </Table.Tr>
+                  <Table.Tr>
+                    <Table.Td colSpan={8}>
+                      <Text ta="center" c="dimmed" py="xl" size="sm">
+                        No students in {departmentName || 'this department'} yet. Add one above.
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
             )}
           </Table.Tbody>
         </Table>
@@ -390,7 +396,7 @@ export default function HODStudents() {
             value={name} onChange={e => setName(e.target.value)} />
           <TextInput label="Email" required size="md" type="email" placeholder="student@institution.edu"
             value={email} onChange={e => setEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel" placeholder="+234 800 000 0000"
+          <TextInput label="Phone Number" required size="md" type="tel" placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={phone} onChange={e => setPhone(e.target.value)} />
           <TextInput label="Matric Number" size="md" placeholder="e.g. CS/PHD/004"
@@ -406,11 +412,11 @@ export default function HODStudents() {
             placeholder={supRows.length ? 'Select a supervisor from this department' : 'No supervisors in this department yet'}
             data={supervisorOptions} value={supId} onChange={setSupId} clearable />
 
-          <Text size="xs" c="dimmed">A login account will be created with a temporary password.</Text>
+          <Text size="xs" c="dimmed">A login account will be created. The phone number will be their temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={closeAddModal}>Cancel</Button>
             <Button color="brand" loading={saving} onClick={handleAdd}
-              disabled={!name.trim() || !email.trim()}>
+              disabled={!name.trim() || !email.trim() || !phone.trim()}>
               Add &amp; Generate Credentials
             </Button>
           </Group>

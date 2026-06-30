@@ -10,7 +10,7 @@ import {
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
 import { loadSupervisors } from '../../../Redux/slices/hodSlice';
-import { createStaffUser } from '../../../supabase/hierarchy';
+import { createStaffUser, generateUserId } from '../../../supabase/hierarchy';
 import { supabase } from '../../../supabase/client';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
@@ -25,17 +25,13 @@ const ROLE_COLOR: Record<string, string> = {
   'Assistant Supervisor': 'cyan',
 };
 
-function generatePassword(len = 10): string {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
-
 function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
 interface SBUser {
   id:          string;
+  user_id?:    string;
   name:        string;
   email:       string;
   role:        string;
@@ -45,7 +41,7 @@ interface SBUser {
   created_at:  string;
 }
 
-interface GeneratedCreds { name: string; email: string; password: string; role: string; }
+interface GeneratedCreds { name: string; email: string; password: string; role: string; userId: string; }
 
 // ── Credential Modal ───────────────────────────────────────────────────────────
 
@@ -62,9 +58,10 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
           </Alert>
           <Paper withBorder p="md" radius="md" bg="gray.0">
             {[
-              { label: 'Role',          value: creds.role },
-              { label: 'Login Email',   value: creds.email },
-              { label: 'Temp Password', value: creds.password },
+              { label: 'Role',                    value: creds.role },
+              { label: 'User ID',                 value: creds.userId },
+              { label: 'Login Email',             value: creds.email },
+              { label: 'Temp Password (Phone)',   value: creds.password },
             ].map(({ label, value }) => (
               <Group key={label} justify="space-between" mb="xs">
                 <Box>
@@ -83,7 +80,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
               </Group>
             ))}
           </Paper>
-          <Text size="xs" c="dimmed">They can log in at <strong>/login</strong> using the email and password above.</Text>
+          <Text size="xs" c="dimmed">They can log in at <strong>/login</strong> using their <strong>User ID</strong> or email, with their phone number as the temporary password.</Text>
           <Button fullWidth color="brand" onClick={onClose}>Done</Button>
         </Stack>
       )}
@@ -123,7 +120,7 @@ export default function HODSupervisors() {
     try {
       let query = supabase
         .from('users')
-        .select('id, name, email, phone, specialty, department, role, created_at')
+        .select('id, user_id, name, email, phone, specialty, department, role, created_at')
         .eq('institution_id', institutionId)
         .in('role', SUP_ROLES);
 
@@ -172,8 +169,13 @@ export default function HODSupervisors() {
 
   const handleAdd = async () => {
     if (!name.trim() || !email.trim()) return;
+    if (!phone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSaving(true);
-    const password = generatePassword();
+    const userIdCode = generateUserId(role);
+    const password   = phone.trim();   // phone is the temporary password
     try {
       await createStaffUser({
         name:         name.trim(),
@@ -185,8 +187,9 @@ export default function HODSupervisors() {
         institutionName,
         specialty:    specialty.trim(),
         department:   departmentName,   // always locked to HOD's department
+        userId:       userIdCode,
       });
-      setCreds({ name: name.trim(), email: email.trim().toLowerCase(), password, role });
+      setCreds({ name: name.trim(), email: email.trim().toLowerCase(), password, role, userId: userIdCode });
       closeModal();
       showsucessnotification({ message: `${name.trim()} added as ${role}.` });
       loadRows();
@@ -246,7 +249,7 @@ export default function HODSupervisors() {
             <Table highlightOnHover verticalSpacing="md">
               <Table.Thead>
                 <Table.Tr style={{ background: '#f8f9fa' }}>
-                  {['Supervisor', 'Email', 'Specialisation', 'Role', 'Phone', 'Added'].map(h => (
+                  {['Supervisor', 'User ID', 'Email', 'Specialisation', 'Role', 'Phone', 'Added'].map(h => (
                     <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
                   ))}
                 </Table.Tr>
@@ -259,6 +262,9 @@ export default function HODSupervisors() {
                         <Avatar color="brand" radius="xl" size="md">{getInitials(sv.name)}</Avatar>
                         <Text size="sm" fw={600}>{sv.name}</Text>
                       </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" ff="monospace" c="brand.7" fw={600}>{sv.user_id || '—'}</Text>
                     </Table.Td>
                     <Table.Td><Text size="sm" c="dimmed">{sv.email}</Text></Table.Td>
                     <Table.Td><Text size="sm">{sv.specialty || '—'}</Text></Table.Td>
@@ -275,7 +281,7 @@ export default function HODSupervisors() {
                 ))}
                 {paginated.length === 0 && (
                   <Table.Tr>
-                    <Table.Td colSpan={6}>
+                    <Table.Td colSpan={7}>
                       <Text ta="center" c="dimmed" py="xl" size="sm">
                         No supervisors in {departmentName || 'this department'} yet. Add one above.
                       </Text>
@@ -317,7 +323,7 @@ export default function HODSupervisors() {
             value={name} onChange={e => setName(e.target.value)} />
           <TextInput label="Email" required size="md" type="email" placeholder="supervisor@institution.edu"
             value={email} onChange={e => setEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel" placeholder="+234 800 000 0000"
+          <TextInput label="Phone Number" required size="md" type="tel" placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={phone} onChange={e => setPhone(e.target.value)} />
           <TextInput label="Specialisation" size="md" placeholder="e.g. Machine Learning, Environmental Science"
@@ -334,11 +340,11 @@ export default function HODSupervisors() {
             </Box>
           ))}
 
-          <Text size="xs" c="dimmed" mt={4}>A login account will be created with a temporary password.</Text>
+          <Text size="xs" c="dimmed" mt={4}>A login account will be created. The phone number will be their temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={closeModal}>Cancel</Button>
             <Button color="brand" loading={saving} onClick={handleAdd}
-              disabled={!name.trim() || !email.trim()}>
+              disabled={!name.trim() || !email.trim() || !phone.trim()}>
               Add &amp; Generate Credentials
             </Button>
           </Group>

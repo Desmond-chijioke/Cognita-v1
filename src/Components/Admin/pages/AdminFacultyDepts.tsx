@@ -13,22 +13,13 @@ import { useAppSelector } from '../../../Redux/hooks';
 import {
   fetchHierarchy, insertCollege, insertFaculty, insertDepartment,
   deleteCollege as dbDeleteCollege, deleteFaculty as dbDeleteFaculty,
-  deleteDepartment as dbDeleteDepartment, createStaffUser,
+  deleteDepartment as dbDeleteDepartment, createStaffUser, generateUserId,
 } from '../../../supabase/hierarchy';
 import type { DBCollege, DBFaculty, DBDepartment } from '../../../supabase/hierarchy';
 import {showerrornotification, showsucessnotification} from '../../../helper/notificationhelper'; 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function generateCredentials(name: string) {
-  const parts    = name.trim().split(' ').filter(Boolean);
-  const base     = ((parts[0]?.[0] ?? '') + (parts[1] ?? '')).toLowerCase();
-  const username = base + Math.floor(100 + Math.random() * 900);
-  const chars    = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
-  const password = Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  return { username, password };
-}
-
-interface GeneratedCreds { name: string; role: string; email: string; username: string; password: string; }
+interface GeneratedCreds { name: string; role: string; email: string; userId: string; password: string; }
 
 // ── Credential Modal ───────────────────────────────────────────────────────────
 
@@ -53,9 +44,9 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
           <Paper withBorder p="md" radius="md" bg="gray.0">
             {[
               { label: 'Role',          value: creds.role },
+              { label: 'User ID',       value: creds.userId },
               { label: 'Login Email',   value: creds.email },
-              { label: 'Username',      value: creds.username },
-              { label: 'Temp Password', value: creds.password },
+              { label: 'Temp Password (Phone)', value: creds.password },
             ].map(({ label, value }) => (
               <Group key={label} justify="space-between" mb="xs">
                 <Box>
@@ -75,7 +66,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
             ))}
           </Paper>
           <Text size="xs" c="dimmed">
-            They can log in at <strong>/login</strong> using the email and password above.
+            They can log in at <strong>/login</strong> using either their <strong>User ID</strong> or email, with their phone number as the temporary password. They will be prompted to change it on first login.
           </Text>
           <Button fullWidth color="brand" onClick={onClose}>Done</Button>
         </Stack>
@@ -265,15 +256,20 @@ export default function AdminFacultyDepts() {
 
   const saveCollege = async () => {
     if (!colName.trim() || !colDeanName.trim()) return;
+    if (colDeanEmail.trim() && !colDeanPhone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSavingCol(true);
     try {
-      const { username, password } = generateCredentials(colDeanName);
+      const userIdCode = generateUserId(colLeaderRole);
+      const password   = colDeanPhone.trim();   // phone is the temp password
 
       // Create the college leader account first — role is either 'Provost' or
       // 'PG Coordinator' depending on what the admin selected in the modal.
       let deanId: string | null = null;
       if (colDeanEmail.trim()) {
-        const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: colLeaderRole, institutionId, institutionName });
+        const result = await createStaffUser({ name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), password, role: colLeaderRole, institutionId, institutionName, userId: userIdCode });
         deanId = result.userId;
       }
 
@@ -284,7 +280,7 @@ export default function AdminFacultyDepts() {
         dean: deanId ? { id: deanId, name: colDeanName.trim(), email: colDeanEmail.trim(), phone: colDeanPhone.trim(), role: colLeaderRole } : null,
         created_at: new Date().toISOString(),
       }]);
-      setCreds({ name: colDeanName.trim(), role: colLeaderRole, email: colDeanEmail.trim(), username, password });
+      setCreds({ name: colDeanName.trim(), role: colLeaderRole, email: colDeanEmail.trim(), userId: userIdCode, password });
       setShowCollegeModal(false);
       setColName(''); setColLeaderRole('Provost'); setColDeanName(''); setColDeanEmail(''); setColDeanPhone('');
       showsucessnotification({ message: `${colName.trim()} created successfully!` });
@@ -297,15 +293,20 @@ export default function AdminFacultyDepts() {
 
   const saveFaculty = async () => {
     if (!facName.trim() || !facDeanName.trim()) return;
+    if (facDeanEmail.trim() && !facDeanPhone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSavingFac(true);
     try {
-      const { username, password } = generateCredentials(facDeanName);
+      const userIdCode = generateUserId('Dean');
+      const password   = facDeanPhone.trim();
 
       // Create the Dean account first — this must succeed before we create
       // the faculty or touch local/Redux state, so the two never go out of sync.
       let facDeanId: string | null = null;
       if (facDeanEmail.trim()) {
-        const result = await createStaffUser({ name: facDeanName.trim(), email: facDeanEmail.trim(), phone: facDeanPhone.trim(), password, role: 'Dean', institutionId, institutionName });
+        const result = await createStaffUser({ name: facDeanName.trim(), email: facDeanEmail.trim(), phone: facDeanPhone.trim(), password, role: 'Dean', institutionId, institutionName, userId: userIdCode });
         facDeanId = result.userId;
       }
 
@@ -317,7 +318,7 @@ export default function AdminFacultyDepts() {
         dean: facDeanId ? { id: facDeanId, name: facDeanName.trim(), email: facDeanEmail.trim(), phone: facDeanPhone.trim() } : null,
         created_at: new Date().toISOString(),
       }]);
-      setCreds({ name: facDeanName.trim(), role: 'Dean', email: facDeanEmail.trim(), username, password });
+      setCreds({ name: facDeanName.trim(), role: 'Dean', email: facDeanEmail.trim(), userId: userIdCode, password });
       setShowFacultyModal(false);
       setFacName(''); setFacDeanName(''); setFacDeanEmail(''); setFacDeanPhone('');
       showsucessnotification({ message: `${facName.trim()} created successfully!` });
@@ -330,15 +331,20 @@ export default function AdminFacultyDepts() {
 
   const saveDepartment = async () => {
     if (!deptName.trim() || !deptHodName.trim() || !selectedFacultyId) return;
+    if (deptHodEmail.trim() && !deptHodPhone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSavingDept(true);
     try {
-      const { username, password } = generateCredentials(deptHodName);
+      const userIdCode = generateUserId('Head of Department');
+      const password   = deptHodPhone.trim();
 
       // Create the HoD account first — this must succeed before we create
       // the department or touch local/Redux state, so the two never go out of sync.
       let hodId: string | null = null;
       if (deptHodEmail.trim()) {
-        const result = await createStaffUser({ name: deptHodName.trim(), email: deptHodEmail.trim(), phone: deptHodPhone.trim(), password, role: 'Head of Department', institutionId, institutionName });
+        const result = await createStaffUser({ name: deptHodName.trim(), email: deptHodEmail.trim(), phone: deptHodPhone.trim(), password, role: 'Head of Department', institutionId, institutionName, userId: userIdCode });
         hodId = result.userId;
       }
 
@@ -350,7 +356,7 @@ export default function AdminFacultyDepts() {
         hod: hodId ? { id: hodId, name: deptHodName.trim(), email: deptHodEmail.trim(), phone: deptHodPhone.trim() } : null,
         students: 0, created_at: new Date().toISOString(),
       }]);
-      setCreds({ name: deptHodName.trim(), role: 'Head of Department', email: deptHodEmail.trim(), username, password });
+      setCreds({ name: deptHodName.trim(), role: 'Head of Department', email: deptHodEmail.trim(), userId: userIdCode, password });
       setShowDeptModal(false);
       setDeptName(''); setDeptHodName(''); setDeptHodEmail(''); setDeptHodPhone('');
       showsucessnotification({ message: `${deptName.trim()} created successfully!` });
@@ -610,13 +616,13 @@ export default function AdminFacultyDepts() {
             size="md" type="email"
             placeholder={colLeaderRole === 'PG Coordinator' ? 'pgcoordinator@institution.edu' : 'provost@institution.edu'}
             value={colDeanEmail} onChange={e => setColDeanEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel"
+          <TextInput label="Phone Number" size="md" type="tel" required
             placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={colDeanPhone} onChange={e => setColDeanPhone(e.target.value)} />
 
           <Text size="xs" c="dimmed">
-            A login account will be created for the {colLeaderRole} using the email above.
+            A login account will be created for the {colLeaderRole}. The phone number will be their temporary password.
           </Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={() => { setShowCollegeModal(false); setColLeaderRole('Provost'); }}>Cancel</Button>
@@ -661,12 +667,12 @@ export default function AdminFacultyDepts() {
           <TextInput label="Dean Email" size="md" type="email"
             placeholder="dean@institution.edu"
             value={facDeanEmail} onChange={e => setFacDeanEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel"
+          <TextInput label="Phone Number" size="md" type="tel" required
             placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={facDeanPhone} onChange={e => setFacDeanPhone(e.target.value)} />
 
-          <Text size="xs" c="dimmed">A login account will be created for the Dean using the email above.</Text>
+          <Text size="xs" c="dimmed">A login account will be created for the Dean. The phone number will be their temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="brand" onClick={() => setShowFacultyModal(false)}>Cancel</Button>
             <Button color="brand" loading={savingFac} onClick={saveFaculty}
@@ -710,12 +716,12 @@ export default function AdminFacultyDepts() {
           <TextInput label="HoD Email" size="md" type="email"
             placeholder="hod@institution.edu"
             value={deptHodEmail} onChange={e => setDeptHodEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel"
+          <TextInput label="Phone Number" size="md" type="tel" required
             placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={deptHodPhone} onChange={e => setDeptHodPhone(e.target.value)} />
 
-          <Text size="xs" c="dimmed">A login account will be created for the HoD using the email above.</Text>
+          <Text size="xs" c="dimmed">A login account will be created for the HoD. The phone number will be their temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="brand " onClick={() => setShowDeptModal(false)}>Cancel</Button>
             <Button color="brand.7" loading={savingDept} onClick={saveDepartment}

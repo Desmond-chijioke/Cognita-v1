@@ -7,14 +7,14 @@ import {
 import {
   LuSearch, LuMail, LuBuilding2, LuFolder, LuLandmark, LuLayers,
   LuUsers, LuUserCheck, LuTrendingUp, LuUserPlus, LuKey,
-  LuRefreshCw, LuCopy, LuCheck, LuLink, LuFrown,
+  LuRefreshCw, LuCopy, LuCheck, LuLink, LuFrown, LuPhone,
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
 import { assignToSupervisor as assignSupervisor } from '../../../Redux/slices/usersSlice';
 import type { StoredUser } from '../../../Redux/slices/usersSlice';
 import type { AppRole } from '../../../Redux/slices/authSlice';
 import { supabase } from '../../../supabase/client';
-import { createStaffUser, fetchHierarchy } from '../../../supabase/hierarchy';
+import { createStaffUser, fetchHierarchy, generateUserId } from '../../../supabase/hierarchy';
 import type { DBCollege, DBFaculty, DBDepartment } from '../../../supabase/hierarchy';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
@@ -22,6 +22,7 @@ import { showsucessnotification, showerrornotification } from '../../../helper/n
 
 interface DisplayResearcher {
   id: string;
+  user_id?: string;
   name: string;
   email: string;
   department: string;
@@ -138,7 +139,7 @@ const DEGREE_OPTIONS = [
 // ── Empty form ──────────────────────────────────────────────────────────────────
 
 const EMPTY_FORM = {
-  name: '', email: '', password: '', role: 'PhD Student' as AppRole,
+  name: '', email: '', phone: '', role: 'PhD Student' as AppRole,
   department: '', matricNo: '', degreeLevel: '', projectTitle: '', supervisorId: '',
 };
 
@@ -153,6 +154,7 @@ const ASSIGNABLE_SUPERVISOR_ROLES = ['Supervisor', 'Senior Supervisor', 'Co-Supe
 
 interface SupabaseUser {
   id:             string;
+  user_id?:       string;
   name:           string;
   email:          string;
   role:           string;
@@ -168,6 +170,7 @@ interface SupabaseUser {
 function sbToDisplay(u: SupabaseUser): DisplayResearcher {
   return {
     id: u.id,
+    user_id: u.user_id,
     name: u.name,
     email: u.email,
     department: u.department ?? 'Unassigned',
@@ -205,7 +208,7 @@ export default function AdminResearchers() {
     try {
       const { data } = await supabase
         .from('users')
-        .select('id, name, email, role, department, specialty, phone, matric_no, project_title, supervisor_id, created_at')
+        .select('id, user_id, name, email, role, department, specialty, phone, matric_no, project_title, supervisor_id, created_at')
         .eq('institution_id', institutionId)
         .neq('role', 'Director of Research')
         .order('created_at');
@@ -255,8 +258,7 @@ export default function AdminResearchers() {
   // Add User modal
   const [addOpen, setAddOpen]       = useState(false);
   const [form, setForm]             = useState({ ...EMPTY_FORM });
-  const [showPassword, setShowPassword] = useState(false);
-  const [created, setCreated]       = useState<{ email: string; password: string } | null>(null);
+  const [created, setCreated]       = useState<{ email: string; password: string; userId: string } | null>(null);
   const [creating, setCreating]     = useState(false);
 
   // Supervisor assignment inside detail modal
@@ -314,7 +316,7 @@ export default function AdminResearchers() {
   // ── Add User handlers ──────────────────────────────────────────────────────
 
   function openAdd() {
-    setForm({ ...EMPTY_FORM, password: genPassword() });
+    setForm({ ...EMPTY_FORM });
     setPickedCollegeId(null);
     setPickedFacultyId(null);
     setCreated(null);
@@ -322,7 +324,11 @@ export default function AdminResearchers() {
   }
 
   async function handleCreate() {
-    if (!form.name.trim() || !form.email.trim() || !form.password.trim()) return;
+    if (!form.name.trim() || !form.email.trim()) return;
+    if (!form.phone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     if (!institutionId) {
       showerrornotification({ message: 'Could not determine your institution. Please reload and try again.' });
       return;
@@ -332,13 +338,16 @@ export default function AdminResearchers() {
       return;
     }
 
-    const email = form.email.trim().toLowerCase();
+    const email      = form.email.trim().toLowerCase();
+    const password   = form.phone.trim();   // phone is the temporary password
+    const userIdCode = generateUserId(form.role);
     setCreating(true);
     try {
       await createStaffUser({
         name:            form.name.trim(),
         email,
-        password:        form.password,
+        phone:           form.phone.trim(),
+        password,
         role:            form.role,
         institutionId,
         institutionName: authUser?.institutionName ?? '',
@@ -347,9 +356,10 @@ export default function AdminResearchers() {
         degreeLevel:     form.degreeLevel  || undefined,
         projectTitle:    form.projectTitle || undefined,
         supervisorId:    form.supervisorId || undefined,
+        userId:          userIdCode,
       });
 
-      setCreated({ email, password: form.password });
+      setCreated({ email, password, userId: userIdCode });
       showsucessnotification({ message: `${form.name.trim()} added with login credentials.` });
       loadFromSupabase();
     } catch (err: unknown) {
@@ -499,7 +509,7 @@ export default function AdminResearchers() {
               <Table highlightOnHover verticalSpacing="md">
                 <Table.Thead>
                   <Table.Tr style={{ background: '#f8f9fa' }}>
-                    {['Student / Researcher', 'Department', 'Role', 'Matric No', 'Project Title', 'Joined'].map(h => (
+                    {['Student / Researcher', 'User ID', 'Department', 'Role', 'Matric No', 'Project Title', 'Joined'].map(h => (
                       <Table.Th key={h}>
                         <Text size="sm" c="dimmed" fw={500}>{h}</Text>
                       </Table.Th>
@@ -524,6 +534,9 @@ export default function AdminResearchers() {
                             <Text size="xs" c="dimmed">{r.email}</Text>
                           </Box>
                         </Group>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" ff="monospace" c="brand.7" fw={600}>{r.user_id || '—'}</Text>
                       </Table.Td>
                       <Table.Td><Text size="sm">{r.department}</Text></Table.Td>
                       <Table.Td>
@@ -581,7 +594,7 @@ export default function AdminResearchers() {
               <Table highlightOnHover verticalSpacing="md">
                 <Table.Thead>
                   <Table.Tr style={{ background: '#f8f9fa' }}>
-                    {['Supervisor', 'Department', 'Role', 'Specialization', 'Joined'].map(h => (
+                    {['Supervisor', 'User ID', 'Department', 'Role', 'Specialization', 'Joined'].map(h => (
                       <Table.Th key={h}>
                         <Text size="sm" c="dimmed" fw={500}>{h}</Text>
                       </Table.Th>
@@ -606,6 +619,9 @@ export default function AdminResearchers() {
                             <Text size="xs" c="dimmed">{s.email}</Text>
                           </Box>
                         </Group>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" ff="monospace" c="brand.7" fw={600}>{s.user_id || '—'}</Text>
                       </Table.Td>
                       <Table.Td><Text size="sm">{s.department}</Text></Table.Td>
                       <Table.Td>
@@ -685,16 +701,18 @@ export default function AdminResearchers() {
 
               <Paper withBorder p="lg" radius="md" mb="lg" style={{ background: '#f8f9fa' }}>
                 <Stack gap="md">
+                  <CredentialRow label="User ID" value={created.userId} />
+                  <Divider />
                   <CredentialRow label="Email Address" value={created.email} />
                   <Divider />
-                  <CredentialRow label="Password" value={created.password} />
+                  <CredentialRow label="Temp Password (Phone)" value={created.password} />
                 </Stack>
               </Paper>
 
               <Group gap="sm">
                 <Button
                   style={{ flex: 1 }} variant="default" radius="md"
-                  onClick={() => { setCreated(null); setForm({ ...EMPTY_FORM, password: genPassword() }); }}
+                  onClick={() => { setCreated(null); setForm({ ...EMPTY_FORM }); }}
                 >
                   Add Another User
                 </Button>
@@ -813,7 +831,7 @@ export default function AdminResearchers() {
 
                 <Divider />
 
-                {/* ── 2 · Login Credentials ── */}
+                {/* ── 2 · Phone Number (becomes temp password) ── */}
                 <Box>
                   <Group gap={8} mb="md">
                     <Box style={{
@@ -824,53 +842,17 @@ export default function AdminResearchers() {
                       <Text style={{ fontSize: 11, fontWeight: 800, color: 'white', lineHeight: 1 }}>2</Text>
                     </Box>
                     <Text size="xs" fw={700} c="dimmed" style={{ textTransform: 'uppercase', letterSpacing: 0.9 }}>
-                      Login Credentials
+                      Phone Number
                     </Text>
-                    <Box style={{ flex: 1 }} />
-                    <Tooltip label="Generate strong password" withArrow>
-                      <ActionIcon size="sm" variant="subtle" color="brand"
-                        onClick={() => setForm(f => ({ ...f, password: genPassword() }))}>
-                        <LuRefreshCw size={13} />
-                      </ActionIcon>
-                    </Tooltip>
                   </Group>
 
-                  <Group gap="xs" mb={form.password ? 10 : 0}>
-                    <PasswordInput
-                      style={{ flex: 1 }} size="md"
-                      placeholder="At least 8 characters"
-                      visible={showPassword}
-                      onVisibilityChange={setShowPassword}
-                      value={form.password}
-                      onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, password: v })); }}
-                    />
-                    <CopyButton value={form.password}>
-                      {({ copied, copy }) => (
-                        <Tooltip label={copied ? 'Copied!' : 'Copy password'} withArrow>
-                          <ActionIcon
-                            onClick={copy} variant="light"
-                            color={copied ? 'teal' : 'gray'}
-                            size="42px"
-                          >
-                            {copied ? <LuCheck size={16} /> : <LuCopy size={16} />}
-                          </ActionIcon>
-                        </Tooltip>
-                      )}
-                    </CopyButton>
-                  </Group>
-
-                  {form.password && (() => {
-                    const s = pwStrength(form.password);
-                    return (
-                      <Box>
-                        <Group justify="space-between" mb={5}>
-                          <Text size="xs" c="dimmed">Password strength</Text>
-                          <Text size="xs" fw={700} c={s.color}>{s.label}</Text>
-                        </Group>
-                        <Progress value={(s.score / 5) * 100} color={s.color} size="sm" radius="xl" />
-                      </Box>
-                    );
-                  })()}
+                  <TextInput
+                    label="Phone Number" placeholder="+234 800 000 0000"
+                    size="md" required leftSection={<LuPhone size={15} />}
+                    description="This will be the user's temporary login password"
+                    value={form.phone}
+                    onChange={e => { const v = e.currentTarget.value; setForm(f => ({ ...f, phone: v })); }}
+                  />
                 </Box>
 
                 {/* ── 3 · Student Details (conditional) ── */}
@@ -930,7 +912,7 @@ export default function AdminResearchers() {
                     style={{ flex: 2 }} color="brand" radius="md" size="md"
                     leftSection={<LuKey size={15} />}
                     loading={creating}
-                    disabled={!form.name.trim() || !form.email.trim() || !form.password.trim()}
+                    disabled={!form.name.trim() || !form.email.trim() || !form.phone.trim()}
                     onClick={handleCreate}
                   >
                     Create User Account

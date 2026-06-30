@@ -11,7 +11,7 @@ import {
 } from 'react-icons/lu';
 import { useAppDispatch, useAppSelector } from '../../../Redux/hooks';
 import { loadSupervisors, loadStudents } from '../../../Redux/slices/hodSlice';
-import { createStaffUser, updateSupervisorAssignment } from '../../../supabase/hierarchy';
+import { createStaffUser, updateSupervisorAssignment, generateUserId } from '../../../supabase/hierarchy';
 import { supabase } from '../../../supabase/client';
 import { showsucessnotification, showerrornotification } from '../../../helper/notificationhelper';
 
@@ -33,11 +33,6 @@ const ROLE_COLOR: Record<string, string> = {
 
 function rc(role: string) { return ROLE_COLOR[role] ?? 'gray'; }
 
-function generatePassword(len = 10): string {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#';
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
-
 function getInitials(name: string) {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 }
@@ -46,6 +41,7 @@ function getInitials(name: string) {
 
 interface SBUser {
   id:             string;
+  user_id?:       string;
   name:           string;
   email:          string;
   role:           string;
@@ -58,7 +54,7 @@ interface SBUser {
   created_at:     string;
 }
 
-interface GeneratedCreds { name: string; email: string; password: string; role: string; }
+interface GeneratedCreds { name: string; email: string; password: string; role: string; userId: string; }
 
 // ── Credential Modal ───────────────────────────────────────────────────────────
 
@@ -75,9 +71,10 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
           </Alert>
           <Paper withBorder p="md" radius="md" bg="gray.0">
             {[
-              { label: 'Role',          value: creds.role },
-              { label: 'Login Email',   value: creds.email },
-              { label: 'Temp Password', value: creds.password },
+              { label: 'Role',                  value: creds.role },
+              { label: 'User ID',               value: creds.userId },
+              { label: 'Login Email',           value: creds.email },
+              { label: 'Temp Password (Phone)', value: creds.password },
             ].map(({ label, value }) => (
               <Group key={label} justify="space-between" mb="xs">
                 <Box>
@@ -96,7 +93,7 @@ function CredentialModal({ creds, onClose }: { creds: GeneratedCreds | null; onC
               </Group>
             ))}
           </Paper>
-          <Text size="xs" c="dimmed">They can log in at <strong>/login</strong> using the email and password above.</Text>
+          <Text size="xs" c="dimmed">They can log in at <strong>/login</strong> using their <strong>User ID</strong> or email, with their phone number as the temporary password.</Text>
           <Button fullWidth color="brand" onClick={onClose}>Done</Button>
         </Stack>
       )}
@@ -175,7 +172,7 @@ export default function HODUsers() {
       // Always filter by institution; also filter by department when the HOD has one set.
       let query = supabase
         .from('users')
-        .select('id, name, email, phone, role, specialty, department, matric_no, project_title, supervisor_id, created_at')
+        .select('id, user_id, name, email, phone, role, specialty, department, matric_no, project_title, supervisor_id, created_at')
         .eq('institution_id', institutionId);
 
       if (departmentName) {
@@ -244,8 +241,13 @@ export default function HODUsers() {
 
   const handleAddSupervisor = async () => {
     if (!supName.trim() || !supEmail.trim()) return;
+    if (!supPhone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSavingSup(true);
-    const password = generatePassword();
+    const userIdCode = generateUserId(supRole);
+    const password   = supPhone.trim();
     try {
       await createStaffUser({
         name:         supName.trim(),
@@ -257,8 +259,9 @@ export default function HODUsers() {
         institutionName,
         specialty:    supSpec.trim(),
         department:   departmentName,   // always locked to HOD's department
+        userId:       userIdCode,
       });
-      setCreds({ name: supName.trim(), email: supEmail.trim().toLowerCase(), password, role: supRole });
+      setCreds({ name: supName.trim(), email: supEmail.trim().toLowerCase(), password, role: supRole, userId: userIdCode });
       closeSupModal();
       showsucessnotification({ message: `${supName.trim()} added as ${supRole}.` });
       loadAll();
@@ -278,8 +281,13 @@ export default function HODUsers() {
 
   const handleAddStudent = async () => {
     if (!stuName.trim() || !stuEmail.trim()) return;
+    if (!stuPhone.trim()) {
+      showerrornotification({ message: 'Phone number is required — it will be used as the temporary password.' });
+      return;
+    }
     setSavingStu(true);
-    const password = generatePassword();
+    const userIdCode = generateUserId(stuRole);
+    const password   = stuPhone.trim();
     try {
       await createStaffUser({
         name:          stuName.trim(),
@@ -293,8 +301,9 @@ export default function HODUsers() {
         matricNo:      stuMatric.trim(),
         projectTitle:  stuProgram.trim(),
         supervisorId:  stuSupId ?? undefined,
+        userId:        userIdCode,
       });
-      setCreds({ name: stuName.trim(), email: stuEmail.trim().toLowerCase(), password, role: stuRole });
+      setCreds({ name: stuName.trim(), email: stuEmail.trim().toLowerCase(), password, role: stuRole, userId: userIdCode });
       closeStuModal();
       showsucessnotification({ message: `${stuName.trim()} added as ${stuRole}.` });
       loadAll();
@@ -396,7 +405,7 @@ export default function HODUsers() {
               <Table highlightOnHover verticalSpacing="md">
                 <Table.Thead>
                   <Table.Tr style={{ background: '#f8f9fa' }}>
-                    {['Supervisor', 'Role', 'Specialisation', 'Phone', 'Students', 'Added'].map(h => (
+                    {['Supervisor', 'User ID', 'Role', 'Specialisation', 'Phone', 'Students', 'Added'].map(h => (
                       <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
                     ))}
                   </Table.Tr>
@@ -412,6 +421,9 @@ export default function HODUsers() {
                             <Text size="xs" c="dimmed">{sv.email}</Text>
                           </Box>
                         </Group>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" ff="monospace" c="brand.7" fw={600}>{sv.user_id || '—'}</Text>
                       </Table.Td>
                       <Table.Td>
                         <Badge color={rc(sv.role)} variant="light" size="sm">{sv.role}</Badge>
@@ -432,7 +444,7 @@ export default function HODUsers() {
                   ))}
                   {visSups.length === 0 && (
                     <Table.Tr>
-                      <Table.Td colSpan={6}>
+                      <Table.Td colSpan={7}>
                         <Text ta="center" c="dimmed" py="xl" size="sm">
                           No supervisors in {departmentName || 'this department'} yet.
                         </Text>
@@ -450,7 +462,7 @@ export default function HODUsers() {
               <Table highlightOnHover verticalSpacing="md">
                 <Table.Thead>
                   <Table.Tr style={{ background: '#f8f9fa' }}>
-                    {['Student', 'Matric No', 'Role', 'Research Topic', 'Supervisor', 'Added', ''].map(h => (
+                    {['Student', 'User ID', 'Matric No', 'Role', 'Research Topic', 'Supervisor', 'Added', ''].map(h => (
                       <Table.Th key={h}><Text size="xs" c="dimmed" fw={600}>{h}</Text></Table.Th>
                     ))}
                   </Table.Tr>
@@ -468,6 +480,9 @@ export default function HODUsers() {
                               <Text size="xs" c="dimmed">{st.email}</Text>
                             </Box>
                           </Group>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" ff="monospace" c="brand.7" fw={600}>{st.user_id || '—'}</Text>
                         </Table.Td>
                         <Table.Td><Text size="sm" ff="monospace">{st.matric_no || '—'}</Text></Table.Td>
                         <Table.Td>
@@ -508,7 +523,7 @@ export default function HODUsers() {
                   })}
                   {visStuds.length === 0 && (
                     <Table.Tr>
-                      <Table.Td colSpan={7}>
+                      <Table.Td colSpan={8}>
                         <Text ta="center" c="dimmed" py="xl" size="sm">
                           No students in {departmentName || 'this department'} yet.
                         </Text>
@@ -534,7 +549,7 @@ export default function HODUsers() {
             value={supName} onChange={e => setSupName(e.target.value)} />
           <TextInput label="Email" required size="md" type="email" placeholder="supervisor@institution.edu"
             value={supEmail} onChange={e => setSupEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel" placeholder="+234 800 000 0000"
+          <TextInput label="Phone Number" required size="md" type="tel" placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={supPhone} onChange={e => setSupPhone(e.target.value)} />
           <TextInput label="Specialisation" size="md" placeholder="e.g. Machine Learning"
@@ -551,11 +566,11 @@ export default function HODUsers() {
             </Box>
           ))}
 
-          <Text size="xs" c="dimmed" mt={4}>A login account will be created with a temporary password.</Text>
+          <Text size="xs" c="dimmed" mt={4}>A login account will be created. The phone number will be their temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={closeSupModal}>Cancel</Button>
             <Button color="brand" loading={savingSup} onClick={handleAddSupervisor}
-              disabled={!supName.trim() || !supEmail.trim()}>
+              disabled={!supName.trim() || !supEmail.trim() || !supPhone.trim()}>
               Add &amp; Generate Credentials
             </Button>
           </Group>
@@ -574,7 +589,7 @@ export default function HODUsers() {
             value={stuName} onChange={e => setStuName(e.target.value)} />
           <TextInput label="Email" required size="md" type="email" placeholder="student@institution.edu"
             value={stuEmail} onChange={e => setStuEmail(e.target.value)} />
-          <TextInput label="Phone Number" size="md" type="tel" placeholder="+234 800 000 0000"
+          <TextInput label="Phone Number" required size="md" type="tel" placeholder="+234 800 000 0000"
             leftSection={<LuPhone size={14} color="#868e96" />}
             value={stuPhone} onChange={e => setStuPhone(e.target.value)} />
           <TextInput label="Matric Number" size="md" placeholder="e.g. CS/PHD/004"
@@ -590,11 +605,11 @@ export default function HODUsers() {
             placeholder={supervisors.length ? 'Select a supervisor from this department' : 'No supervisors in this department yet'}
             data={supervisorOptions} value={stuSupId} onChange={setStuSupId} clearable />
 
-          <Text size="xs" c="dimmed">A login account will be created with a temporary password.</Text>
+          <Text size="xs" c="dimmed">A login account will be created. The phone number will be their temporary password.</Text>
           <Group justify="flex-end" mt="xs">
             <Button variant="subtle" color="gray" onClick={closeStuModal}>Cancel</Button>
             <Button color="brand" loading={savingStu} onClick={handleAddStudent}
-              disabled={!stuName.trim() || !stuEmail.trim()}>
+              disabled={!stuName.trim() || !stuEmail.trim() || !stuPhone.trim()}>
               Add &amp; Generate Credentials
             </Button>
           </Group>
